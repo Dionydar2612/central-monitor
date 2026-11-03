@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<!--
+  login.html - หน้าเข้าสู่ระบบ
+
+  ทำงานอย่างไร
+    1) ผู้ใช้กรอกชื่อผู้ใช้/รหัสผ่าน แล้วกด Login
+    2) JavaScript ด้านล่างส่ง POST /api/login (web_dashboard/backend/api.py)
+    3) api.py ตรวจด้วย auth.check_credentials แล้วตั้ง session cookie
+    4) สำเร็จ -> ไปหน้าแรก "/" ; ไม่สำเร็จ -> แสดงกล่อง error สีแดง
+
+  ไฟล์นี้ไม่ได้ล็อกอินก็เปิดได้ (api.py อนุญาตเฉพาะ /login) CSS/JS อยู่ในไฟล์เดียว
+  เพื่อไม่ต้องโหลดไฟล์อื่นที่ต้องล็อกอินก่อน
+  ค่าเริ่มต้น admin / admin เปลี่ยนได้ใน docker/.env (CENTRAL_AUTH_USERNAME / CENTRAL_AUTH_PASSWORD)
+-->
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Central Monitor Login</title>
+
+    <style>
+        /* หน้าตาของหน้า login (ใส่ในไฟล์เดียวกัน ไม่พึ่ง dashboard.css) */
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0f172a;
+            font-family: Arial, sans-serif;
+        }
+
+        .login-box {
+            width: 360px;
+            padding: 32px;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0,0,0,.3);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 24px;
+            color: #111827;
+        }
+
+        .subtitle {
+            margin-bottom: 24px;
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 14px;
+            color: #374151;
+        }
+
+        input {
+            width: 100%;
+            padding: 11px 12px;
+            margin-bottom: 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 7px;
+            font-size: 14px;
+        }
+
+        button {
+            width: 100%;
+            padding: 11px;
+            border: 0;
+            border-radius: 7px;
+            background: #2563eb;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        .error {
+            display: none;
+            margin-bottom: 16px;
+            padding: 10px;
+            border-radius: 6px;
+            background: #fee2e2;
+            color: #991b1b;
+            font-size: 13px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="login-box">
+
+    <h1>Central Monitor</h1>
+
+    <div class="subtitle">
+        Sign in to continue
+    </div>
+
+    <div id="error" class="error">
+        Invalid username or password
+    </div>
+
+    <form id="loginForm">
+
+        <label>Username</label>
+
+        <input
+            id="username"
+            type="text"
+            autocomplete="username"
+            required
+        >
+
+        <label>Password</label>
+
+        <input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            required
+        >
+
+        <button type="submit">
+            Login
+        </button>
+
+    </form>
+
+</div>
+
+<script>
+/* ส่งฟอร์มแบบ fetch (ไม่โหลดหน้าใหม่): ถูก -> ไปหน้าแรก, ผิด -> แสดงข้อความ error */
+
+document
+    .getElementById("loginForm")
+    .addEventListener("submit", async function(event) {
+
+        event.preventDefault();
+
+        const username =
+            document.getElementById("username").value;
+
+        const password =
+            document.getElementById("password").value;
+
+        const response = await fetch(
+            "/api/login",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                credentials: "same-origin",
+                body: JSON.stringify({
+                    username,
+                    password
+                })
+            }
+        );
+
+        if (response.ok) {
+            window.location.href = "/";
+            return;
+        }
+
+        document
+            .getElementById("error")
+            .style.display = "block";
+    });
+
+</script>
+
+</body>
+</html>

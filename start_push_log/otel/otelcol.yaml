@@ -1,0 +1,269 @@
+# =====================================================================
+# otelcol.yaml - OpenTelemetry Collector: buffer -> OpenSearch
+# =====================================================================
+#
+# ไฟล์ใน data/buffer ชื่อ  <site>__<เครื่อง>__<source>__<เวลา>__<offset>__<id>.log
+# ส่วน <source> = logs[].name ใน puller.yaml -> เลือก receiver ด้านล่างจากชื่อนี้
+#
+#   source                         receiver            log.source (ใช้กรอง Type ในหน้าเว็บ)
+#   logapp                         filelog/logapp      logapp
+#   loginuser, auth                filelog/loginuser   loginuser
+#   application, system, kernel    filelog/application application
+#   ชื่ออื่นทั้งหมด                  filelog/other       other      <- กันไฟล์ที่ไม่มี parser ถูกลบทิ้งเงียบ ๆ
+#
+# เวลาของ log (@timestamp)
+#   ทุก receiver อ่านเวลา ISO 8601 ที่ต้นบรรทัด (มี Z หรือ +07:00) เช่น
+#     2026-10-05T09:12:58.321282+07:00 host sshd[1]: ...      (rsyslog ของ Ubuntu)
+#     2026-10-05T09:12:58Z ERROR something                    (log แอป)
+#   แล้วตั้งเป็นเวลาของ record  ถ้าอ่านไม่ได้ (เช่น syslog แบบเก่า "Oct  5 09:12:58")
+#   จะไม่ล้ม: record ยังเข้า OpenSearch และฝั่งเว็บใช้เวลาดึงไฟล์แทน
+#   (ถ้าไม่ตั้งเวลา record จะได้ 1970-01-01 เรียงไปท้ายสุดและไม่ถูกนับใน Errors 15m)
+# =====================================================================
+
+extensions:
+
+  file_storage:
+    directory: /data/buffer/.otel-storage
+    create_directory: true
+
+  basicauth/opensearch:
+    client_auth:
+      username: admin
+      password: ${env:OPENSEARCH_ADMIN_PASSWORD}
+
+
+receivers:
+
+  # ------------------------------------------------------------
+  # Application / logapp  (บรรทัดที่ไม่ขึ้นต้นด้วยเวลา เช่น stack trace ต่อเข้ากับบรรทัดก่อนหน้า)
+  # ------------------------------------------------------------
+  filelog/logapp:
+    include:
+      - /data/buffer/*__logapp__*.log
+
+    start_at: beginning
+    include_file_name: true
+    include_file_path: true
+    storage: file_storage
+
+    multiline:
+      line_start_pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'
+
+    operators:
+      - type: regex_parser
+        id: logapp_find_time
+        parse_from: body
+        parse_to: attributes
+        regex: '^(?P<log_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))'
+        on_error: send_quiet
+
+      - type: time_parser
+        id: logapp_set_time
+        if: 'attributes.log_timestamp != nil'
+        parse_from: attributes.log_timestamp
+        layout_type: gotime
+        layout: '2006-01-02T15:04:05.999999999Z07:00'
+        on_error: send_quiet
+
+      - type: remove
+        id: logapp_drop_time_attr
+        if: 'attributes.log_timestamp != nil'
+        field: attributes.log_timestamp
+
+      - type: add
+        id: add_logapp_source
+        field: resource["log.source"]
+        value: logapp
+
+
+  # ------------------------------------------------------------
+  # Login / Auth
+  #
+  # รองรับ:
+  # 2026-10-05T09:12:58.321282+07:00 30K3PH4 sshd[123]: ...
+  # เวลาถูกตัดออกจากข้อความ (เก็บเป็นเวลาของ record) เหลือ "30K3PH4 sshd[123]: ..."
+  # ------------------------------------------------------------
+  filelog/loginuser:
+    include:
+      - /data/buffer/*__loginuser__*.log
+      - /data/buffer/*__auth__*.log
+    start_at: beginning
+    include_file_name: true
+    include_file_path: true
+    storage: file_storage
+    operators:
+      - type: regex_parser
+        id: parse_loginuser
+        regex: '^(?P<log_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+(?P<message>.*)$'
+        parse_from: body
+        parse_to: attributes
+        on_error: send_quiet
+
+      - type: time_parser
+        id: parse_loginuser_time
+        if: 'attributes.log_timestamp != nil'
+        parse_from: attributes.log_timestamp
+        layout_type: gotime
+        layout: '2006-01-02T15:04:05.999999999Z07:00'
+        on_error: send_quiet
+
+      - type: move
+        id: move_loginuser_message
+        if: 'attributes.message != nil'
+        from: attributes.message
+        to: body
+
+      - type: remove
+        id: loginuser_drop_time_attr
+        if: 'attributes.log_timestamp != nil'
+        field: attributes.log_timestamp
+
+      - type: add
+        id: add_loginuser_source
+        field: resource["log.source"]
+        value: loginuser
+
+
+  # ------------------------------------------------------------
+  # application / system (syslog) / kernel
+  # ------------------------------------------------------------
+  filelog/application:
+    include:
+      - /data/buffer/*__application__*.log
+      - /data/buffer/*__system__*.log
+      - /data/buffer/*__kernel__*.log
+
+    start_at: beginning
+    include_file_name: true
+    include_file_path: true
+    storage: file_storage
+
+    operators:
+      - type: regex_parser
+        id: application_find_time
+        parse_from: body
+        parse_to: attributes
+        regex: '^(?P<log_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))'
+        on_error: send_quiet
+
+      - type: time_parser
+        id: application_set_time
+        if: 'attributes.log_timestamp != nil'
+        parse_from: attributes.log_timestamp
+        layout_type: gotime
+        layout: '2006-01-02T15:04:05.999999999Z07:00'
+        on_error: send_quiet
+
+      - type: remove
+        id: application_drop_time_attr
+        if: 'attributes.log_timestamp != nil'
+        field: attributes.log_timestamp
+
+      - type: add
+        id: add_application_source
+        field: resource["log.source"]
+        value: application
+
+
+  # ------------------------------------------------------------
+  # other : ไฟล์ที่ชื่อ source ไม่ตรงกับ 3 กลุ่มด้านบน (เช่น logs[].name = nginx)
+  # ก่อนหน้านี้ไฟล์พวกนี้ไม่มี receiver อ่าน -> ถูก buffer-cleaner ลบทิ้งโดยไม่เข้า OpenSearch
+  # ------------------------------------------------------------
+  filelog/other:
+    include:
+      - /data/buffer/*.log
+    exclude:
+      - /data/buffer/*__logapp__*.log
+      - /data/buffer/*__loginuser__*.log
+      - /data/buffer/*__auth__*.log
+      - /data/buffer/*__application__*.log
+      - /data/buffer/*__system__*.log
+      - /data/buffer/*__kernel__*.log
+
+    start_at: beginning
+    include_file_name: true
+    include_file_path: true
+    storage: file_storage
+
+    operators:
+      - type: regex_parser
+        id: other_find_time
+        parse_from: body
+        parse_to: attributes
+        regex: '^(?P<log_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))'
+        on_error: send_quiet
+
+      - type: time_parser
+        id: other_set_time
+        if: 'attributes.log_timestamp != nil'
+        parse_from: attributes.log_timestamp
+        layout_type: gotime
+        layout: '2006-01-02T15:04:05.999999999Z07:00'
+        on_error: send_quiet
+
+      - type: remove
+        id: other_drop_time_attr
+        if: 'attributes.log_timestamp != nil'
+        field: attributes.log_timestamp
+
+      - type: add
+        id: add_other_source
+        field: resource["log.source"]
+        value: other
+
+
+processors:
+
+  resource:
+    attributes:
+      - key: service.name
+        value: central-log-puller
+        action: upsert
+
+  batch:
+    timeout: 5s
+    send_batch_size: 200
+
+
+exporters:
+
+  opensearch:
+    http:
+      endpoint: https://opensearch:9200
+
+      auth:
+        authenticator: basicauth/opensearch
+
+      tls:
+        insecure_skip_verify: true
+
+    logs_index: logs-central-%{yyyy.MM.dd.HH}
+    logs_index_fallback: logs-central
+    logs_index_time_format: yyyy.MM.dd.HH
+
+  debug:
+    verbosity: basic
+
+
+service:
+
+  extensions:
+    - file_storage
+    - basicauth/opensearch
+
+  pipelines:
+
+    logs:
+      receivers:
+        - filelog/logapp
+        - filelog/loginuser
+        - filelog/application
+        - filelog/other
+
+      processors:
+        - resource
+        - batch
+
+      exporters:
+        - opensearch
+        - debug

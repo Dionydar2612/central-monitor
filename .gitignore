@@ -1,0 +1,19 @@
+# ไฟล์ที่ไม่ควรเข้า git
+#   .env          รหัสผ่าน/secret จริง (แม่แบบคือ docker/.env.example)
+#   keys/*        SSH private key + known_hosts (เก็บโฟลเดอร์ไว้ด้วย .gitkeep)
+#   data/**       ข้อมูลที่เกิดตอนรัน: buffer, state, prometheus targets (เก็บโครงโฟลเดอร์ด้วย .gitkeep)
+#   *.bak         ไฟล์สำรองที่สร้างด้วยมือ
+.env
+docker/.env
+keys/*
+!keys/.gitkeep
+data/**
+!data/**/
+!data/**/.gitkeep
+*.bak
+*.bak-*
+
+# สำเนาสำรองทุกแบบ
+*.bak
+*.bak-*
+*.bak.*

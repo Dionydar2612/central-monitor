@@ -1,0 +1,10 @@
+# build context ของ docker คือรากโปรเจกต์ -> อย่าส่งของเหล่านี้เข้า image / ไปยัง docker daemon
+.git
+keys
+data
+docker/.env
+*.bak
+*.bak-*
+*.bak.*
+__pycache__
+*.pyc

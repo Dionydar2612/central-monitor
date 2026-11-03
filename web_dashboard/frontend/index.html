@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<!--
+  index.html - หน้า dashboard หลัก (โครง HTML เปล่า ข้อมูลถูกเติมโดย dashboard.js)
+
+  ทำงานอย่างไร
+    เบราว์เซอร์โหลดไฟล์นี้ -> โหลด dashboard.css (หน้าตา) และ dashboard.js (ตรรกะ)
+    dashboard.js เรียก API ของ web_dashboard/backend/api.py ทุก 10 วินาที แล้วเขียน HTML
+    ลงในช่องที่มี id ด้านล่าง (เช่น #mach, #kpis, #plog)
+    ถ้ายังไม่ได้ล็อกอิน api.py จะ redirect ไป /login (login.html) ก่อนถึงไฟล์นี้
+
+  กติกา: id ของแต่ละช่องเป็น "สัญญา" กับ dashboard.js ห้ามเปลี่ยนชื่อโดยไม่แก้ JS
+  ไฟล์นี้ถูก web.Dockerfile คัดลอกไปที่ /app/static/ (เสิร์ฟโดย api.py ที่ "/")
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<!-- แถบหัว: ชื่อระบบ, ตัวเลือกช่วงเวลา (#qb #lbl #sd #dates #menu #cal ควบคุมโดย setupPicker),
+     ปุ่ม Refresh (#rf), สถานะระบบ (#systemDot #systemStatus), ผู้ใช้ + Logout -->
+<header>
+<div><b>Central Monitor</b><div style="color:var(--mut);font-size:12px;margin-top:2px">WEB infrastructure monitoring &amp; problem correlation</div></div>
+<div class="tp">
+<div class="tpbox">
+<button id="qb" aria-label="Quick select time range" aria-haspopup="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.5v3M11 1.5v3M5 9h1M8 9h1M11 9h1M5 11.5h1M8 11.5h1"/></svg><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg></button>
+<button id="lbl">Last 15 minutes</button>
+<button id="sd">Show dates</button>
+</div>
+<button id="rf"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.8-4.1M13.5 2v3h-3"/></svg>Refresh</button>
+<div class="pop" id="menu" hidden></div>
+<div class="pop" id="dates" hidden><div class="dfield"><small>Start</small><button type="button" id="ds" aria-expanded="false"></button></div><div class="dfield"><small>End</small><button type="button" id="de" aria-expanded="false"></button></div><div id="cal" hidden></div><p id="err" role="alert"></p><button id="ap">Apply</button></div>
+</div>
+<div class="user"><span><span id="systemDot" class="dot green"></span><span id="systemStatus">Loading...</span></span><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings">Settings</a><button id="logoutButton">Logout</button></div>
+</header>
+
+<!-- การ์ด WEB status: ปุ่มเลือกเครื่อง (#mach จาก /api/web-status),
+     แถบข้อมูลสรุป (#meta: State, Last pull, Load, Uptime, ... จาก /api/summary + /api/metrics) -->
+<section class="card mach">
+<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px">Showing <b id="cur" style="color:var(--ink)">-</b> · auto refresh 10 seconds</span></div>
+<div class="chips" id="mach"></div>
+<div class="mm" id="meta"></div>
+</section>
+
+<!-- KPI 4 ใบ: CPU / Memory / Disk / Disk I/O (ค่าปัจจุบัน + เส้นกราฟเล็ก จาก /api/metrics/history) -->
+<div class="grid kpis" id="kpis"></div>
+
+<!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) และรายการ Service (#sv: จาก snapshot ของ puller) -->
+<div class="grid main">
+<section class="card">
+<div class="top"><h2>System Load</h2><div class="lgd"><span><i style="background:var(--blue)"></i>CPU</span><span><i style="background:var(--soft)"></i>Memory</span></div></div>
+<svg id="load" viewBox="0 0 900 300" role="img" aria-label="System load over time"></svg>
+</section>
+<section class="card"><h2>Service</h2><div class="svcs" id="sv"></div></section>
+</div>
+
+<!-- ตาราง process ที่กิน CPU (#svc) และ Memory (#mem) สูงสุด จาก snapshot ของ puller -->
+<div class="grid two">
+<section class="card"><h2>CPU process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="svc"></tbody></table></div></section>
+<section class="card"><h2>Memory Usage by Process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
+</div>
+
+<!-- System events จาก journalctl (#ev) ซ่อนไว้เมื่อไม่มีเหตุการณ์ -->
+<section class="card svc" id="evCard" hidden><div class="top"><h2>System events</h2><span class="cnt" id="evCnt"></span></div><div class="evl scroll" id="ev"></div></section>
+
+<!-- ตาราง Logs (#plog): log ของเครื่องที่เลือก คลิกแถวเพื่อเปิดหน้าต่างรายละเอียด (showProblemModal) -->
+<section class="card svc" style="margin-top:16px"><div class="top"><h2>Logs</h2><span style="color:var(--mut);font-size:13px"><span id="logCnt"></span> All logs correlated with WEB and metrics · click a row for details</span></div>
+<!-- ตัวกรอง log: ระดับ (#lvTabs) + ชนิด (#ltSel) ตัวเลขบนปุ่มมาจาก /api/log-stats (#lvStat = สรุปว่าแสดงอะไรอยู่) -->
+<div class="lvbar"><div class="tabs" id="lvTabs" role="group" aria-label="Filter by level"><button type="button" data-lv="ALL" aria-pressed="true">All</button><button type="button" data-lv="ERROR" aria-pressed="false">Error</button><button type="button" data-lv="WARN" aria-pressed="false">Warn</button><button type="button" data-lv="INFO" aria-pressed="false">Info</button></div><label class="lvtype">Type <select id="ltSel" aria-label="Filter by log type"><option value="ALL">All types</option></select></label><span class="lvstat" id="lvStat"></span></div>
+<div class="tblw scroll logscroll"><table class="pl"><thead><tr><th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th>Message</th><th>Metrics at time</th></tr></thead><tbody id="plog"><tr><td colspan="6" class="empty">Loading logs...</td></tr></tbody></table></div></section>
+</div>
+<!-- ตรรกะทั้งหมดของหน้านี้ -->
+<script src="/dashboard.js"></script>
+</body>
+</html>

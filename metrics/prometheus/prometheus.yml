@@ -1,0 +1,74 @@
+# =====================================================================
+# prometheus.yml - ตั้งค่า Prometheus ที่มากับ stack (โหมด bundled-prometheus)
+# =====================================================================
+#
+# Prometheus คืออะไรในระบบนี้
+#   ตัวเก็บ "ตัวเลข" (CPU/RAM/Disk/Network) ของแต่ละเครื่อง เป็นอนุกรมเวลา
+#   - เขียน/ดึงข้อมูล : Prometheus ไป scrape node_exporter ของแต่ละเครื่องโดยตรง (ไม่ผ่าน SSH)
+#   - อ่านไปแสดง      : web_dashboard/backend/metrics_service.py ถามผ่าน HTTP :9090
+#   ส่วน log ไม่ได้ผ่านที่นี่ (log ไปทาง puller -> otel -> OpenSearch)
+#
+# ไฟล์นี้ใช้เฉพาะ COMPOSE_PROFILES=bundled-prometheus
+#   ถ้า server มี Prometheus อยู่แล้ว ไม่ต้องใช้ไฟล์นี้ ดูวิธีตั้งค่า "external mode"
+#   ใน docs/INSTALL-TH.md
+#
+# เชื่อมกับอะไร
+#   - docker/docker-compose.yml : mount ไฟล์นี้เข้า container prometheus
+#   - data/prometheus/web-nodes.json : รายชื่อเครื่อง web (puller สร้างจาก config/puller.yaml)
+# =====================================================================
+
+global:
+  scrape_interval: 15s          # scrape ทุก 15 วินาที
+
+scrape_configs:
+
+  # -------------------------------------------------------------------
+  # เครื่อง web ทั้งหมด
+  #   รายชื่อไม่ได้เขียนที่นี่ แต่มาจากไฟล์ web-nodes.json ที่ puller สร้างจาก puller.yaml
+  #   -> เพิ่มเครื่องที่ puller.yaml ที่เดียว Prometheus จะรู้เองภายในไม่กี่วินาที
+  #   label (job / web / environment) มาจากบล็อก `prometheus:` ของแต่ละเครื่อง
+  # -------------------------------------------------------------------
+  - job_name: web-nodes
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/web-nodes.json
+
+  # -------------------------------------------------------------------
+  # เครื่องที่รัน central-monitor เอง (container node-exporter ใน stack นี้)
+  #   dashboard อ่านเครื่องนี้ด้วย job=$CENTRAL_NODE_JOB instance=$CENTRAL_NODE_INSTANCE
+  #   (ปริยาย: central / node-exporter:9100 ตั้งใน docker/.env)
+  # -------------------------------------------------------------------
+  - job_name: central
+    static_configs:
+      - targets:
+          - node-exporter:9100
+        labels:
+          web: central
+          environment: production
+
+  # -------------------------------------------------------------------
+  # สุขภาพของ puller เอง (ssh_pull_success, ssh_pull_errors_total, ...)
+  #   ชื่อ metric ดู start_push_log/puller/metrics.py
+  # -------------------------------------------------------------------
+  - job_name: central-puller
+    static_configs:
+      - targets:
+          - central-puller:8000
+        labels:
+          environment: production
+
+  # ทางเลือก - metrics ของ Docker engine ต้องตั้ง /etc/docker/daemon.json ก่อน:
+  #   { "metrics-addr": "0.0.0.0:9323" }   (restart docker และอย่าลืมจำกัดพอร์ต 9323 ด้วย firewall)
+  # - job_name: docker
+  #   static_configs:
+  #     - targets:
+  #         - host.docker.internal:9323
+  #       labels:
+  #         service: docker-engine
+  #         environment: production
+
+  # ทางเลือก - metrics ของ container (เริ่มด้วย COMPOSE_PROFILES=bundled-prometheus,cadvisor)
+  # - job_name: cadvisor
+  #   static_configs:
+  #     - targets:
+  #         - cadvisor:8080

@@ -1,0 +1,20 @@
+# =====================================================================
+# central-buffer-cleanup.service  (ทางเลือก - ไม่ใช้ Docker)
+# =====================================================================
+# หน้าที่ : ลบไฟล์ใน data/buffer ที่ครบอายุ ตาม storage.buffer_retention ใน puller.yaml
+#           (ทำงานเหมือน container "buffer-cleaner" ใน docker-compose.yml)
+# ใช้เมื่อ: ปิด/ลบ container buffer-cleaner แล้ว และเปิด central-buffer-cleanup.timer
+#           ห้ามเปิดคู่กับ container buffer-cleaner
+# สคริปต์ : start_push_log/cleanup/cleanup-buffer.py (รันครั้งเดียวต่อครั้งที่ timer เรียก)
+# ต้องมี  : python3-yaml และ user ระบบ "central-puller" ที่เขียน data/buffer ได้
+# =====================================================================
+[Unit]
+Description=Delete expired central-puller raw buffer files (retention from puller.yaml)
+
+[Service]
+Type=oneshot
+User=central-puller
+Group=central-puller
+Environment=CENTRAL_CONFIG_FILE=/opt/central-monitor/config/puller.yaml
+Environment=CENTRAL_BUFFER_DIR=/opt/central-monitor/data/buffer
+ExecStart=/usr/bin/python3 /opt/central-monitor/start_push_log/cleanup/cleanup-buffer.py

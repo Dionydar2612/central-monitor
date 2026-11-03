@@ -1,0 +1,26 @@
+# =====================================================================
+# central-puller-docker.service  (ทางเลือก)
+# =====================================================================
+# หน้าที่ : ให้ systemd สั่งเปิด/ปิด container central-puller ผ่าน `docker compose`
+# จำเป็นไหม: ไม่จำเป็น compose มี `restart: unless-stopped` อยู่แล้ว เมื่อ docker.service
+#            เปิดตอนบูต ทุก container จะกลับมาเอง ใช้ไฟล์นี้เมื่ออยากคุมด้วย systemctl
+# ห้ามเปิดคู่กับ : central-puller.service (แบบ native)
+# หมายเหตุ: WorkingDirectory ต้องเป็นโฟลเดอร์ docker/ (ที่มี docker-compose.yml และ .env)
+# =====================================================================
+[Unit]
+Description=Central Log Puller (docker compose wrapper)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/central-monitor/docker
+ExecStart=/usr/bin/docker compose up -d central-puller
+ExecStop=/usr/bin/docker compose stop central-puller
+ExecReload=/usr/bin/docker compose restart central-puller
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+# สรุปการเปลี่ยนแปลง (รอบตรวจ 20 ต.ค. 2026)
+
+## 1) log: เวลา, การกรอง error, การนับ
+| ไฟล์ | เปลี่ยน |
+|---|---|
+| `start_push_log/otel/otelcol.yaml` | ทุก receiver อ่านเวลา ISO ต้นบรรทัด (Z หรือ +07:00, มี/ไม่มีเศษวินาที) เป็นเวลาของ record · เพิ่ม `filelog/other` รับไฟล์ที่ชื่อ source ไม่อยู่ใน 6 ชื่อที่รู้จัก (เดิมถูกลบทิ้งเงียบ ๆ) · multi-line ของ logapp คงเดิม · ตรวจกับ otelcol-contrib 0.160.0 จริงแล้ว |
+| `web_dashboard/backend/log_levels.py` (ใหม่) | จัด ERROR/WARN/INFO: เชื่อระดับที่ log บอกเอง (`level=`, `[ERROR]`, `INFO`) ก่อน · ตัดวลีไม่ใช่ปัญหา (`0 errors`, `errors=0`, `error.log`) · `oom` ใช้ขอบเขตคำ |
+| `web_dashboard/backend/logs_service.py` | เขียนใหม่: สแกนเป็นหน้า ๆ (สูงสุด 10,000 เอกสาร) แล้วกรองเครื่อง · รายการ/ตัวนับ/ตัวกรองคำนวณจากผลสแกนเดียวกัน · เวลาสำรองเมื่อ @timestamp เป็น 1970 (ต้นข้อความ → เวลาดึงไฟล์) · ลบ regex ซ้ำที่ไม่เคยทำงาน |
+| `api.py` | `/api/problems` รับ `level=` และ `type=` · `/api/log-stats` ใหม่ · หน้า Settings แสดงสาเหตุจริงเมื่ออ่าน `puller.yaml` ไม่ได้ (เดิมได้แค่ INTERNAL SERVER ERROR) · `/api/web-status` แสดงเฉพาะเครื่องใน `puller.yaml` ตรงกับหน้า Settings (ไม่มี `central`) |
+| `frontend/index.html, dashboard.js, dashboard.css` | แถบกรอง Level (All/Error/Warn/Info + จำนวน) และ Type ในการ์ด Logs |
+
+## 2) การเคลียร์ข้อมูล
+| ไฟล์ | เปลี่ยน |
+|---|---|
+| `config/puller.yaml` | `buffer_retention` 30m → 2h |
+| `.env.example`, `scripts/apply-ism.py` (ใหม่), policy JSON, `install.sh` | อายุ log ใน OpenSearch ตั้งที่ `OPENSEARCH_LOG_RETENTION` (**ปริยาย 7d** เดิม 90m) · รันซ้ำจะอัปเดต policy จริง (เดิมได้ 409 แล้วค่าใหม่ไม่ถูกใช้) |
+| `puller/scheduler.py, checkpoint.py, system_info.py` | รอบเต็มลบ checkpoint + snapshot + history ของเครื่องที่ถูกลบจาก `puller.yaml` |
+| `puller/system_info.py` | เข้าเครื่องไม่ได้ → ไม่เขียนทับ snapshot เดิมด้วยค่าว่าง |
+
+## 3) แก้ bug / ความเสี่ยง
+- `init-env.sh`: รหัสผ่านที่มี `& | \` ไม่พัง `.env` แล้ว
+- `install.sh --keep`: คง `.env` และ SSH key เดิมตอนอัปเกรด (ไม่ต้อง Deploy key ใหม่ทุกเครื่อง) · แก้เลขขั้นตอนในคอมเมนต์
+- ชื่อเครื่อง `30K3PH4` ไม่ฝังในโค้ดแล้ว → ตั้ง `aliases: [<hostname>]` ใน `puller.yaml` ได้
+- `config/puller.yaml` ที่มากับ zip เริ่มต้นว่าง (`targets: []`) มีตัวอย่างเป็นคอมเมนต์ · หน้า Dashboard ว่างแสดง "No WEB configured" แทนเครื่องตัวอย่าง
+- `classify_event`: "room" / "zoom" ไม่ถูกจัดเป็น OOM อีก
+- เพิ่ม `.dockerignore` (ไม่ส่ง `keys/`, `data/`, `.env` เข้า build context) · ลบไฟล์ `*.bak*` · `.gitignore` ครอบ `*.bak.*`
+
+## ยังไม่ได้ทำ
+- **Windows support** (ไม่มีเครื่องทดสอบ) — ทั้ง ssh_client / system_info / PATH validation / Deploy key / PromQL ยังเป็น Linux ล้วน
+- สแกนดูได้สูงสุด 10,000 เอกสารล่าสุดต่อครั้ง (ข้อจำกัด `max_result_window`) ถ้าเครื่องอื่นส่ง log มากกว่านั้นแซงหน้า log เก่าของเครื่องนี้จะไม่ถูกเห็น

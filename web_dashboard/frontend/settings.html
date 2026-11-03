@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<!--
+  settings.html - หน้า Settings: เพิ่ม/แก้/ลบเครื่อง (targets) ใน config/puller.yaml
+
+  ทำงานอย่างไร
+    settings.js เรียก API ของ web_dashboard/backend/api.py (ตัวทำงานจริงคือ targets_service.py)
+      GET /api/targets  POST /api/targets  PUT/DELETE /api/targets/<ชื่อ>  POST /api/targets/host-key
+      POST /api/targets/<ชื่อ>/deploy-key  (วาง public key ลงเครื่อง target)
+    บันทึกแล้ว puller จะดึงเครื่องนั้นทันที ไม่ต้อง restart อะไร
+  หน้านี้ต้องล็อกอินก่อน (api.py ป้องกันทุกเส้นทาง)
+-->
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor - Settings</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><b>Settings</b><div style="color:var(--mut);font-size:12px;margin-top:2px">เพิ่ม / แก้ไข / ลบเครื่องที่ต้องการดึง log (config/puller.yaml)</div></div>
+<div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><span>Logged in as <b id="currentUsername">...</b></span><button id="logoutButton">Logout</button></div>
+</header>
+
+<section class="card">
+<div class="top"><h2>Targets</h2><button class="st-btn primary" id="addBtn">+ Add target</button></div>
+<div class="tblw"><table>
+<thead><tr><th>Name</th><th>Host</th><th>SSH user</th><th>Log files</th><th>Host key</th><th></th></tr></thead>
+<tbody id="tbody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+</table></div>
+<div class="st-msg" id="listMsg" role="status"></div>
+</section>
+
+<section class="card svc" id="formCard" hidden>
+<div class="top"><h2 id="formTitle">Add target</h2></div>
+<div class="st-grid">
+<div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
+<div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
+<div class="st-f" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div>
+<div class="st-f" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
+<div class="st-f" data-f="prometheus.job"><label for="f_job">Prometheus job</label><input id="f_job" autocomplete="off" placeholder="(อัตโนมัติ: ชื่อเครื่อง-node)"><div class="st-err"></div></div>
+<div class="st-f" data-f="prometheus.instance"><label for="f_inst">node_exporter (host:port)</label><input id="f_inst" autocomplete="off" placeholder="(อัตโนมัติ: host:9100)"><div class="st-err"></div></div>
+</div>
+
+<div class="st-h3">Log files ที่ต้องการดึง</div>
+<div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code></div>
+<div id="logs"></div>
+<div class="st-err" id="logsErr" style="color:#e5484d;font-size:12px;margin-top:6px"></div>
+<button class="st-btn sm" id="addLog" style="margin-top:10px">+ Add log file</button>
+
+<div class="st-h3">SSH host key</div>
+<div class="st-box" id="hkBox">
+<div id="hkStatus" style="color:var(--mut)">-</div>
+<div style="margin-top:10px"><button class="st-btn sm" id="scanBtn">Scan host key</button></div>
+<div id="hkKeys"></div>
+</div>
+
+<div class="st-h3">วาง public key ให้อัตโนมัติ (ไม่บังคับ)</div>
+<div style="color:var(--mut);font-size:13px;margin-bottom:6px">กรอกบัญชีที่ล็อกอินเครื่องปลายทางด้วยรหัสผ่านได้ แล้วกด Save (หรือ Deploy key now) ระบบจะวาง key ให้และลบ key เก่าของ server นี้ · รหัสผ่านใช้ครั้งเดียว ไม่ถูกบันทึก · user ปลายทางต้องมีอยู่แล้ว</div>
+<div class="st-grid">
+<div class="st-f" data-f="admin_user"><label for="dp_admin">Admin user (เว้นว่าง = ใช้ SSH user ด้านบน)</label><input id="dp_admin" autocomplete="off" placeholder="เช่น ubuntu (ต้อง sudo -u ได้)"><div class="st-err"></div></div>
+<div class="st-f" data-f="password"><label for="dp_pass">Password</label><input id="dp_pass" type="password" autocomplete="new-password"><div class="st-err"></div></div>
+</div>
+<div style="margin-top:8px"><button class="st-btn sm" id="deployBtn" type="button">Deploy key now</button> <span id="deployMsg" class="st-msg" role="status"></span></div>
+
+<div class="st-h3">ตั้งค่าบนเครื่องปลายทางเอง (ทางเลือก ถ้าไม่ใช้การวางอัตโนมัติ)</div>
+<div style="color:var(--mut);font-size:13px;margin-bottom:6px">ให้ central ล็อกอินเข้าเครื่องนั้นได้: สร้าง user และวาง public key นี้</div>
+<textarea class="st-code" id="setupCmd" readonly rows="6"></textarea>
+<div style="margin-top:8px"><button class="st-btn sm" id="copyCmd">Copy commands</button> <span id="copyMsg" style="color:var(--mut);font-size:12px"></span></div>
+
+<div class="st-msg" id="formMsg" role="alert"></div>
+<div class="st-row-end"><button class="st-btn" id="cancelBtn">Cancel</button><button class="st-btn primary" id="saveBtn">Save</button></div>
+</section>
+</div>
+<script src="/settings.js"></script>
+</body>
+</html>

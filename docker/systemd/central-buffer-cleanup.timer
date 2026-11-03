@@ -1,0 +1,17 @@
+# =====================================================================
+# central-buffer-cleanup.timer  (ทางเลือก - ไม่ใช้ Docker)
+# =====================================================================
+# หน้าที่ : สั่งให้ central-buffer-cleanup.service ทำงานทุก 10 นาที
+#           (ในโหมด Docker ความถี่นี้ตั้งที่ storage.cleanup_interval ใน puller.yaml)
+# เปิดใช้ : sudo systemctl enable --now central-buffer-cleanup.timer
+# =====================================================================
+[Unit]
+Description=Run central-buffer-cleanup every 10 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

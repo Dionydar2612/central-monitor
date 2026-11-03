@@ -1,0 +1,43 @@
+# =====================================================================
+# central-puller.service  (ทางเลือก - รัน puller แบบ native ไม่ใช้ Docker)
+# =====================================================================
+# หน้าที่ : รัน start_push_log/puller/puller.py เป็นบริการของ systemd
+#           (ทำงานเหมือน container central-puller: SSH -> data/buffer + data/state)
+# เลือกอย่างใดอย่างหนึ่ง: unit นี้ หรือ container central-puller / central-puller-docker.service
+#           ห้ามรันซ้อน เพราะสอง puller จะแย่งเขียน data/state/checkpoints.json
+# ต้องมี  : apt install python3-yaml python3-prometheus-client openssh-client
+#           และ user ระบบ "central-puller" ที่เป็นเจ้าของ data/ และ keys/
+# ตัวแปร Environment ด้านล่างคือค่าเดียวกับที่ docker-compose.yml ตั้งให้ container
+# (ความหมายของแต่ละตัวดู start_push_log/puller/config.py)
+# =====================================================================
+[Unit]
+Description=Central Log & Metric-target Puller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=central-puller
+Group=central-puller
+WorkingDirectory=/opt/central-monitor/start_push_log/puller
+
+Environment=CENTRAL_CONFIG_FILE=/opt/central-monitor/config/puller.yaml
+Environment=CENTRAL_BUFFER_DIR=/opt/central-monitor/data/buffer
+Environment=CENTRAL_STATE_DIR=/opt/central-monitor/data/state
+Environment=CENTRAL_PROMETHEUS_TARGET_FILE=/opt/central-monitor/data/prometheus/web-nodes.json
+Environment=CENTRAL_SSH_KEY=/opt/central-monitor/keys/central_ed25519
+Environment=CENTRAL_SSH_KNOWN_HOSTS=/opt/central-monitor/keys/known_hosts
+
+ExecStart=/usr/bin/python3 /opt/central-monitor/start_push_log/puller/puller.py
+Restart=on-failure
+RestartSec=10
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/central-monitor/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

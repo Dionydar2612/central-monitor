@@ -1,0 +1,844 @@
+/* =====================================================================
+   dashboard.css - หน้าตาของหน้า dashboard (index.html)
+   =====================================================================
+   โครงของไฟล์
+     1. ตัวแปรสี (theme)         สว่าง/มืด ตามการตั้งค่าเครื่อง (prefers-color-scheme)
+     2. พื้นฐานหน้า + การ์ด + ตาราง
+     3. การ์ด KPI, กราฟ, แท่ง %, สถานะ service
+     4. ตัวเลือกช่วงเวลา (time picker) + ปฏิทิน
+     5. ปุ่มเลือกเครื่อง, แถบข้อมูลสรุป, แถบผู้ใช้
+     6. Responsive (จอเล็ก)
+     7. หน้าต่างรายละเอียด log (modal)
+     8. พื้นที่เลื่อนของตาราง/รายการ
+   สีทั้งหมดใช้ผ่านตัวแปร var(--...) -> แก้ธีมที่บรรทัดแรก ๆ ที่เดียว
+   ชื่อคลาส/id ผูกกับ dashboard.js และ index.html
+   ===================================================================== */
+
+/* ---- 1. ตัวแปรสี: ธีมสว่าง (ค่าเริ่มต้น) ---- */
+:root{--bg:#f7f9fd;--card:#fff;--line:#e6ecf5;--ink:#0f1a33;--mut:#5b6b8c;--blue:#1f7bff;--soft:#c3d3ee;--good:#10c27a;--chip:#eef2f8;--fill:rgba(31,123,255,.14)}
+/* ธีมมืดอัตโนมัติ ตามค่าของระบบ (บังคับสว่างได้ด้วย data-theme="light") */
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1424;--card:#141d32;--line:#22304d;--ink:#eaf0fc;--mut:#8fa0c2;--soft:#3a4b70;--chip:#1c2841;--fill:rgba(31,123,255,.22)}}
+/* บังคับธีมมืดด้วย data-theme="dark" */
+:root[data-theme="dark"]{--bg:#0d1424;--card:#141d32;--line:#22304d;--ink:#eaf0fc;--mut:#8fa0c2;--soft:#3a4b70;--chip:#1c2841;--fill:rgba(31,123,255,.22)}
+/* ---- 2. พื้นฐานหน้า: เว้นขอบบน/ล่างให้พ้นแถบระบบของมือถือ (safe area) ---- */
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 20px 32px}
+header{display:flex;justify-content:space-between;flex-wrap:wrap;align-items:center;gap:14px;margin-bottom:18px}
+header b{font-weight:500;font-size:18px}header span{color:var(--mut);font-size:13px}
+/* เลย์เอาต์ตาราง (grid): .kpis 4 ช่อง, .main กราฟ+service, .two 2 ช่อง */
+.grid{display:grid;gap:16px}
+.kpis{grid-template-columns:repeat(4,1fr)}.two{grid-template-columns:1fr 1fr;margin-top:16px}.row{display:flex;align-items:center;gap:10px;padding:11px 0;font-size:14px;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}.row span:last-child{margin-left:auto;color:var(--mut);font-size:13px}.svcs{margin-top:8px}
+.main{grid-template-columns:2.2fr 1fr;margin-top:16px}
+/* การ์ดพื้นฐาน ใช้ทุกกล่องในหน้า */
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;min-width:0}
+h2{margin:0;font-size:17px;font-weight:600}
+/* ---- 3. การ์ด KPI (.k): ตัวเลขใหญ่ + ▲▼ + เส้นกราฟเล็ก ---- */
+.k{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.k small{color:var(--mut);font-size:13px;letter-spacing:.02em}
+.k .v{font-size:38px;font-weight:600;line-height:1.15;margin:6px 0 4px}
+.k .d{font-size:13px;color:var(--mut)}.d i{font-style:normal;color:var(--good);font-weight:600;margin-right:6px}
+.k svg{width:40%;height:64px;flex:none}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px}
+.tabs{display:flex;gap:6px}
+.tabs button{border:0;background:var(--chip);color:var(--mut);font:500 12px inherit;font-family:inherit;padding:7px 14px;border-radius:7px;cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--blue);color:#fff}
+button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+/* กราฟ System Load (SVG #load) */
+#load{width:100%;height:auto;display:block}
+/* วงกลม donut + legend (ชุดเก่า เผื่อใช้ ปัจจุบัน dashboard.js ยังไม่ได้ใช้) */
+.donut{position:relative;width:200px;height:200px;margin:14px auto 10px}
+.donut svg{width:100%;height:100%;transform:rotate(-90deg)}
+.donut div{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.donut b{font-size:38px;font-weight:600;letter-spacing:.02em}.donut span{font-size:13px;color:var(--mut);margin-top:2px}
+.lg{display:flex;align-items:center;gap:10px;padding:12px 0;font-size:14px;color:var(--mut)}
+.lg+.lg{border-top:1px solid var(--line)}.lg em{width:10px;height:10px;border-radius:50%;flex:none}.lg b{margin-left:auto;color:var(--ink);font-weight:500}
+.svc{margin-top:16px}
+/* ตาราง (.tblw คือกรอบที่เลื่อนแนวนอนได้) */
+.tblw{overflow-x:auto;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:420px}
+th{font-weight:500;color:var(--mut);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px}
+td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border-bottom:0}
+/* จุดสีหน้าชื่อ service: เขียว=ปกติ (.st), เหลือง=.w, แดง=.e */
+.st{display:inline-flex;align-items:center;gap:6px}.st::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--good)}
+.st.w::before{background:#f5a524}
+/* แท่งเปอร์เซ็นต์ในตาราง process */
+.bar{display:flex;align-items:center;gap:10px}.bar u{display:block;height:6px;border-radius:3px;background:var(--chip);flex:1;min-width:80px;text-decoration:none;overflow:hidden}
+.bar u i{display:block;height:100%;background:var(--blue);border-radius:3px}.bar b{width:44px;text-align:right;font-weight:500}
+/* ---- 4. ตัวเลือกช่วงเวลา (.tp): กล่องด้านบน, เมนูด่วน #menu, กล่องวันที่ #dates, ปฏิทิน #cal ---- */
+.tp{position:relative;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tpbox{display:flex;align-items:center;height:38px;background:var(--card);border:1px solid var(--line);border-radius:6px;min-width:300px}
+.tpbox button,#rf{font:500 14px inherit;font-family:inherit;color:var(--ink);background:none;border:0;cursor:pointer}
+.tpbox #qb{display:flex;align-items:center;gap:4px;padding:0 10px;height:100%;color:var(--blue);border-right:1px solid var(--line)}
+.tpbox #lbl{flex:1;text-align:left;padding:0 12px;height:100%;white-space:nowrap}
+.tpbox #sd{color:var(--blue);padding:0 14px;height:100%}
+#rf{height:38px;padding:0 16px;border:1px solid var(--blue);border-radius:6px;color:var(--blue);background:var(--card);display:flex;align-items:center;gap:8px}
+#rf:hover,.tpbox button:hover{background:var(--chip)}
+.pop{position:absolute;top:44px;left:0;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(15,26,51,.15);padding:6px}
+.pop[hidden]{display:none}
+#menu{width:220px}#menu button{display:block;width:100%;text-align:left;padding:8px 10px;border-radius:6px;font:14px inherit;font-family:inherit;color:var(--ink);background:none;border:0;cursor:pointer}
+#menu button:hover{background:var(--chip)}#menu button[aria-current="true"]{color:var(--blue);font-weight:600}
+#dates{left:auto;right:0;padding:14px;display:grid;gap:10px;width:280px}#dates label{font-size:12px;color:var(--mut);display:grid;gap:4px}
+#dates input{font:14px inherit;font-family:inherit;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+#ap{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:9px;font:600 14px inherit;font-family:inherit;cursor:pointer}
+#dates{width:290px}.dfield{display:grid;gap:4px}.dfield small{font-size:12px;color:var(--mut)}
+.dfield button{font:14px inherit;font-family:inherit;text-align:left;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);cursor:pointer}
+.dfield button[aria-expanded="true"]{border-color:var(--blue)}
+#cal{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:8px}#cal[hidden]{display:none}
+.ch{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:14px}
+.ch button{width:28px;height:28px;background:var(--chip);color:var(--ink);border-radius:6px;padding:0}
+.cg{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}.cg span{font-size:11px;color:var(--mut);padding:4px 0}
+.cg button{background:none;color:var(--ink);padding:7px 0;font:13px inherit;font-family:inherit;border-radius:6px}.cg button:hover{background:var(--chip)}
+.cg button.sel{background:var(--blue);color:#fff}.cg button.td{border:1px solid var(--blue)}
+.ct{display:flex;gap:8px;align-items:center}.ct input{flex:1;font:14px inherit;font-family:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+#nw{background:var(--chip);color:var(--blue);padding:7px 12px;border-radius:6px;font:600 13px inherit;font-family:inherit}
+#err{color:#e5484d;font-size:12px;margin:0}#err:empty{display:none}
+/* ---- 5. การ์ด WEB status: ปุ่มเลือกเครื่อง (.chip, .dn=DOWN, .wn=ไม่ทราบสถานะ) ---- */
+.mach{margin-bottom:16px}.chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+.chip{display:flex;align-items:center;gap:12px;min-width:170px;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:500 14px inherit;font-family:inherit;cursor:pointer;text-align:left}
+.chip[aria-pressed="true"]{border-color:var(--blue);background:var(--fill)}.chip:hover{border-color:var(--blue)}
+.chip b{font-size:12px;margin-left:auto;color:var(--good)}.chip.dn b{color:#e5484d}.chip.wn b{color:#f5a524}
+/* แถบผู้ใช้ + ปุ่ม Logout */
+.user{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mut)}.user b{color:var(--ink);font-weight:600}
+.user button{font:500 13px inherit;font-family:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;cursor:pointer}
+/* ตาราง Logs: สีระดับ (.lv), ข้อความยาวตัดด้วย ... (.msg), แถวที่คลิกได้ (.pl) */
+.lv{color:#e5484d;font-weight:600}.msg{max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl td{white-space:nowrap}.pl tbody tr:hover{background:var(--chip);cursor:pointer}.empty{color:var(--mut);padding:20px 0;text-align:center}
+.st.e::before{background:#e5484d}
+/* แถบข้อมูลสรุปใต้ปุ่มเครื่อง (#meta) */
+.mm{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;color:var(--mut)}.mm b{color:var(--ink);font-weight:600;margin-left:4px}
+/* legend ของกราฟ (CPU / Memory) และรายการ System events (.evl) */
+.lgd{display:flex;gap:16px;font-size:12px;color:var(--mut);margin:0 0 6px}.lgd i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.evl .row span:first-child{color:var(--mut);font-size:13px;min-width:150px}.evl .row span:nth-child(2){margin-left:0;color:var(--ink);font-size:14px;min-width:130px}.evl .row span:last-child{margin-left:0;color:var(--ink);font-size:14px}
+/* สีสถานะตัวอักษร: .ok เขียว, .bad แดง, .wr เหลือง */
+.ok{color:var(--good)}.bad{color:#e5484d}.wr{color:#f5a524}
+/* ---- 6. Responsive: จอแคบกว่า 1100px/900px จัดเป็น 2 คอลัมน์/คอลัมน์เดียว ---- */
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.kpis,.main,.two{grid-template-columns:1fr}.k .v{font-size:38px}}
+
+/* ---- 7. หน้าต่างรายละเอียด log (สร้างโดย showProblemModal ใน dashboard.js) ---- */
+/* ---- Problem detail popup ---- */
+
+
+.problem-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.problem-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(8,14,28,.6);
+    backdrop-filter: blur(5px);
+}
+
+.problem-modal-dialog {
+    position: relative;
+    z-index: 2;
+    width: min(980px, 94vw);
+    max-height: 88vh;
+    overflow: hidden;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+}
+
+.problem-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+    flex-shrink: 0;
+}
+
+.problem-modal-title {
+    font-size: 19px;
+    font-weight: 700;
+}
+
+.problem-modal-subtitle {
+    color: var(--mut);
+    margin-top: 5px;
+    font-size: 13px;
+}
+
+.modal-close {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 8px;
+    font-size: 23px;
+    line-height: 1;
+}
+
+.problem-modal-body {
+    padding: 20px 22px 24px;
+    overflow-y: auto;
+}
+
+.modal-info-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1.3fr;
+    gap: 10px;
+    margin-bottom: 22px;
+}
+
+.modal-info-grid > div {
+    background: var(--chip);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 11px 13px;
+}
+
+.modal-info-grid span {
+    display: block;
+    color: var(--mut);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+}
+
+.modal-info-grid strong {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.modal-error {
+    color: #e5484d;
+}
+
+.modal-block {
+    margin-top: 20px;
+}
+
+.modal-block-title {
+    color: var(--mut);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.modal-message {
+    margin: 0;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-left: 3px solid #e5484d;
+    border-radius: 8px;
+    padding: 15px 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--ink);
+}
+
+.modal-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.modal-metric {
+    background: var(--chip);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.modal-metric-label {
+    color: var(--mut);
+    font-size: 10px;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+}
+
+.modal-metric-value {
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.modal-raw-details {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.modal-raw-details summary {
+    cursor: pointer;
+    padding: 12px 14px;
+    color: var(--mut);
+    font-size: 12px;
+    font-weight: 600;
+    user-select: none;
+}
+
+.modal-raw-details summary:hover {
+    background: var(--chip);
+}
+
+.modal-raw {
+    margin: 0;
+    padding: 14px;
+    max-height: 280px;
+    overflow: auto;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--mut);
+}
+
+.modal-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.modal-metric {
+    background: var(--chip);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.modal-metric-label {
+    color: var(--mut);
+    font-size: 11px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.modal-metric-value {
+    font-size: 17px;
+    font-weight: 700;
+}
+#dates[hidden]{display:none}
+
+/* ---- 8. พื้นที่เลื่อน: ตาราง/รายการยาวเลื่อนในกรอบ ไม่ยืดหน้าเว็บ (เดิมหน้ายาวเหมือน PDF) ---- */
+/* ---- Scrollable panels (no more endless PDF-like page) ---- */
+.scroll{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--soft) transparent}
+.svcs{max-height:300px;overflow-y:auto;padding-right:6px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--soft) transparent}
+.main>.card{display:flex;flex-direction:column}
+.main>.card .svcs{flex:1;max-height:300px}
+.evl.scroll{max-height:260px}
+.procscroll{max-height:320px}
+.logscroll{max-height:460px}
+.logscroll thead th,.procscroll thead th{position:sticky;top:0;background:var(--card);z-index:1}
+.cnt{color:var(--mut);font-size:13px}
+.lv.info{color:var(--mut)}.lv.warn{color:#f5a524}
+.pl .msg{max-width:520px}
+
+/* =====================================================================
+   9. หน้า Settings (settings.html / settings.js) - คลาสขึ้นต้นด้วย st-
+   ===================================================================== */
+.st-nav{display:inline-flex;align-items:center;gap:6px;font:500 13px inherit;font-family:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;text-decoration:none}
+.st-nav:hover{border-color:var(--blue)}
+.st-btn{font:500 14px inherit;font-family:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px;padding:8px 14px;cursor:pointer}
+.st-btn:hover{border-color:var(--blue)}
+.st-btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.st-btn.danger{color:#e5484d}.st-btn.danger:hover{border-color:#e5484d}
+.st-btn.sm{font-size:13px;padding:5px 10px}
+.st-btn:disabled{opacity:.55;cursor:default}
+.st-actions{display:flex;gap:8px;justify-content:flex-end;white-space:nowrap}
+.st-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-top:14px}
+.st-f label{display:block;font-size:13px;color:var(--mut);margin-bottom:5px}
+.st-f input,.st-f select{width:100%;font:14px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:9px 10px}
+.st-f input:focus,.st-f select:focus{outline:2px solid var(--blue);outline-offset:0;border-color:var(--blue)}
+.st-f input:disabled{opacity:.6}
+.st-f small{display:block;color:var(--mut);font-size:12px;margin-top:4px}
+.st-f .st-err{color:#e5484d;font-size:12px;margin-top:4px}
+.st-f.has-err input{border-color:#e5484d}
+.st-h3{font-size:15px;font-weight:600;margin:22px 0 6px}
+.st-logrow{display:grid;grid-template-columns:150px 1fr 120px auto;gap:10px;align-items:start;margin-top:10px}
+.st-logrow .st-f label{display:none}
+.st-box{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:12px 14px;margin-top:10px;font-size:14px}
+.st-fp{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all;color:var(--mut)}
+.st-fp b{color:var(--ink);font-weight:600}
+.st-code{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;resize:vertical;min-height:70px}
+.st-msg{margin-top:12px;font-size:14px}
+.st-msg.ok{color:var(--good)}.st-msg.bad{color:#e5484d}
+.st-row-end{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;flex-wrap:wrap}
+@media (max-width:720px){.st-logrow{grid-template-columns:1fr}.st-logrow .st-f label{display:block}}
+
+/* =========================================================
+   SERVICE LIST - จัดรายการ service ให้เป็นระเบียบ
+   จำกัดความสูงและ scroll เฉพาะรายการ
+   ========================================================= */
+
+.svcs {
+    margin-top: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px 6px 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--soft) transparent;
+}
+
+/* Chrome / Edge scrollbar */
+.svcs::-webkit-scrollbar {
+    width: 7px;
+}
+
+.svcs::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.svcs::-webkit-scrollbar-thumb {
+    background: var(--soft);
+    border-radius: 10px;
+}
+
+/* Service แต่ละรายการ */
+.svcs .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+
+    min-height: 44px;
+    padding: 9px 12px;
+
+    margin: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+
+    background: var(--bg);
+
+    font-size: 14px;
+}
+
+/* เอาเส้น border-top เดิมออก */
+.svcs .row,
+.svcs .row:first-of-type {
+    border-top: 1px solid var(--line);
+}
+
+/* ชื่อ service */
+.svcs .row .st {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-weight: 600;
+    color: var(--ink);
+}
+
+/* จุดสถานะ + ชื่อ */
+.svcs .row .st::before {
+    flex: 0 0 auto;
+}
+
+/* สถานะด้านขวา */
+.svcs .row span:last-child {
+    margin-left: 0;
+    min-width: 76px;
+
+    text-align: right;
+    color: var(--mut);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* hover */
+.svcs .row:hover {
+    border-color: var(--soft);
+    background: var(--chip);
+}
+
+/* ไม่มีข้อมูล */
+.svcs .empty {
+    padding: 20px 10px;
+    text-align: center;
+}
+
+/* ในการ์ดด้านขวา ให้รายการใช้พื้นที่ที่เหมาะสม */
+.main > .card .svcs {
+    flex: 0 1 auto;
+    max-height: 300px;
+}
+
+/* จอเล็ก */
+@media (max-width: 600px) {
+    .svcs {
+        max-height: 260px;
+    }
+
+    .svcs .row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        min-height: 42px;
+        padding: 8px 10px;
+    }
+
+    .svcs .row span:last-child {
+        min-width: 65px;
+    }
+}
+
+
+/* =========================================================
+   Problem Log -> Services
+   จำกัดความสูง + scroll + จัด 2 คอลัมน์
+   ========================================================= */
+
+.dynamic-service-list {
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    padding: 4px 6px 4px 0;
+
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--soft) transparent;
+}
+
+/* Chrome / Edge */
+.dynamic-service-list::-webkit-scrollbar {
+    width: 7px;
+}
+
+.dynamic-service-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.dynamic-service-list::-webkit-scrollbar-thumb {
+    background: var(--soft);
+    border-radius: 10px;
+}
+
+/* Service แต่ละแถว */
+.dynamic-service-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 100px;
+    align-items: center;
+    gap: 14px;
+
+    min-height: 42px;
+    padding: 8px 12px;
+
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+
+    box-sizing: border-box;
+}
+
+/* เอาเส้นของแถวสุดท้ายออก */
+.dynamic-service-row:last-child {
+    border-bottom: 0;
+}
+
+/* ชื่อ service */
+.dynamic-service-row > div:first-child {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.dynamic-service-row strong {
+    display: block;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+}
+
+/* สถานะ */
+.dynamic-service-row > div:last-child {
+    text-align: right;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-size: 13px;
+    color: var(--mut);
+}
+
+/* hover */
+.dynamic-service-row:hover {
+    background: var(--chip);
+}
+
+/* จอเล็ก */
+@media (max-width: 600px) {
+    .dynamic-service-list {
+        max-height: 260px;
+    }
+
+    .dynamic-service-row {
+        grid-template-columns: minmax(0, 1fr) 80px;
+        gap: 8px;
+        padding: 8px 10px;
+    }
+}
+
+
+/* =========================================================
+   Problem Log
+   TOP PROCESSES + SYSTEM EVENTS
+   จำกัดขนาด + scroll แยกแต่ละส่วน
+   ========================================================= */
+
+/* ---------- TOP PROCESSES ---------- */
+
+.dynamic-process-list {
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    display: flex;
+    flex-direction: column;
+
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--soft) transparent;
+}
+
+.dynamic-process-list::-webkit-scrollbar {
+    width: 7px;
+}
+
+.dynamic-process-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.dynamic-process-list::-webkit-scrollbar-thumb {
+    background: var(--soft);
+    border-radius: 10px;
+}
+
+.dynamic-process-row {
+    display: grid;
+
+    /* ชื่อ | CPU | MEM */
+    grid-template-columns: minmax(0, 1fr) 110px 110px;
+
+    align-items: center;
+    gap: 12px;
+
+    min-height: 44px;
+    padding: 8px 12px;
+
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+
+    box-sizing: border-box;
+}
+
+.dynamic-process-row:last-child {
+    border-bottom: 0;
+}
+
+.dynamic-process-row:hover {
+    background: var(--chip);
+}
+
+/* process name */
+.dynamic-process-row strong {
+    min-width: 0;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+}
+
+/* CPU / MEM */
+.dynamic-process-row span {
+    text-align: right;
+
+    white-space: nowrap;
+
+    font-size: 13px;
+    color: var(--mut);
+}
+
+
+/* ---------- SYSTEM EVENTS ---------- */
+
+.dynamic-event-list {
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    display: flex;
+    flex-direction: column;
+
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--soft) transparent;
+}
+
+.dynamic-event-list::-webkit-scrollbar {
+    width: 7px;
+}
+
+.dynamic-event-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.dynamic-event-list::-webkit-scrollbar-thumb {
+    background: var(--soft);
+    border-radius: 10px;
+}
+
+.dynamic-event-row {
+    display: grid;
+
+    /* เวลา | ประเภท | message */
+    grid-template-columns: 165px 120px minmax(0, 1fr);
+
+    align-items: start;
+    gap: 12px;
+
+    padding: 10px 12px;
+
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+
+    box-sizing: border-box;
+}
+
+.dynamic-event-row:last-child {
+    border-bottom: 0;
+}
+
+.dynamic-event-row:hover {
+    background: var(--chip);
+}
+
+/* เวลา */
+.dynamic-event-time {
+    color: var(--mut);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* event type */
+.dynamic-event-row .problem-type {
+    color: #e5484d;
+    font-size: 12px;
+    font-weight: 600;
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* message */
+.dynamic-event-row .problem-message {
+    min-width: 0;
+
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.5;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    /* จำกัดข้อความไม่ให้สูงเกิน */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 700px) {
+
+    .dynamic-process-list {
+        max-height: 280px;
+    }
+
+    .dynamic-process-row {
+        grid-template-columns: minmax(0, 1fr) 85px 85px;
+        gap: 8px;
+        padding: 8px 10px;
+    }
+
+    .dynamic-process-row span {
+        font-size: 12px;
+    }
+
+
+    .dynamic-event-list {
+        max-height: 300px;
+    }
+
+    .dynamic-event-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+    }
+
+    .dynamic-event-time {
+        font-size: 11px;
+    }
+
+    .dynamic-event-row .problem-type {
+        font-size: 12px;
+    }
+
+    .dynamic-event-row .problem-message {
+        -webkit-line-clamp: 4;
+    }
+}
+
+/* ---- ตัวกรอง log: ระดับ (.tabs) + ชนิด (select) + ข้อความสรุป ---- */
+.lvbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:12px 0 10px}
+.lvbar .tabs button{display:inline-flex;gap:6px;align-items:center}
+.lvbar .tabs button i{font-style:normal;opacity:.75;font-weight:400}
+.lvbar .tabs button:focus-visible,.lvtype select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.lvtype{display:inline-flex;align-items:center;gap:8px;color:var(--mut);font-size:13px}
+.lvtype select{font:13px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.lvstat{color:var(--mut);font-size:13px;margin-left:auto}

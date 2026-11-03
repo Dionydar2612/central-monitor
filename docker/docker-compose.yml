@@ -1,0 +1,379 @@
+# =====================================================================
+# central-monitor - Docker stack (ไฟล์เดียวที่คุมทุก container)
+# =====================================================================
+#
+# วิธีใช้: รัน `docker compose ...` จากโฟลเดอร์นี้ (docker/) เสมอ
+#          ตัวแปรลับ/ตัวเลือกอ่านจาก docker/.env (สร้างด้วย scripts/init-env.sh)
+#
+# ภาพรวมของ service แยกตามระบบ
+#
+#   [1] start_push_log  = ดึง log จากเครื่องอื่น -> OpenSearch
+#         central-puller   ดึง log + สถานะเครื่องผ่าน SSH -> data/buffer, data/state
+#         buffer-init      (ครั้งเดียว) เตรียมสิทธิ์โฟลเดอร์ให้ otel เขียนได้
+#         otel             อ่าน data/buffer -> ส่งเข้า OpenSearch
+#         opensearch       ที่เก็บ log
+#         buffer-cleaner   ลบไฟล์ใน data/buffer ที่ครบอายุ (retention อยู่ใน config/puller.yaml)
+#
+#   [2] web_dashboard   = หน้าเว็บ
+#         central-api      Flask API + หน้าเว็บ (พอร์ต 127.0.0.1:8090)
+#         dashboards       OpenSearch Dashboards (ทางเลือก ค้น log ตรง ๆ, พอร์ต 127.0.0.1:5601)
+#
+#   [3] metrics         = ตัวชี้วัด CPU/RAM/Disk
+#         prometheus       เก็บ metrics (เฉพาะโหมด bundled-prometheus)
+#         node-exporter    metrics ของเครื่อง central เอง (เฉพาะโหมด bundled-prometheus)
+#         cadvisor         metrics ของ container (ทางเลือก, profile cadvisor)
+#
+# ตัวเลือก "profiles" เลือกใน docker/.env ที่ตัวแปร COMPOSE_PROFILES
+#   COMPOSE_PROFILES=bundled-prometheus            ใช้ Prometheus ที่มากับ stack (ค่าเริ่มต้น)
+#   COMPOSE_PROFILES=                              ใช้ Prometheus ที่มีอยู่แล้วบน server
+#   COMPOSE_PROFILES=bundled-prometheus,cadvisor   เพิ่ม cAdvisor (ใช้สิทธิ์ privileged)
+#
+# path ในไฟล์นี้ใช้ ".." เพราะไฟล์อยู่ใน docker/ แต่ข้อมูลอยู่ที่โฟลเดอร์ราก
+#   ../config  ../data  ../keys  ../start_push_log  ../metrics
+# =====================================================================
+
+# ตั้งชื่อ project คงที่ -> ชื่อ network/volume เหมือนเดิมแม้ย้ายโฟลเดอร์
+name: central-monitor
+
+services:
+
+  # ===================================================================
+  # [1] start_push_log
+  # ===================================================================
+
+  # ---------------------------------------------------------------
+  # central-puller : SSH ไปเครื่อง web -> เขียนไฟล์ log ลง data/buffer
+  #                  + เก็บสถานะเครื่อง (data/state/system) + สร้าง web-nodes.json
+  # โค้ด: start_push_log/puller/   ตั้งค่า: config/puller.yaml
+  # ---------------------------------------------------------------
+  central-puller:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/puller.Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    container_name: central-puller
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # ไม่รันเป็น root -> ไฟล์ใน data/ config/ เป็นของ user บน host
+    hostname: central-puller
+    command:
+      - python3
+      - /app/puller.py
+    networks:
+      - central-net
+    restart: unless-stopped
+    volumes:
+      # mount ทั้งโฟลเดอร์ keys/ (มีอยู่เสมอ Docker จึงไม่สร้าง "โฟลเดอร์" ทับไฟล์ที่ลืมสร้าง)
+      # ไฟล์ที่ต้องมี: keys/central_ed25519 (private key, chmod 600)
+      #                keys/known_hosts     (สร้างด้วย ssh-keyscan, ดู docs/INSTALL-TH.md ข้อ 7)
+      - ../keys:/run/keys:ro
+      # data/ : buffer (ส่งต่อ otel), state (checkpoint + snapshot), prometheus (web-nodes.json)
+      - ../data:/data
+      # config/puller.yaml (อ่านอย่างเดียว)
+      - ../config:/app/config:ro
+    environment:
+      TZ: Asia/Bangkok
+      CENTRAL_SSH_KEY: /run/keys/central_ed25519
+      CENTRAL_SSH_KNOWN_HOSTS: /run/keys/known_hosts
+    # puller เปิด /metrics ที่พอร์ต 8000 -> ใช้เช็คว่าโปรเซสยังทำงาน
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/metrics', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+
+  # ---------------------------------------------------------------
+  # opensearch : ที่เก็บ log (เข้าถึงได้เฉพาะใน network ภายใน ไม่เปิดพอร์ตออก host)
+  # ข้อกำหนดของ host: sysctl vm.max_map_count=262144 (scripts/preflight.sh ตรวจให้)
+  # นโยบายลบ index อัตโนมัติ: start_push_log/opensearch/central-log-retention-ism-policy.json
+  # ---------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:3.8.0
+    container_name: central-opensearch
+    hostname: opensearch
+    env_file:
+      - .env
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      # ขนาด heap 512MB พอสำหรับ log ปริมาณน้อย ถ้า log เยอะให้เพิ่มทั้ง 2 ค่าพร้อมกัน
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # รหัสผ่านถูกกำหนดครั้งแรกที่สร้าง volume (เปลี่ยนภายหลังต้องทำมือ ดู INSTALL-TH.md)
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - central-net
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    restart: unless-stopped
+
+
+  # ---------------------------------------------------------------
+  # buffer-init : รันครั้งเดียวแล้วจบ (restart: "no")
+  # image ของ otel รันด้วย uid 10001 ต้องสร้างโฟลเดอร์ data/buffer/.otel-storage
+  # (ที่เก็บตำแหน่งที่อ่านไฟล์) ได้ การเตรียมสิทธิ์ที่นี่ทำให้ไม่ต้อง chown เอง
+  # ---------------------------------------------------------------
+  buffer-init:
+    image: alpine:3.22
+    container_name: central-buffer-init
+    command:
+      - /bin/sh
+      - -c
+      - "mkdir -p /data/buffer/.otel-storage && chown -R 10001:10001 /data/buffer/.otel-storage && chmod 755 /data/buffer"
+    volumes:
+      - ../data/buffer:/data/buffer
+    restart: "no"
+
+
+  # ---------------------------------------------------------------
+  # otel : OpenTelemetry Collector
+  #        อ่านไฟล์ data/buffer/*.log (ที่ puller วาง) -> แยก parser ตามชนิด -> OpenSearch
+  # ตั้งค่า: start_push_log/otel/otelcol.yaml
+  # ---------------------------------------------------------------
+  otel:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    container_name: central-otel
+    hostname: otel
+    command:
+      - --config=/etc/otelcol/config.yaml
+    depends_on:
+      opensearch:
+        condition: service_started
+      buffer-init:
+        condition: service_completed_successfully
+    networks:
+      - central-net
+    volumes:
+      - ../start_push_log/otel/otelcol.yaml:/etc/otelcol/config.yaml:ro
+      - ../data/buffer:/data/buffer
+    env_file:
+      - .env          # ใช้ OPENSEARCH_ADMIN_PASSWORD ใน otelcol.yaml
+    environment:
+      TZ: Asia/Bangkok
+    restart: unless-stopped
+
+
+  # ---------------------------------------------------------------
+  # buffer-cleaner : ลบไฟล์ใน data/buffer ที่เก่ากว่า storage.buffer_retention
+  # ใช้ image เดียวกับ puller (มี python + yaml) รัน cleanup-buffer.py แบบวนต่อเนื่อง
+  # ค่า retention และความถี่ (storage.cleanup_interval) อ่านจาก config/puller.yaml
+  # ที่เดียว -> แก้ค่าแล้วมีผลรอบถัดไป ไม่ต้อง restart และไม่มีตัวเลขซ้ำในไฟล์นี้
+  # ---------------------------------------------------------------
+  buffer-cleaner:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/puller.Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    container_name: central-buffer-cleaner
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # ไม่รันเป็น root -> ไฟล์ใน data/ config/ เป็นของ user บน host
+    command:
+      - python3
+      - /app/cleanup/cleanup-buffer.py
+      - --loop
+    volumes:
+      - ../data/buffer:/data/buffer
+      - ../config:/app/config:ro
+    environment:
+      TZ: Asia/Bangkok
+    restart: unless-stopped
+
+
+  # ===================================================================
+  # [2] web_dashboard
+  # ===================================================================
+
+  # ---------------------------------------------------------------
+  # central-api : Flask API + หน้าเว็บ (เปิดเฉพาะ 127.0.0.1:8090 -> วาง nginx/HTTPS ด้านหน้า)
+  # รวมข้อมูล 3 แหล่ง: metrics (Prometheus), log (OpenSearch), สถานะเครื่อง (data/state)
+  # โค้ด: web_dashboard/backend/ (API)  web_dashboard/frontend/ (หน้าเว็บ)
+  # ---------------------------------------------------------------
+  central-api:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/web.Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    container_name: central-api
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # ไม่รันเป็น root -> ไฟล์ใน data/ config/ เป็นของ user บน host
+    hostname: central-api
+    command:
+      - gunicorn
+      - --chdir
+      - /app
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "2"
+      - --threads
+      - "4"
+      - --timeout
+      - "60"
+      - api:app
+    working_dir: /app
+    env_file:
+      - .env          # CENTRAL_AUTH_*, CENTRAL_SECRET_KEY, OPENSEARCH_ADMIN_PASSWORD
+    environment:
+      TZ: Asia/Bangkok
+      # แหล่ง metrics สด
+      #   Prometheus ที่มากับ stack    -> http://prometheus:9090
+      #   Prometheus ที่มีอยู่บน server -> http://host.docker.internal:9090
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      # label ใน Prometheus ของเครื่อง central เอง (ที่ UI เรียกว่า "central")
+      CENTRAL_NODE_JOB: ${CENTRAL_NODE_JOB:-central}
+      CENTRAL_NODE_INSTANCE: ${CENTRAL_NODE_INSTANCE:-node-exporter:9100}
+      # เปลี่ยนเป็น true เมื่อเข้าเว็บผ่าน HTTPS
+      CENTRAL_COOKIE_SECURE: ${CENTRAL_COOKIE_SECURE:-false}
+      # (ไม่บังคับ) ใส่ from="<IP>" หน้า public key ตอนวางลงเครื่อง target จากหน้า Settings
+      CENTRAL_KEY_FROM: ${CENTRAL_KEY_FROM:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # ให้ container เรียก Prometheus บน host ได้
+    networks:
+      - central-net
+    ports:
+      - "127.0.0.1:8090:8000"
+    restart: unless-stopped
+    volumes:
+      - ../data:/data                # อ่าน data/state (checkpoint + snapshot เครื่อง)
+                                     #   เขียน: web-nodes.json + pull-now.json (หน้า Settings)
+      # เขียนได้: หน้า Settings เพิ่ม/แก้/ลบเครื่องใน puller.yaml (ไม่ใช้หน้า Settings ก็เปลี่ยนเป็น :ro ได้)
+      - ../config:/app/config
+      # เฉพาะ 2 ไฟล์ (ไม่ mount private key): known_hosts เขียนได้ (เก็บ host key), public key อ่านอย่างเดียว
+      - ../keys/known_hosts:/run/keys/known_hosts
+      - ../keys/central_ed25519.pub:/run/keys/central_ed25519.pub:ro
+    depends_on:
+      - opensearch
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+
+  # ---------------------------------------------------------------
+  # dashboards : OpenSearch Dashboards (ค้น/ดู log ตรง ๆ) เปิดเฉพาะ 127.0.0.1:5601
+  # เข้าผ่าน SSH tunnel   ไม่จำเป็นต่อการทำงานของระบบ (ลบ service นี้ได้)
+  # ---------------------------------------------------------------
+  dashboards:
+    image: opensearchproject/opensearch-dashboards:3.8.0
+    container_name: central-dashboards
+    hostname: dashboards
+    depends_on:
+      - opensearch
+    environment:
+      OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_ADMIN_PASSWORD}
+    networks:
+      - central-net
+    ports:
+      - "127.0.0.1:5601:5601"
+    restart: unless-stopped
+
+
+  # ===================================================================
+  # [3] metrics  (เฉพาะ profile "bundled-prometheus")
+  #     ถ้า server มี Prometheus อยู่แล้ว ปิด profile นี้ใน .env
+  # ===================================================================
+
+  # ---------------------------------------------------------------
+  # prometheus : scrape node_exporter ของเครื่อง web + เครื่อง central + puller
+  # รายชื่อเครื่อง web มาจาก data/prometheus/web-nodes.json (puller สร้างจาก puller.yaml)
+  # ตั้งค่า: metrics/prometheus/prometheus.yml   เก็บข้อมูล 7 วัน
+  # ---------------------------------------------------------------
+  prometheus:
+    profiles: ["bundled-prometheus"]
+    image: prom/prometheus:v3.6.0
+    container_name: central-prometheus
+    hostname: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    depends_on:
+      - node-exporter
+      - central-puller
+    networks:
+      - central-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ../metrics/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../data/prometheus:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # node-exporter : metrics ของเครื่อง central เอง (CPU/RAM/Disk) ให้ Prometheus
+  # ---------------------------------------------------------------
+  node-exporter:
+    profiles: ["bundled-prometheus"]
+    image: prom/node-exporter:v1.10.2
+    container_name: central-node-exporter
+    hostname: node-exporter
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+    networks:
+      - central-net
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+
+  # ---------------------------------------------------------------
+  # cadvisor : metrics ของ container (ปิดไว้เป็นค่าเริ่มต้น เพราะต้องใช้ privileged
+  # และยังไม่มีส่วนไหนของโปรเจกต์อ่านค่าจากมัน)
+  # เปิดด้วย COMPOSE_PROFILES=bundled-prometheus,cadvisor
+  # ---------------------------------------------------------------
+  cadvisor:
+    profiles: ["cadvisor"]
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    container_name: central-cadvisor
+    hostname: cadvisor
+    privileged: true
+    command:
+      - "--docker_only=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks:
+      - central-net
+    restart: unless-stopped
+
+
+networks:
+
+  # network ภายในที่ทุก service คุยกัน (ชื่อคงที่เพื่อไม่เปลี่ยนเมื่อย้ายโฟลเดอร์)
+  central-net:
+    name: central-monitor_central-net
+
+
+volumes:
+
+  # ข้อมูล log ใน OpenSearch (ลบเองตาม ISM policy)
+  opensearch-data:
+    name: central-monitor_opensearch-data
+
+  # ข้อมูล time-series ของ Prometheus (เก็บ 7 วัน)
+  prometheus-data:
+    name: central-monitor_prometheus-data
