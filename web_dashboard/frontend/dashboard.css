@@ -860,3 +860,20 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .svlist input{accent-color:var(--blue);width:15px;height:15px;margin:0}
 .svfoot{display:flex;align-items:center;gap:8px;margin-top:10px;justify-content:flex-end}
 .sverr{margin-right:auto;color:#e5484d;font-size:13px}
+
+/* ---- 10. สีตามเกณฑ์ + สถานะ service ----
+   KPI: .k.wr = เหลือง (ถึงเกณฑ์ warning), .k.cr = แดง (ถึงเกณฑ์ critical) เกณฑ์อยู่ที่ TH ใน dashboard.js
+   ลูกศร: i = ลดลง (เขียว), i.ri = เพิ่มขึ้น (เหลือง), i.fl = ไม่เปลี่ยน (เทา) */
+.k{border-top:3px solid transparent}
+.k.wr{border-top-color:#f5a524}.k.wr .v{color:#c27c00}
+.k.cr{border-top-color:#e5484d}.k.cr .v{color:#e5484d}
+.kb{font-style:normal;font-size:11px;font-weight:600;margin-left:10px;vertical-align:middle;line-height:1.4;white-space:nowrap;padding:2px 7px;border-radius:10px;letter-spacing:0}
+.kb.wr{background:rgba(245,165,36,.16);color:#c27c00}.kb.cr{background:rgba(229,72,77,.14);color:#e5484d}
+.d i.ri{color:#d98a00}.d i.fl{color:var(--mut)}
+.st.i::before{background:var(--soft)}
+.svbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:2px 0 4px}
+.svbar .tabs button{padding:5px 10px}.svbar .tabs button i{font-style:normal;margin-left:6px;opacity:.75}
+.svbar .tabs button.bad:not([aria-pressed="true"]){color:#e5484d}
+.svmeta{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:12px}
+.svmeta button{font:12px inherit;font-family:inherit;color:var(--blue);background:none;border:0;padding:0;cursor:pointer}
+.svmeta button:hover{text-decoration:underline}

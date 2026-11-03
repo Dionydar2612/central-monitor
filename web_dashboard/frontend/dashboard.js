@@ -723,8 +723,23 @@ const S = {
     tmp: null, ed: "s", vm: null,
     lv: "ALL", lt: "ALL", stats: null,     // ตัวกรอง log: ระดับ / ชนิด + จำนวนจาก /api/log-stats
     watch: [], watchWeb: null,             // service ที่เลือกให้แสดง ([] = ทั้งหมด) และเครื่องที่โหลดค่านั้นมา
-    pick: null                             // Set ของ service ที่ติ๊กอยู่ในตัวเลือก (null = ปิดตัวเลือก)
+    pick: null,                            // Set ของ service ที่ติ๊กอยู่ในตัวเลือก (null = ปิดตัวเลือก)
+    svf: "all", svnf: false                // ตัวกรองการ์ด Service: แท็บ (all/failed/active/inactive) + แสดง not-found ไหม
 };
+
+/* เกณฑ์สีของการ์ด KPI (%) : ถึง warn = เหลือง, ถึง crit = แดง  (แก้ตัวเลขที่นี่ที่เดียว) */
+const TH = {
+    cpu: { warn: 75, crit: 90 },
+    memory: { warn: 80, crit: 90 },
+    disk: { warn: 80, crit: 90 },
+    io_util: { warn: 70, crit: 90 }
+};
+/* ระดับของค่า v ตามเกณฑ์ของ key -> "cr" | "wr" | "" */
+function level(key, v) {
+    const t = TH[key], n = Number(v);
+    if (!t || !hasValue(v) || !Number.isFinite(n)) return "";
+    return n >= t.crit ? "cr" : n >= t.warn ? "wr" : "";
+}
 
 /* ย่อ document.querySelector */
 const q = s => document.querySelector(s);
@@ -846,9 +861,17 @@ function renderKPIs() {
     const K = [["CPU USAGE", "cpu"], ["MEMORY USAGE", "memory"], ["DISK USAGE", "disk"], ["DISK I/O UTILIZATION (%)", "io_util"]];
     q("#kpis").innerHTML = K.map(([label, key]) => {
         const v = m[key], pts = ser[key] || [], dl = delta(pts);
-        const val = hasValue(v) && Number.isFinite(Number(v)) ? Math.round(Number(v)) + "%" : "–";
-        const d = dl ? `<i>${dl.d >= 0 ? "▲ +" : "▼ "}${Math.round(dl.d)}%</i>${dl.label}` : "";
-        return `<div class="card k"><div><small>${label}</small><div class="v">${val}</div><div class="d">${d}</div></div>${sparkSvg(pts)}</div>`;
+        const ok = hasValue(v) && Number.isFinite(Number(v)), val = ok ? Math.round(Number(v)) + "%" : "–";
+        const lv = level(key, v), t = TH[key];
+        /* ลูกศร: ค่าพวกนี้ "ยิ่งสูงยิ่งแย่" -> เพิ่มขึ้น = สีเตือน, ลดลง = เขียว, เปลี่ยนไม่ถึง 1% = เทา */
+        let d = "";
+        if (dl) {
+            const r = Math.round(dl.d);
+            d = r === 0 ? `<i class="fl">● 0%</i>${dl.label}` : r > 0 ? `<i class="ri">▲ +${r}%</i>${dl.label}` : `<i>▼ ${r}%</i>${dl.label}`;
+        }
+        const tip = t ? ` title="warning ≥ ${t.warn}% · critical ≥ ${t.crit}%"` : "";
+        const badge = lv === "cr" ? `<em class="kb cr">Critical</em>` : lv === "wr" ? `<em class="kb wr">Warning</em>` : "";
+        return `<div class="card k ${lv}"${tip}><div><small>${label}</small><div class="v">${val}${badge}</div><div class="d">${d}</div></div>${sparkSvg(pts)}</div>`;
     }).join("");
 }
 
@@ -867,25 +890,62 @@ function renderLoad() {
         const t = span > 2 * 86400 ? d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : fmtDT(d);
         s += `<text x="${x}" y="292" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}" font-size="12" fill="var(--mut)">${t}</text>`;
     }
-    const line = (pts, color, area) => {
-        if (!pts || pts.length < 2) return "";
-        const p = pts.map(x => [pl + Math.min(Math.max((x[0] - t0) / span, 0), 1) * pw, 10 + ph - Math.min(Math.max(x[1], 0), 100) / 100 * ph]);
+    /* ช่วงที่ไม่มีข้อมูล (ก่อนเริ่มเก็บ / Prometheus ต่อเครื่องไม่ได้) ต้องไม่ถูกลากเส้นเชื่อม
+       -> ตัดเส้นเป็นท่อน ๆ เมื่อจุดห่างกันเกิน 3 เท่าของ step และระบายช่องว่างเป็นสีเทา "No data" */
+    const step = Number((S.hist && S.hist.step) || 15), gap = Math.max(step * 3, 60);
+    const X = t => pl + Math.min(Math.max((t - t0) / span, 0), 1) * pw;
+    const Y = v => 10 + ph - Math.min(Math.max(v, 0), 100) / 100 * ph;
+    const segs = pts => {
+        const out = []; let cur = [];
+        (pts || []).forEach(p => {
+            if (cur.length && p[0] - cur[cur.length - 1][0] > gap) { out.push(cur); cur = []; }
+            cur.push(p);
+        });
+        if (cur.length) out.push(cur);
+        return out;
+    };
+    const line = (pts, color, area) => segs(pts).map(g => {
+        const p = g.map(x => [X(x[0]), Y(x[1])]);
+        if (p.length === 1) return `<circle cx="${p[0][0]}" cy="${p[0][1]}" r="2.5" fill="${color}"/>`;
         const d = smooth(p);
         return (area ? `<path d="${d} L${p[p.length - 1][0]},${10 + ph} L${p[0][0]},${10 + ph}Z" fill="var(--fill)"/>` : "") + `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`;
-    };
-    const has = (ser.cpu && ser.cpu.length > 1) || (ser.memory && ser.memory.length > 1);
+    }).join("");
+    /* หาช่วงว่าง จากเวลาที่มีข้อมูล CPU หรือ Memory อย่างใดอย่างหนึ่ง */
+    const times = [...new Set([...(ser.cpu || []), ...(ser.memory || [])].map(p => p[0]))].sort((a, b) => a - b);
+    const holes = [];
+    if (times.length) {
+        if (times[0] - t0 > gap) holes.push([t0, times[0]]);
+        for (let i = 1; i < times.length; i++) if (times[i] - times[i - 1] > gap) holes.push([times[i - 1], times[i]]);
+        if (t1 - times[times.length - 1] > gap) holes.push([times[times.length - 1], t1]);
+    }
+    holes.forEach(([a, b]) => {
+        const x1 = X(a), x2 = X(b), w = x2 - x1;
+        if (w < 2) return;
+        s += `<rect x="${x1}" y="10" width="${w}" height="${ph}" fill="var(--chip)" opacity=".55"/>`;
+        if (w > 70) s += `<text x="${x1 + w / 2}" y="${10 + ph / 2 + 4}" text-anchor="middle" fill="var(--mut)" font-size="12">No data</text>`;
+    });
+    const has = times.length > 0;
     s += line(ser.memory, "var(--soft)", false) + line(ser.cpu, "var(--blue)", true);
     if (!has) s += `<text x="${pl + pw / 2}" y="130" text-anchor="middle" fill="var(--mut)" font-size="14">No history data for this range</text>`;
     svg.innerHTML = s;
 }
 
-/* สถานะ service -> คลาสสี: "e" (แดง: fail/dead/error), "" (ปกติ: active/running), "w" (เหลือง: อื่น ๆ) */
+/* สถานะ service -> คลาสสี
+     "e" แดง  : failed / error / crit / down
+     ""  เขียว : active / running / online / ok / up / healthy
+     "i" เทา  : inactive / dead / exited (หยุดอยู่ตามปกติ ไม่ใช่ปัญหา)
+     "w" เหลือง: อื่น ๆ เช่น not-found / masked / activating / not collected
+   เทียบทั้งคำ (เดิมใช้ regex หาคำย่อย ทำให้ "inactive" ซึ่งมีคำว่า "active" อยู่ข้างใน ขึ้นสีเขียว) */
 function svcClass(status) {
-    const v = String(status || "").toLowerCase();
-    if (/(fail|dead|error|down|crit)/.test(v)) return "e";
-    if (/(run|active|online|ok|up|healthy)/.test(v)) return "";
+    const v = String(status || "").trim().toLowerCase();
+    if (/^(failed|fail|error|crit|critical|down)$/.test(v)) return "e";
+    if (/^(active|running|online|ok|up|healthy)$/.test(v)) return "";
+    if (/^(inactive|dead|exited|stopped)$/.test(v)) return "i";
     return "w";
 }
+/* กลุ่มของ service สำหรับแท็บกรอง + ลำดับการเรียง (ปัญหาขึ้นก่อน) */
+const SVC_ORDER = { e: 0, w: 1, "": 2, i: 3 };
+const isNotFound = st => /^(not-found|masked|bad-setting)$/.test(String(st || "").toLowerCase());
 
 /* แท่งเปอร์เซ็นต์ในตาราง process (v เทียบกับ max) พร้อมข้อความ */
 function bar(v, max, text) {
@@ -921,10 +981,26 @@ function renderServices(svcs) {
         const byName = new Map(svcs.map(x => [x.name, x]));
         list = watch.map(n => byName.get(n) || { name: n, status: "not collected" });
     }
+    /* ซ่อน not-found/masked เป็นค่าเริ่มต้น (unit ที่ไม่มีอยู่จริงบนเครื่อง ส่วนใหญ่เป็นสิ่งรบกวน)
+       ยกเว้นตัวที่ผู้ใช้เลือกไว้เองใน Select */
+    const nf = watch.length ? [] : list.filter(x => isNotFound(x.status));
+    if (!S.svnf && nf.length) list = list.filter(x => !isNotFound(x.status));
+    /* เรียง: แดง -> เหลือง -> เขียว -> เทา แล้วตามชื่อ */
+    list = [...list].sort((a, b) => (SVC_ORDER[svcClass(a.status)] - SVC_ORDER[svcClass(b.status)]) || String(a.name).localeCompare(String(b.name)));
+    const cnt = { all: list.length, failed: 0, active: 0, inactive: 0 };
+    list.forEach(x => { const c = svcClass(x.status); if (c === "e") cnt.failed++; else if (c === "") cnt.active++; else if (c === "i") cnt.inactive++; });
+    const pass = x => { const c = svcClass(x.status); return S.svf === "all" || (S.svf === "failed" && c === "e") || (S.svf === "active" && c === "") || (S.svf === "inactive" && c === "i"); };
+    const shown = list.filter(pass);
+
+    const L = { all: "All", failed: "Failed", active: "Active", inactive: "Inactive" };
+    q("#svTabs").innerHTML = Object.keys(L).map(k => `<button type="button" data-svf="${k}" aria-pressed="${S.svf === k}"${k === "failed" && cnt.failed ? ' class="bad"' : ""}>${L[k]}<i>${cnt[k]}</i></button>`).join("");
+    const ts = (S.metrics || {}).system_timestamp;
+    q("#svMeta").innerHTML = (ts ? `As of ${escapeHtml(formatTimestamp(ts))}` : "") +
+        (nf.length ? `<button type="button" id="svNf">${S.svnf ? "Hide" : "Show"} not-found (${nf.length})</button>` : "");
     setText("svCnt", watch.length ? `${watch.length} of ${svcs.length}` : (svcs.length ? `All ${svcs.length}` : ""));
-    q("#sv").innerHTML = list.length
-        ? list.map(x => `<div class="row"><span class="st ${svcClass(x.status)}">${escapeHtml(x.name || "-")}</span><span>${escapeHtml(x.status || "-")}</span></div>`).join("")
-        : `<div class="empty">No service data collected</div>`;
+    q("#sv").innerHTML = shown.length
+        ? shown.map(x => `<div class="row"><span class="st ${svcClass(x.status)}">${escapeHtml(x.name || "-")}</span><span>${escapeHtml(x.status || "-")}</span></div>`).join("")
+        : `<div class="empty">${svcs.length ? "No service in this filter" : "No service data collected"}</div>`;
 }
 
 /* โหลดรายชื่อ service ที่เลือกไว้ของเครื่องปัจจุบัน (ครั้งเดียวต่อการเปลี่ยนเครื่อง) */
@@ -991,6 +1067,14 @@ async function savePick() {
 }
 
 function setupServicePicker() {
+    q("#svTabs").addEventListener("click", e => {
+        const b = e.target.closest("button[data-svf]"); if (!b) return;
+        S.svf = b.dataset.svf; renderServices(Array.isArray((S.metrics || {}).services) ? S.metrics.services : []);
+    });
+    q("#svMeta").addEventListener("click", e => {
+        if (!e.target.closest("#svNf")) return;
+        S.svnf = !S.svnf; renderServices(Array.isArray((S.metrics || {}).services) ? S.metrics.services : []);
+    });
     q("#svEdit").addEventListener("click", () => togglePick(q("#svPick").hidden));
     q("#svCancel").addEventListener("click", () => togglePick(false));
     q("#svSave").addEventListener("click", savePick);
@@ -1247,7 +1331,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setLbl();
     q("#mach").addEventListener("click", e => {
         const b = e.target.closest("button[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) togglePick(false);
+        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {
