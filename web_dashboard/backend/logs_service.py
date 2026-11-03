@@ -229,7 +229,12 @@ def _clean_levels(levels):
 # รายการ log / รายละเอียด
 # ---------------------------------------------------------------------------
 
-def get_logs(web, size=200, levels=None, types=None):
+def _in_range(entry, start, end):
+    """เวลาของ log อยู่ในช่วง [start, end] (unix วินาที; None = ไม่จำกัดด้านนั้น)"""
+    return (start is None or entry["_ts"] >= start) and (end is None or entry["_ts"] <= end)
+
+
+def get_logs(web, size=200, levels=None, types=None, start=None, end=None):
     """log ล่าสุดของเครื่อง เรียงใหม่ -> เก่า ไม่เกิน size รายการ
 
     levels : เช่น "ERROR,WARN" หรือ ["ERROR"]  (ว่าง = ทุกระดับ)
@@ -244,6 +249,9 @@ def get_logs(web, size=200, levels=None, types=None):
     output = []
 
     for entry in _scan(web):
+        if not _in_range(entry, start, end):
+            continue
+
         if wanted_levels and entry["level"] not in wanted_levels:
             continue
 
@@ -312,7 +320,27 @@ def get_log_detail(web, log_id):
 # ตัวนับ (คำนวณจากผลสแกนเดียวกับรายการ -> ตรงกันเสมอ)
 # ---------------------------------------------------------------------------
 
-def get_log_stats(web):
+def get_log_markers(web, start, end, limit=500):
+    """จุด ERROR/WARN บนเส้นเวลาของกราฟ (ไม่แนบ metrics -> เบา) ใหม่ -> เก่า ไม่เกิน limit"""
+    out = []
+    for entry in _scan(web):
+        if entry["level"] not in ("ERROR", "WARN") or not _in_range(entry, start, end):
+            continue
+        out.append({
+            "id": entry["id"],
+            "web": entry["web"],
+            "ts": entry["_ts"],
+            "timestamp": entry["timestamp"],
+            "level": entry["level"],
+            "type": entry["type"],
+            "message": str(entry["message"] or "")[:300],
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def get_log_stats(web, start=None, end=None):
     """จำนวน log แยกตาม level และ type  -> ใช้เป็นตัวเลขบนปุ่มตัวกรอง
 
     {"levels": {"ERROR": 3, "WARN": 1, "INFO": 120}, "types": {"application": 90, ...}, "total": 124}
@@ -320,7 +348,7 @@ def get_log_stats(web):
     levels = {name: 0 for name in LEVELS}
     types = {}
 
-    entries = _scan(web)
+    entries = [e for e in _scan(web) if _in_range(e, start, end)]
 
     for entry in entries:
         levels[entry["level"]] += 1

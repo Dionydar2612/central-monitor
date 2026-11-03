@@ -25,6 +25,8 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/metrics/history     กราฟย้อนหลัง (web, start, end เป็น unix วินาที)
     GET  /api/problems?web=&size=&level=&type=   รายการ log ของเครื่อง (level = ERROR,WARN,INFO / type = ชนิด log)
     GET  /api/log-stats?web=      จำนวน log แยกตาม level และ type (ตัวเลขบนปุ่มตัวกรอง)
+    GET  /api/log-markers?web=&start=&end=   จุด ERROR/WARN บนเส้นเวลาของกราฟ
+         (/api/problems และ /api/log-stats รับ start/end ได้ด้วย = เฉพาะช่วงนั้น)
     GET  /api/problems/detail     log 1 รายการ + สถานะเครื่อง ณ เวลานั้น (web, id)
 
     หน้า Settings (เพิ่ม/แก้/ลบเครื่องใน puller.yaml)  logic อยู่ที่ targets_service.py
@@ -48,6 +50,7 @@ from clients import prom_value
 from logs_service import (
     get_errors_15m,
     get_log_detail,
+    get_log_markers,
     get_log_stats,
     get_logs,
     get_problem_count,
@@ -55,6 +58,8 @@ from logs_service import (
 from metrics_service import (
     classify_state,
     get_current_metrics,
+    HISTORY_SETS,
+    get_cpu_cores,
     get_metrics_history,
     get_web_prometheus_config,
 )
@@ -209,13 +214,44 @@ def metrics_history():
 
     step = max(15, int((end - start) / 120))
 
-    return jsonify({
+    # set = ชุดกราฟ (main/cpu/io/net/load) ; compare=1 = แนบ "เมื่อวานเวลาเดียวกัน"
+    name = request.args.get("set", "main")
+    if name not in HISTORY_SETS:
+        return jsonify({"error": "invalid set"}), 400
+    names = HISTORY_SETS[name]
+
+    out = {
         "web": web,
+        "set": name,
         "start": start,
         "end": end,
         "step": step,
-        "series": get_metrics_history(web, start, end, step),
-    })
+        "series": get_metrics_history(web, start, end, step, names),
+    }
+    if request.args.get("compare") == "1":
+        out["compare"] = get_metrics_history(web, start, end, step, names, shift=86400)
+    if name == "load":
+        out["cores"] = get_cpu_cores(web)
+    return jsonify(out)
+
+
+def _range_args():
+    """start/end (unix วินาที) จาก query string ไม่ใส่ = None (ไม่จำกัด)"""
+    def num(key):
+        try:
+            v = request.args.get(key)
+            return float(v) if v not in (None, "") else None
+        except ValueError:
+            return None
+    return num("start"), num("end")
+
+
+@app.get("/api/log-markers")
+def log_markers():
+    """จุด ERROR/WARN สำหรับวางบนเส้นเวลาของกราฟ  Query: web, start, end (unix วินาที)"""
+    web = request.args.get("web", "web-01")
+    start, end = _range_args()
+    return jsonify(get_log_markers(web, start, end))
 
 
 @app.get("/api/summary")
@@ -258,11 +294,15 @@ def problems():
     except Exception:
         size = 200
 
+    start, end = _range_args()
+
     return jsonify(get_logs(
         web,
         size,
         levels=request.args.get("level", ""),
         types=request.args.get("type", ""),
+        start=start,
+        end=end,
     ))
 
 
@@ -270,7 +310,8 @@ def problems():
 def log_stats():
     """จำนวน log ของเครื่องแยกตาม level และ type (นับจากชุดเดียวกับ /api/problems)"""
     web = request.args.get("web", "web-01")
-    return jsonify(get_log_stats(web))
+    start, end = _range_args()
+    return jsonify(get_log_stats(web, start, end))
 
 
 @app.get("/api/problems/detail")

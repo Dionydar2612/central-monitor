@@ -724,7 +724,10 @@ const S = {
     lv: "ALL", lt: "ALL", stats: null,     // ตัวกรอง log: ระดับ / ชนิด + จำนวนจาก /api/log-stats
     watch: [], watchWeb: null,             // service ที่เลือกให้แสดง ([] = ทั้งหมด) และเครื่องที่โหลดค่านั้นมา
     pick: null,                            // Set ของ service ที่ติ๊กอยู่ในตัวเลือก (null = ปิดตัวเลือก)
-    svf: "all", svnf: false                // ตัวกรองการ์ด Service: แท็บ (all/failed/active/inactive) + แสดง not-found ไหม
+    svf: "all", svnf: false,               // ตัวกรองการ์ด Service: แท็บ (all/failed/active/inactive) + แสดง not-found ไหม
+    chart: "main", cmp: false, ext: null,  // กราฟ System Load: แท็บ, เทียบเมื่อวาน, ข้อมูลของแท็บ (main = S.hist)
+    marks: [], markGroups: [], view: null, // จุด ERROR/WARN log + ข้อมูลที่วาดอยู่ (ใช้ตอนชี้เมาส์)
+    hoverX: null, drag: null, tipPos: null, zoomPrev: null, logKey: null
 };
 
 /* เกณฑ์สีของการ์ด KPI (%) : ถึง warn = เหลือง, ถึง crit = แดง  (แก้ตัวเลขที่นี่ที่เดียว) */
@@ -875,59 +878,276 @@ function renderKPIs() {
     }).join("");
 }
 
-/* กราฟใหญ่ System Load (SVG วาดเอง): เส้น CPU (มีพื้นที่ใต้เส้น) และ Memory ตามช่วงเวลาที่เลือก */
-function renderLoad() {
-    const svg = q("#load"), ser = (S.hist && S.hist.series) || {};
-    const [s0, e0] = rng(), t0 = s0 / 1000, t1 = e0 / 1000, W = 900, pl = 44, pw = W - pl - 10, ph = 230;
-    let s = "";
-    [0, 25, 50, 75, 100].forEach(t => {
-        const y = 10 + ph - t / 100 * ph;
-        s += `<line x1="${pl}" x2="${pl + pw}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${pl - 10}" y="${y + 4}" text-anchor="end" font-size="12" fill="var(--mut)">${t}</text>`;
+/* ---------- กราฟใหญ่ System Load ----------
+   แท็บ (CH): CPU & Memory / CPU breakdown / Disk I/O / Network / Load
+   - ช่วงไม่มีข้อมูล: ตัดเส้น + ระบายเทา "No data"
+   - เส้นเกณฑ์ (TH) สำหรับกราฟ %, เส้นจำนวน core สำหรับกราฟ Load
+   - "vs yesterday": เส้นประของเมื่อวานเวลาเดียวกัน
+   - จุด ERROR/WARN log ใต้กราฟ (/api/log-markers) คลิกเปิดรายละเอียด
+   - เลื่อนเมาส์ดูค่า, ลากเพื่อซูม (ตั้งช่วงเวลาของทั้งหน้า)
+   ชั้นบน #loadOv (overlay) แยกจาก #load เพื่อไม่ให้รีเฟรชทุก 10 วินาทีลบสิ่งที่กำลังชี้/ลากอยู่ */
+const CH = {
+    main: { label: "CPU & Memory", unit: "%", max: 100, th: "cpu",
+        lines: [["cpu", "CPU", "#1f7bff", true], ["memory", "Memory", "#8b5cf6"]] },
+    cpu: { label: "CPU breakdown", unit: "%", max: 100, th: "cpu", stacked: true,
+        lines: [["cpu_user", "User", "#1f7bff"], ["cpu_system", "System", "#8b5cf6"], ["cpu_iowait", "I/O wait", "#f5a524"]] },
+    io: { label: "Disk I/O", unit: "MB/s",
+        lines: [["disk_read", "Read", "#1f7bff", true], ["disk_write", "Write", "#10c27a"]] },
+    net: { label: "Network", unit: "MB/s",
+        lines: [["net_rx", "Receive ↓", "#1f7bff", true], ["net_tx", "Send ↑", "#10c27a"]] },
+    load: { label: "Load", unit: "", ref: "cores",
+        lines: [["load1", "1 min", "#1f7bff", true], ["load5", "5 min", "#8b5cf6"], ["load15", "15 min", "#94a3b8"]] }
+};
+/* เรขาคณิตของกราฟ (หน่วย viewBox) */
+const GW = 900, GH = 312, PL = 52, PR = 12, PT = 10, PH = 230, PW = GW - PL - PR, MY = 262;
+const PB = PT + PH;
+
+/* ค่าบนแกน Y ที่ "สวย" ขั้นต่ำ m */
+function niceMax(m) {
+    if (!(m > 0)) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(m)));
+    for (const f of [1, 2, 2.5, 5, 10]) if (f * p >= m) return f * p;
+    return 10 * p;
+}
+function fmtVal(v, unit) {
+    if (!hasValue(v) || !Number.isFinite(Number(v))) return "-";
+    const n = Number(v);
+    if (unit === "%") return `${n.toFixed(n < 10 ? 1 : 0)}%`;
+    const t = Math.abs(n) >= 100 ? n.toFixed(0) : Math.abs(n) >= 10 ? n.toFixed(1) : n.toFixed(2);
+    return unit ? `${t} ${unit}` : t;
+}
+/* ตัดอนุกรมเป็นท่อน เมื่อจุดห่างกันเกิน gap วินาที */
+function splitGaps(pts, gap) {
+    const out = []; let cur = [];
+    (pts || []).forEach(p => {
+        if (cur.length && p[0] - cur[cur.length - 1][0] > gap) { out.push(cur); cur = []; }
+        cur.push(p);
     });
-    const span = t1 - t0, n = 7;
-    for (let i = 0; i < n; i++) {
-        const d = new Date((t0 + span * i / (n - 1)) * 1000), x = pl + i / (n - 1) * pw;
-        const t = span > 2 * 86400 ? d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : fmtDT(d);
-        s += `<text x="${x}" y="292" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}" font-size="12" fill="var(--mut)">${t}</text>`;
-    }
-    /* ช่วงที่ไม่มีข้อมูล (ก่อนเริ่มเก็บ / Prometheus ต่อเครื่องไม่ได้) ต้องไม่ถูกลากเส้นเชื่อม
-       -> ตัดเส้นเป็นท่อน ๆ เมื่อจุดห่างกันเกิน 3 เท่าของ step และระบายช่องว่างเป็นสีเทา "No data" */
-    const step = Number((S.hist && S.hist.step) || 15), gap = Math.max(step * 3, 60);
-    const X = t => pl + Math.min(Math.max((t - t0) / span, 0), 1) * pw;
-    const Y = v => 10 + ph - Math.min(Math.max(v, 0), 100) / 100 * ph;
-    const segs = pts => {
-        const out = []; let cur = [];
-        (pts || []).forEach(p => {
-            if (cur.length && p[0] - cur[cur.length - 1][0] > gap) { out.push(cur); cur = []; }
-            cur.push(p);
+    if (cur.length) out.push(cur);
+    return out;
+}
+/* ค่าที่ใกล้เวลา t ที่สุด (ห่างไม่เกิน gap) */
+function valueAt(pts, t, gap) {
+    let best = null, bd = Infinity;
+    for (const p of pts || []) { const d = Math.abs(p[0] - t); if (d < bd) { bd = d; best = p; } }
+    return best && bd <= gap ? best : null;
+}
+
+/* เตรียมข้อมูลของแท็บที่เลือก -> S.view (ใช้ทั้งตอนวาดและตอนชี้เมาส์) */
+function chartView() {
+    const cfg = CH[S.chart], data = S.ext || {}, ser = data.series || {}, cmp = S.cmp ? (data.compare || {}) : null;
+    const [s0, e0] = rng(), t0 = s0 / 1000, t1 = e0 / 1000, span = Math.max(t1 - t0, 1);
+    const step = Number(data.step || 15), gap = Math.max(step * 3, 60);
+    let lines = cfg.lines.map(([k, name, color, area]) => ({ k, name, color, area, pts: ser[k] || [], cpts: cmp ? (cmp[k] || []) : [] }));
+    if (cfg.stacked) {
+        /* ซ้อนชั้น: แต่ละจุดเก็บ [t, ค่าสะสมบน, ค่าสะสมล่าง, ค่าจริง] */
+        const base = new Map();
+        lines.forEach(l => {
+            l.stack = l.pts.map(p => { const b = base.get(p[0]) || 0, top = b + p[1]; base.set(p[0], top); return [p[0], top, b, p[1]]; });
         });
-        if (cur.length) out.push(cur);
-        return out;
-    };
-    const line = (pts, color, area) => segs(pts).map(g => {
-        const p = g.map(x => [X(x[0]), Y(x[1])]);
-        if (p.length === 1) return `<circle cx="${p[0][0]}" cy="${p[0][1]}" r="2.5" fill="${color}"/>`;
-        const d = smooth(p);
-        return (area ? `<path d="${d} L${p[p.length - 1][0]},${10 + ph} L${p[0][0]},${10 + ph}Z" fill="var(--fill)"/>` : "") + `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`;
-    }).join("");
-    /* หาช่วงว่าง จากเวลาที่มีข้อมูล CPU หรือ Memory อย่างใดอย่างหนึ่ง */
-    const times = [...new Set([...(ser.cpu || []), ...(ser.memory || [])].map(p => p[0]))].sort((a, b) => a - b);
-    const holes = [];
+        const total = new Map();
+        lines.forEach(l => l.cpts.forEach(p => total.set(p[0], (total.get(p[0]) || 0) + p[1])));
+        lines.cmpTotal = [...total.entries()].sort((a, b) => a[0] - b[0]);
+    }
+    let ymax = cfg.max;
+    if (!ymax) {
+        let m = 0;
+        lines.forEach(l => { l.pts.forEach(p => { m = Math.max(m, p[1]); }); l.cpts.forEach(p => { m = Math.max(m, p[1]); }); });
+        if (cfg.ref && data[cfg.ref]) m = Math.max(m, data[cfg.ref] * 1.15);
+        ymax = niceMax(m * 1.1);
+    }
+    const X = t => PL + Math.min(Math.max((t - t0) / span, 0), 1) * PW;
+    const Y = v => PB - Math.min(Math.max(v, 0), ymax) / ymax * PH;
+    return S.view = { cfg, data, lines, t0, t1, span, step, gap, ymax, X, Y, ref: cfg.ref ? data[cfg.ref] : null };
+}
+
+function renderLoad() {
+    const v = chartView(), { cfg, lines, t0, t1, span, gap, ymax, X, Y } = v;
+    q("#chTabs").innerHTML = Object.keys(CH).map(k => `<button type="button" data-ch="${k}" aria-pressed="${S.chart === k}">${CH[k].label}</button>`).join("");
+    let s = "";
+    /* แกน Y + เส้นตาราง */
+    for (let i = 0; i <= 4; i++) {
+        const val = ymax * i / 4, y = Y(val);
+        s += `<line x1="${PL}" x2="${PL + PW}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${PL - 10}" y="${y + 4}" text-anchor="end" font-size="12" fill="var(--mut)">${cfg.unit === "%" ? Math.round(val) + "%" : +val.toFixed(2)}</text>`;
+    }
+    /* แกน X */
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+        const d = new Date((t0 + span * i / (n - 1)) * 1000), x = PL + i / (n - 1) * PW;
+        const t = span > 2 * 86400 ? d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : fmtDT(d);
+        s += `<text x="${x}" y="${GH - 4}" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}" font-size="12" fill="var(--mut)">${t}</text>`;
+    }
+    /* ช่วงไม่มีข้อมูล */
+    const times = [...new Set(lines.flatMap(l => l.pts.map(p => p[0])))].sort((a, b) => a - b), holes = [];
     if (times.length) {
         if (times[0] - t0 > gap) holes.push([t0, times[0]]);
         for (let i = 1; i < times.length; i++) if (times[i] - times[i - 1] > gap) holes.push([times[i - 1], times[i]]);
         if (t1 - times[times.length - 1] > gap) holes.push([times[times.length - 1], t1]);
     }
     holes.forEach(([a, b]) => {
-        const x1 = X(a), x2 = X(b), w = x2 - x1;
+        const x1 = X(a), w = X(b) - x1;
         if (w < 2) return;
-        s += `<rect x="${x1}" y="10" width="${w}" height="${ph}" fill="var(--chip)" opacity=".55"/>`;
-        if (w > 70) s += `<text x="${x1 + w / 2}" y="${10 + ph / 2 + 4}" text-anchor="middle" fill="var(--mut)" font-size="12">No data</text>`;
+        s += `<rect x="${x1}" y="${PT}" width="${w}" height="${PH}" fill="var(--chip)" opacity=".55"/>`;
+        if (w > 70) s += `<text x="${x1 + w / 2}" y="${PT + PH / 2 + 4}" text-anchor="middle" fill="var(--mut)" font-size="12">No data</text>`;
     });
+    /* เส้นแนวตั้งจาง ๆ ตรงเวลาที่มี ERROR log */
+    (S.markGroups || []).filter(g => g.level === "ERROR").forEach(g => {
+        s += `<line x1="${g.x}" x2="${g.x}" y1="${PT}" y2="${PB}" stroke="#e5484d" stroke-opacity=".22" stroke-dasharray="3 3"/>`;
+    });
+    /* เส้นเกณฑ์ / เส้นจำนวน core */
+    const hline = (val, color, label) => {
+        if (!(val > 0) || val > ymax) return "";
+        const y = Y(val);
+        return `<line x1="${PL}" x2="${PL + PW}" y1="${y}" y2="${y}" stroke="${color}" stroke-width="1.2" stroke-dasharray="6 5" opacity=".85"/><text x="${PL + PW - 4}" y="${y - 5}" text-anchor="end" font-size="11" fill="${color}">${label}</text>`;
+    };
+    if (cfg.th && TH[cfg.th]) s += hline(TH[cfg.th].warn, "#d98a00", `warning ${TH[cfg.th].warn}%`) + hline(TH[cfg.th].crit, "#e5484d", `critical ${TH[cfg.th].crit}%`);
+    if (v.ref) s += hline(v.ref, "#d98a00", `${v.ref} CPU cores`);
+    /* ข้อมูล */
+    const path = (pts, color, opt = {}) => splitGaps(pts, gap).map(g => {
+        const p = g.map(x => [X(x[0]), Y(x[1])]);
+        if (p.length === 1) return opt.dash ? "" : `<circle cx="${p[0][0]}" cy="${p[0][1]}" r="2.5" fill="${color}"/>`;
+        const d = smooth(p);
+        return (opt.area ? `<path d="${d} L${p[p.length - 1][0]},${PB} L${p[0][0]},${PB}Z" fill="${color}" fill-opacity=".12"/>` : "") +
+            `<path d="${d}" fill="none" stroke="${color}" stroke-width="${opt.dash ? 1.5 : 2}"${opt.dash ? ` stroke-dasharray="5 4" stroke-opacity=".7"` : ""}/>`;
+    }).join("");
     const has = times.length > 0;
-    s += line(ser.memory, "var(--soft)", false) + line(ser.cpu, "var(--blue)", true);
-    if (!has) s += `<text x="${pl + pw / 2}" y="130" text-anchor="middle" fill="var(--mut)" font-size="14">No history data for this range</text>`;
-    svg.innerHTML = s;
+    if (cfg.stacked) {
+        lines.forEach(l => {
+            splitGaps(l.stack, gap).forEach(g => {
+                if (g.length < 2) return;
+                const top = g.map(x => [X(x[0]), Y(x[1])]), bot = g.map(x => [X(x[0]), Y(x[2])]).reverse();
+                s += `<path d="M${top.map(p => p.join(",")).join(" L")} L${bot.map(p => p.join(",")).join(" L")}Z" fill="${l.color}" fill-opacity=".35" stroke="${l.color}" stroke-width="1.2"/>`;
+            });
+        });
+        if (S.cmp) s += path(lines.cmpTotal, "var(--mut)", { dash: true });
+    } else {
+        if (S.cmp) lines.forEach(l => { s += path(l.cpts, l.color, { dash: true }); });
+        [...lines].reverse().forEach(l => { s += path(l.pts, l.color, { area: l.area }); });
+    }
+    if (!has) s += `<text x="${PL + PW / 2}" y="${PT + PH / 2}" text-anchor="middle" fill="var(--mut)" font-size="14">No history data for this range</text>`;
+    /* แถบจุด log */
+    s += `<line x1="${PL}" x2="${PL + PW}" y1="${MY}" y2="${MY}" stroke="var(--line)"/>`;
+    q("#load").innerHTML = s;
+
+    /* ชั้นบน: จุด log (คลิกได้) */
+    q("#ovMarks").innerHTML = (S.markGroups || []).map((g, i) => {
+        const c = g.level === "ERROR" ? "#e5484d" : "#f5a524", r = g.items.length > 1 ? 7 : 5;
+        return `<g class="mk" data-g="${i}"><circle cx="${g.x}" cy="${MY}" r="${r}" fill="${c}" stroke="var(--card)" stroke-width="1.5"/>${g.items.length > 1 ? `<text x="${g.x}" y="${MY + 3.5}" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">${g.items.length > 99 ? "99+" : g.items.length}</text>` : ""}</g>`;
+    }).join("");
+
+    /* คำอธิบาย */
+    const lg = lines.map(l => `<span><i style="background:${l.color}"></i>${escapeHtml(l.name)}</span>`);
+    if (S.cmp) lg.push(`<span><i class="dash"></i>Yesterday</span>`);
+    if ((S.markGroups || []).length) lg.push(`<span><i style="background:#e5484d"></i>Error log</span><span><i style="background:#f5a524"></i>Warn log</span>`);
+    q("#lgd").innerHTML = lg.join("");
+    q("#zoomReset").hidden = !(S.zoomPrev && S.start);
+    if (S.hoverX != null) drawHover(S.hoverX);
+}
+
+/* จัดกลุ่มจุด log ที่อยู่ใกล้กัน (ห่างกันไม่ถึง 12 หน่วย ไม่งั้นจุดจะทับกัน) -> S.markGroups */
+function groupMarks() {
+    const [s0, e0] = rng(), t0 = s0 / 1000, span = Math.max(e0 / 1000 - t0, 1);
+    const pts = (S.marks || []).filter(m => m.ts >= t0 && m.ts <= t0 + span)
+        .map(m => ({ m, x: PL + (m.ts - t0) / span * PW })).sort((a, b) => a.x - b.x);
+    const groups = [];
+    pts.forEach(({ m, x }) => {
+        const g = groups[groups.length - 1];
+        if (g && x - g.x1 < 12) { g.items.push(m); g.x1 = x; if (m.level === "ERROR") g.level = "ERROR"; }
+        else groups.push({ x0: x, x1: x, items: [m], level: m.level === "ERROR" ? "ERROR" : "WARN" });
+    });
+    groups.forEach(g => { g.x = (g.x0 + g.x1) / 2; g.items.sort((a, b) => b.ts - a.ts); });
+    S.markGroups = groups;
+}
+
+/* พิกัดเมาส์ -> หน่วย viewBox */
+function svgX(e) {
+    const r = q("#loadOv").getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width * GW, y: (e.clientY - r.top) / r.height * GH, r };
+}
+
+/* เส้นตั้งตามเมาส์ + กล่องค่า */
+function drawHover(x, clientPos) {
+    const v = S.view; if (!v) return;
+    const tip = q("#chTip"), hov = q("#ovHover");
+    if (x < PL || x > PL + PW) { hov.innerHTML = S.drag ? hov.innerHTML : ""; tip.hidden = true; return; }
+    const t = v.t0 + (x - PL) / PW * v.span;
+    let html = `<b>${escapeHtml(fmtDT(new Date(t * 1000), v.span > 86400 ? 1 : 0))}</b>`, any = false;
+    v.lines.forEach(l => {
+        const p = valueAt(l.pts, t, v.gap), c = S.cmp ? valueAt(l.cpts, t, v.gap) : null;
+        if (p) any = true;
+        html += `<div><i style="background:${l.color}"></i>${escapeHtml(l.name)}<span>${escapeHtml(p ? fmtVal(p[1], v.cfg.unit) : "no data")}${c ? ` <em>(${escapeHtml(fmtVal(c[1], v.cfg.unit))} yday)</em>` : ""}</span></div>`;
+    });
+    const near = (S.markGroups || []).filter(g => Math.abs(g.x - x) <= 8).flatMap(g => g.items);
+    if (near.length) {
+        const e = near.filter(m => m.level === "ERROR").length, w = near.length - e;
+        html += `<div class="lg">${e ? `<i style="background:#e5484d"></i>${e} error` : ""}${e && w ? " · " : ""}${w ? `<i style="background:#f5a524"></i>${w} warn` : ""}</div><div class="msg">${escapeHtml(near[0].message.slice(0, 140))}</div>`;
+    }
+    const sel = S.drag ? `<rect x="${Math.min(S.drag.x0, x)}" y="${PT}" width="${Math.abs(x - S.drag.x0)}" height="${PH}" fill="var(--blue)" fill-opacity=".12" stroke="var(--blue)" stroke-opacity=".5"/>` : "";
+    hov.innerHTML = sel + `<line x1="${x}" x2="${x}" y1="${PT}" y2="${PB}" stroke="var(--mut)" stroke-opacity=".6"/>` +
+        v.lines.map(l => { const p = valueAt(v.cfg.stacked ? l.stack : l.pts, t, v.gap); return p ? `<circle cx="${v.X(p[0])}" cy="${v.Y(p[1])}" r="3.5" fill="${l.color}" stroke="var(--card)" stroke-width="1.5"/>` : ""; }).join("");
+    if (!any && !near.length && !S.drag) { tip.hidden = true; return; }
+    tip.innerHTML = html;
+    tip.hidden = false;
+    if (clientPos) S.tipPos = clientPos;
+    const pos = S.tipPos; if (!pos) return;
+    const w = tip.offsetWidth, box = q("#chw").clientWidth;
+    let left = pos.left + 14; if (left + w > box) left = pos.left - w - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    const h = tip.offsetHeight, bh = q("#chw").clientHeight;
+    let top = pos.top - 10; if (top + h > bh) top = pos.top - h - 14;     // ใกล้ขอบล่าง (แถบจุด log) -> แสดงด้านบนแทน
+    tip.style.top = Math.max(0, top) + "px";
+}
+
+/* ซูมไปช่วง [a, b] (unix วินาที) ทั้งหน้า */
+function zoomTo(a, b) {
+    if (b - a < 120) { const c = (a + b) / 2; a = c - 60; b = c + 60; }
+    if (!S.zoomPrev || !S.start) S.zoomPrev = { dur: S.dur, start: S.start, end: S.end };   // ซูมครั้งแรกจากช่วงนี้ -> จำไว้ให้ Reset
+    S.start = new Date(a * 1000); S.end = new Date(Math.min(b * 1000, Date.now()));
+    setLbl(); loadHist();
+}
+
+function setupChart() {
+    const ov = q("#loadOv");
+    q("#chTabs").addEventListener("click", e => {
+        const b = e.target.closest("button[data-ch]"); if (!b || b.dataset.ch === S.chart) return;
+        S.chart = b.dataset.ch; S.ext = null; renderLoad(); loadHist();
+    });
+    q("#cmp").addEventListener("change", e => { S.cmp = e.target.checked; loadHist(); });
+    q("#zoomReset").addEventListener("click", () => {
+        const p = S.zoomPrev; if (!p) return;
+        S.dur = p.dur; S.start = p.start; S.end = p.end; S.zoomPrev = null;
+        setLbl(); loadHist();
+    });
+    const local = e => { const { x, r } = svgX(e), box = q("#chw").getBoundingClientRect(); return { x, pos: { left: e.clientX - box.left, top: e.clientY - box.top }, r }; };
+    ov.addEventListener("pointermove", e => {
+        const { x, pos } = local(e);
+        S.hoverX = x; drawHover(x, pos);
+    });
+    ov.addEventListener("pointerleave", () => {
+        if (S.drag) return;
+        S.hoverX = null; q("#ovHover").innerHTML = ""; q("#chTip").hidden = true;
+    });
+    ov.addEventListener("pointerdown", e => {
+        if (e.target.closest(".mk")) return;          // คลิกจุด log -> ไม่เริ่มลาก
+        const { x } = local(e);
+        if (x < PL || x > PL + PW) return;
+        S.drag = { x0: x }; ov.setPointerCapture(e.pointerId);
+    });
+    ov.addEventListener("pointerup", e => {
+        const mk = e.target.closest(".mk");
+        if (!S.drag) {
+            if (!mk) return;
+            const g = (S.markGroups || [])[+mk.dataset.g]; if (!g) return;
+            /* เปิด log ที่ร้ายแรงที่สุดและใหม่ที่สุดในกลุ่ม */
+            const item = g.items.find(m => m.level === "ERROR") || g.items[0];
+            openLogDetail(item);
+            return;
+        }
+        const { x } = local(e), x0 = S.drag.x0; S.drag = null;
+        if (Math.abs(x - x0) < 8) { drawHover(x); return; }
+        const v = S.view, tt = px => v.t0 + (Math.min(Math.max(px, PL), PL + PW) - PL) / PW * v.span;
+        zoomTo(tt(Math.min(x, x0)), tt(Math.max(x, x0)));
+    });
 }
 
 /* สถานะ service -> คลาสสี
@@ -1115,8 +1335,18 @@ function renderProblems(list) {
 /* ---------- ตัวกรอง log (Level / Type) ----------
    รายการจริงถูกกรองที่ server (/api/problems?level=&type=) ด้วยตัวจัดระดับเดียวกับตัวนับ
    จึงรับประกันว่า "Error" ที่เห็นคือ log ที่ระบบตัดสินว่า ERROR ตรงกับตัวเลข Problem logs / Errors 15m */
+/* ช่วงเวลาของตาราง Logs: เลือกวันเอง/ซูม = เฉพาะช่วงนั้น, ช่วงด่วน (Last 15 minutes ...) = log ล่าสุด 300 รายการเหมือนเดิม */
+function logRange(p) {
+    if (!S.start) return p;
+    p.set("start", String(Math.floor(S.start / 1000)));
+    if (S.end) p.set("end", String(Math.ceil(S.end / 1000)));
+    return p;
+}
+function logKey() { return S.start ? `${+S.start}-${S.end ? +S.end : "now"}` : "latest"; }
+function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ web: S.web }))}`; }
+
 function logUrl() {
-    const p = new URLSearchParams({ web: S.web, size: "300" });
+    const p = logRange(new URLSearchParams({ web: S.web, size: "300" }));
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
     return `/api/problems?${p}`;
@@ -1147,6 +1377,7 @@ function renderLogStat(shown) {
     const parts = [];
     if (S.lv !== "ALL") parts.push(S.lv);
     if (S.lt !== "ALL") parts.push(S.lt);
+    if (S.start) parts.push(`${fmtDT(S.start, 1)} → ${S.end ? fmtDT(S.end, 1) : "now"}`);
     setText("lvStat", parts.length ? `Showing ${shown} ${parts.join(" · ")}` : "");
 }
 
@@ -1155,7 +1386,8 @@ async function reloadLogs() {
     if (!S.web) return;
     try {
         const w = encodeURIComponent(S.web);
-        const [problems, stats] = await Promise.all([apiGet(logUrl()), apiGet(`/api/log-stats?web=${w}`)]);
+        S.logKey = logKey();
+        const [problems, stats] = await Promise.all([apiGet(logUrl()), apiGet(statsUrl())]);
         renderLogFilter(stats);
         renderProblems(problems);
     } catch (err) { console.error("Log filter error:", err); }
@@ -1176,15 +1408,21 @@ async function openLogDetail(p) {
    โหลดเฉพาะกราฟย้อนหลังตามช่วงเวลาที่เลือก (เรียกเมื่อเปลี่ยนช่วงเวลา ไม่ต้องโหลดทั้งหน้า) */
 async function loadHist() {
     if (!S.web) return;
-    const [s, e] = rng();
-    try {
-        S.hist = await apiGet(`/api/metrics/history?web=${encodeURIComponent(S.web)}&start=${Math.floor(s / 1000)}&end=${Math.floor(e / 1000)}`);
-    } catch (err) {
-        console.error("History error:", err);
-        S.hist = null;
-    }
+    const [s, e] = rng(), w = encodeURIComponent(S.web), a = Math.floor(s / 1000), b = Math.floor(e / 1000);
+    const base = `/api/metrics/history?web=${w}&start=${a}&end=${b}`, main = S.chart === "main", cmp = S.cmp ? "&compare=1" : "";
+    const r = await Promise.allSettled([
+        apiGet(base + (main ? cmp : "")),
+        main ? Promise.resolve(null) : apiGet(`${base}&set=${S.chart}${cmp}`),
+        apiGet(`/api/log-markers?web=${w}&start=${a}&end=${b}`)
+    ]);
+    r.forEach(x => { if (x.status === "rejected") console.error("History error:", x.reason); });
+    S.hist = r[0].status === "fulfilled" ? r[0].value : null;
+    S.ext = main ? S.hist : (r[1].status === "fulfilled" ? r[1].value : null);
+    S.marks = r[2].status === "fulfilled" && Array.isArray(r[2].value) ? r[2].value : [];
+    groupMarks();
     renderKPIs();
     renderLoad();
+    if (logKey() !== S.logKey) reloadLogs();      // เปลี่ยนช่วงเวลา (ซูม/เลือกวัน) -> ตาราง Logs ตามช่วงนั้น
 }
 
 /* โหลดทั้งหน้า: รายชื่อเครื่อง -> (summary, metrics, problems พร้อมกัน) -> กราฟ
@@ -1202,8 +1440,9 @@ async function loadAll() {
             apiGet(`/api/summary?web=${w}`),
             apiGet(`/api/metrics?web=${w}`),
             apiGet(logUrl()),
-            apiGet(`/api/log-stats?web=${w}`)
+            apiGet(statsUrl())
         ]);
+        S.logKey = logKey();
         await loadWatch();
         S.summary = summary;
         S.metrics = { ...(summary.metrics || {}), ...(metrics || {}) };
@@ -1328,10 +1567,11 @@ async function logout() {
 document.addEventListener("DOMContentLoaded", () => {
     setupPicker();
     setupServicePicker();
+    setupChart();
     setLbl();
     q("#mach").addEventListener("click", e => {
         const b = e.target.closest("button[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; }
+        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {

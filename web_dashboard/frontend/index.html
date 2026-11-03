@@ -51,8 +51,14 @@
 <!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) และรายการ Service (#sv: จาก snapshot ของ puller) -->
 <div class="grid main">
 <section class="card">
-<div class="top"><h2>System Load</h2><div class="lgd"><span><i style="background:var(--blue)"></i>CPU</span><span><i style="background:var(--soft)"></i>Memory</span></div></div>
-<svg id="load" viewBox="0 0 900 300" role="img" aria-label="System load over time"></svg>
+<div class="top"><h2>System Load</h2><div class="chopt"><button type="button" class="svbtn" id="zoomReset" hidden>Reset zoom</button><label class="cmp"><input type="checkbox" id="cmp"> vs yesterday</label></div></div>
+<div class="chbar"><div class="tabs" id="chTabs" role="group" aria-label="Chart metric"></div><div class="lgd" id="lgd"></div></div>
+<div class="chw" id="chw">
+<svg id="load" viewBox="0 0 900 312" role="img" aria-label="System load over time"></svg>
+<svg id="loadOv" viewBox="0 0 900 312" aria-hidden="true"><g id="ovMarks"></g><g id="ovHover"></g></svg>
+<div class="chtip" id="chTip" hidden></div>
+</div>
+<div class="chhint">Hover for values · drag to zoom · click a dot to open the log</div>
 </section>
 <section class="card">
 <div class="top"><h2>Service</h2><div class="svh"><span class="cnt" id="svCnt"></span><button type="button" class="svbtn" id="svEdit" aria-expanded="false" aria-controls="svPick">Select</button></div></div>

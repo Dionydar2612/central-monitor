@@ -112,6 +112,21 @@ PROMQL = {
     "net_tx": lambda l: (
         f'sum(rate(node_network_transmit_bytes_total{{{l},device!="lo"}}[5m])) / 1024 / 1024'
     ),
+    # CPU แยกประเภท (%): user = โปรแกรม, system = kernel, iowait = รอดิสก์
+    "cpu_user": lambda l: (
+        f'avg(rate(node_cpu_seconds_total{{{l},mode="user"}}[5m])) * 100'
+    ),
+    "cpu_system": lambda l: (
+        f'avg(rate(node_cpu_seconds_total{{{l},mode="system"}}[5m])) * 100'
+    ),
+    "cpu_iowait": lambda l: (
+        f'avg(rate(node_cpu_seconds_total{{{l},mode="iowait"}}[5m])) * 100'
+    ),
+    # Load average และจำนวน core (เส้นอ้างอิง: load เกินจำนวน core = มีงานรอคิว CPU)
+    "load1": lambda l: f"node_load1{{{l}}}",
+    "load5": lambda l: f"node_load5{{{l}}}",
+    "load15": lambda l: f"node_load15{{{l}}}",
+    "cores": lambda l: f'count(node_cpu_seconds_total{{{l},mode="idle"}})',
 }
 
 # ค่าที่ดึงจาก snapshot ของ puller มาเสริม (Prometheus ไม่มี) -> system_state.py
@@ -215,10 +230,31 @@ def classify_state(metrics):
 
 HISTORY_SERIES = ("cpu", "memory", "disk", "io", "io_util")
 
+# ชุดกราฟที่หน้าเว็บเลือกได้ (แท็บของกราฟ System Load)  /api/metrics/history?set=<ชื่อ>
+#   main = ค่าเริ่มต้น (การ์ด KPI ใช้ชุดนี้ด้วย)
+HISTORY_SETS = {
+    "main": HISTORY_SERIES,
+    "cpu": ("cpu_user", "cpu_system", "cpu_iowait"),
+    "io": ("disk_read", "disk_write"),
+    "net": ("net_rx", "net_tx"),
+    "load": ("load1", "load5", "load15"),
+}
 
-def get_metrics_history(web, start, end, step):
-    """อนุกรมเวลาของ HISTORY_SERIES คืน {"cpu": [[unix, value], ...], ...}
 
+def get_cpu_cores(web):
+    """จำนวน core ของเครื่อง (จาก node_exporter) ไม่รู้ -> None"""
+    config = get_web_prometheus_config(web)
+    if not config:
+        return None
+    value = prom_value(PROMQL["cores"](_labels(config)))
+    return int(value) if value else None
+
+
+def get_metrics_history(web, start, end, step, names=HISTORY_SERIES, shift=0):
+    """อนุกรมเวลาของ names คืน {"cpu": [[unix, value], ...], ...}
+
+    shift = เลื่อนเวลาย้อนหลังกี่วินาที (เช่น 86400 = "เมื่อวานเวลาเดียวกัน")
+            ผลลัพธ์ถูกเลื่อนเวลากลับมาให้ทับกับช่วงปัจจุบัน วาดซ้อนกันได้ทันที
     เครื่องที่ไม่รู้จัก -> {} ; series ที่ query ล้มเหลว -> [] (กราฟอื่นยังแสดงได้)
     """
     config = get_web_prometheus_config(web)
@@ -229,13 +265,13 @@ def get_metrics_history(web, start, end, step):
     labels = _labels(config)
     series = {}
 
-    for name in HISTORY_SERIES:
+    for name in names:
         try:
-            data = prometheus_query_range(PROMQL[name](labels), start, end, step)
+            data = prometheus_query_range(PROMQL[name](labels), start - shift, end - shift, step)
             values = data["data"]["result"][0]["values"]
 
             series[name] = [
-                [float(t), round(float(v), 2)]
+                [float(t) + shift, round(float(v), 2)]
                 for t, v in values
                 if v not in ("NaN", "+Inf", "-Inf")
             ]
