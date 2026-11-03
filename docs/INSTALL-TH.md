@@ -31,7 +31,6 @@
 | otel | อ่านไฟล์ใน `data/buffer` แล้วส่งเข้า OpenSearch | ภายใน docker |
 | OpenSearch | เก็บ log (ลบอัตโนมัติด้วย ISM policy) | ภายใน docker เท่านั้น |
 | central-api | เว็บ UI + API (ต้อง login) | `127.0.0.1:8090` |
-| dashboards | OpenSearch Dashboards | `127.0.0.1:5601` |
 | Prometheus | เก็บ metrics (โหมด bundled) | `127.0.0.1:9090` |
 
 ทุกพอร์ตที่เปิดออก host ผูกกับ `127.0.0.1` เท่านั้น การเข้าจากภายนอกต้องผ่าน nginx (ข้อ 9) หรือ SSH tunnel
@@ -397,14 +396,6 @@ server {
 docker compose up -d --force-recreate central-api
 ```
 
-**OpenSearch Dashboards** ไม่เปิดสู่ภายนอก ให้เข้าผ่าน SSH tunnel:
-
-```bash
-ssh -L 5601:127.0.0.1:5601 <user>@<server>     # แล้วเปิด http://localhost:5601
-# login: admin / ค่า OPENSEARCH_ADMIN_PASSWORD ใน .env
-# สร้าง index pattern:  logs-central-*
-```
-
 ---
 
 ## 10. ตรวจสอบหลังติดตั้ง (Checklist)
@@ -487,7 +478,6 @@ docker compose logs -f --tail=100 otel
 | `port is already allocated` ที่ 9090 | มี Prometheus บน host อยู่แล้ว → ใช้โหมด B |
 | otel log: `permission denied` ที่ `/data/buffer/.otel-storage` | `docker compose up -d buffer-init` แล้ว `docker compose restart otel` (หรือ `sudo chown -R 10001:10001 /opt/central-monitor/data/buffer/.otel-storage`) |
 | ไม่มี index `logs-central-*` | ตรวจ `docker compose logs otel` และดูว่ามีไฟล์ใน `data/buffer/` หรือไม่ (ถูกลบทุก 30 นาที) |
-| Dashboards login ไม่ผ่าน | ใช้ user `admin` และรหัสผ่านจาก `OPENSEARCH_ADMIN_PASSWORD` |
 | login แล้วเด้งกลับหน้า login ทันที | เปิด `CENTRAL_COOKIE_SECURE=true` แต่เข้าเว็บผ่าน `http://` → เข้าผ่าน HTTPS หรือตั้งเป็น `false` |
 
 ---

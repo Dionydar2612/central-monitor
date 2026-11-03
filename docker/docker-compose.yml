@@ -16,7 +16,6 @@
 #
 #   [2] web_dashboard   = หน้าเว็บ
 #         central-api      Flask API + หน้าเว็บ (พอร์ต 127.0.0.1:8090)
-#         dashboards       OpenSearch Dashboards (ทางเลือก ค้น log ตรง ๆ, พอร์ต 127.0.0.1:5601)
 #
 #   [3] metrics         = ตัวชี้วัด CPU/RAM/Disk
 #         prometheus       เก็บ metrics (เฉพาะโหมด bundled-prometheus)
@@ -260,27 +259,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-
-
-  # ---------------------------------------------------------------
-  # dashboards : OpenSearch Dashboards (ค้น/ดู log ตรง ๆ) เปิดเฉพาะ 127.0.0.1:5601
-  # เข้าผ่าน SSH tunnel   ไม่จำเป็นต่อการทำงานของระบบ (ลบ service นี้ได้)
-  # ---------------------------------------------------------------
-  dashboards:
-    image: opensearchproject/opensearch-dashboards:3.8.0
-    container_name: central-dashboards
-    hostname: dashboards
-    depends_on:
-      - opensearch
-    environment:
-      OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
-      OPENSEARCH_USERNAME: admin
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_ADMIN_PASSWORD}
-    networks:
-      - central-net
-    ports:
-      - "127.0.0.1:5601:5601"
-    restart: unless-stopped
 
 
   # ===================================================================

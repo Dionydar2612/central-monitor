@@ -188,7 +188,6 @@ service:
 - ตาราง Logs: log ทั้งหมดของเครื่องที่เลือก (ล่าสุด 300 รายการ, เลื่อนดูในกล่อง) พร้อมค่า metrics ตอนนั้น — คลิกแถวเพื่อดูรายละเอียด สถานะ service/process/system events และ raw log
 - กล่อง Service, System events, ตาราง process และ Logs เลื่อนดูในกล่องได้ ไม่ทำให้หน้าเว็บยาว
 - ตัวเลข "Problem logs" / "Errors 15m" ด้านบนยังนับเฉพาะข้อความที่เป็น error/warn ตามเดิม
-- ค้น log ละเอียดใน OpenSearch Dashboards: `ssh -L 5601:127.0.0.1:5601 user@server` แล้วเปิด `http://localhost:5601` (admin / `OPENSEARCH_ADMIN_PASSWORD`) สร้าง index pattern `logs-central-*`
 
 **ข้อควรรู้เรื่องเวลา:** puller ดึงทุก 1 ชม. log จึงเข้าหน้าเว็บเป็นรอบ ๆ (ช้าได้สูงสุด 1 ชม.) และอยู่ใน OpenSearch ตาม `OPENSEARCH_LOG_RETENTION` (ปริยาย 7 วัน) แก้ค่านี้ใน docker/.env แล้วรัน `bash install.sh --keep`
 
