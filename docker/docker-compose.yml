@@ -34,6 +34,15 @@
 # ตั้งชื่อ project คงที่ -> ชื่อ network/volume เหมือนเดิมแม้ย้ายโฟลเดอร์
 name: central-monitor
 
+# จำกัดขนาด log ของ container (output ที่ดูด้วย `docker compose logs`)
+# ไม่ตั้งไว้ Docker จะเก็บไม่จำกัดจนเต็ม disk -> เก็บไม่เกิน 3 ไฟล์ x 10MB ต่อ container
+# ถ้าต้องการเก็บมากขึ้น แก้ max-size / max-file ที่นี่ที่เดียว
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
 
   # ===================================================================
@@ -61,6 +70,7 @@ services:
     networks:
       - central-net
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       # mount ทั้งโฟลเดอร์ keys/ (มีอยู่เสมอ Docker จึงไม่สร้าง "โฟลเดอร์" ทับไฟล์ที่ลืมสร้าง)
       # ไฟล์ที่ต้องมี: keys/central_ed25519 (private key, chmod 600)
@@ -114,6 +124,7 @@ services:
     volumes:
       - opensearch-data:/usr/share/opensearch/data
     restart: unless-stopped
+    logging: *default-logging
 
 
   # ---------------------------------------------------------------
@@ -131,6 +142,7 @@ services:
     volumes:
       - ../data/buffer:/data/buffer
     restart: "no"
+    logging: *default-logging
 
 
   # ---------------------------------------------------------------
@@ -159,6 +171,7 @@ services:
     environment:
       TZ: Asia/Bangkok
     restart: unless-stopped
+    logging: *default-logging
 
 
   # ---------------------------------------------------------------
@@ -186,6 +199,7 @@ services:
     environment:
       TZ: Asia/Bangkok
     restart: unless-stopped
+    logging: *default-logging
 
 
   # ===================================================================
@@ -243,6 +257,7 @@ services:
     ports:
       - "127.0.0.1:8090:8000"
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ../data:/data                # อ่าน data/state (checkpoint + snapshot เครื่อง)
                                      #   เขียน: web-nodes.json + pull-now.json (หน้า Settings)
@@ -294,6 +309,7 @@ services:
       - ../data/prometheus:/etc/prometheus/targets:ro
       - prometheus-data:/prometheus
     restart: unless-stopped
+    logging: *default-logging
 
   # ---------------------------------------------------------------
   # node-exporter : metrics ของเครื่อง central เอง (CPU/RAM/Disk) ให้ Prometheus
@@ -310,6 +326,7 @@ services:
     networks:
       - central-net
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -337,6 +354,7 @@ services:
     networks:
       - central-net
     restart: unless-stopped
+    logging: *default-logging
 
 
 networks:

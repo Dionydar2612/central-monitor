@@ -54,7 +54,17 @@
 <div class="top"><h2>System Load</h2><div class="lgd"><span><i style="background:var(--blue)"></i>CPU</span><span><i style="background:var(--soft)"></i>Memory</span></div></div>
 <svg id="load" viewBox="0 0 900 300" role="img" aria-label="System load over time"></svg>
 </section>
-<section class="card"><h2>Service</h2><div class="svcs" id="sv"></div></section>
+<section class="card">
+<div class="top"><h2>Service</h2><div class="svh"><span class="cnt" id="svCnt"></span><button type="button" class="svbtn" id="svEdit" aria-expanded="false" aria-controls="svPick">Select</button></div></div>
+<!-- ตัวเลือก service ที่จะแสดง (บันทึกที่ puller.yaml -> targets[].watch_services ผ่าน /api/targets/<web>/services) -->
+<div class="svpick" id="svPick" hidden>
+<input type="search" id="svFind" placeholder="Search service..." aria-label="Search service" autocomplete="off">
+<div class="svact"><button type="button" id="svAll">Select shown</button><button type="button" id="svNone">Clear</button><span class="cnt" id="svSel"></span></div>
+<div class="svlist" id="svList"></div>
+<div class="svfoot"><span class="sverr" id="svErr"></span><button type="button" id="svCancel">Cancel</button><button type="button" class="pri" id="svSave">Save</button></div>
+</div>
+<div class="svcs" id="sv"></div>
+</section>
 </div>
 
 <!-- ตาราง process ที่กิน CPU (#svc) และ Memory (#mem) สูงสุด จาก snapshot ของ puller -->

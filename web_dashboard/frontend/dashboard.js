@@ -721,7 +721,9 @@ const S = {
     metrics: null, summary: null, hist: null,
     dur: 15 * MIN, start: null, end: null,     // end === null means "now"
     tmp: null, ed: "s", vm: null,
-    lv: "ALL", lt: "ALL", stats: null      // ตัวกรอง log: ระดับ / ชนิด + จำนวนจาก /api/log-stats
+    lv: "ALL", lt: "ALL", stats: null,     // ตัวกรอง log: ระดับ / ชนิด + จำนวนจาก /api/log-stats
+    watch: [], watchWeb: null,             // service ที่เลือกให้แสดง ([] = ทั้งหมด) และเครื่องที่โหลดค่านั้นมา
+    pick: null                             // Set ของ service ที่ติ๊กอยู่ในตัวเลือก (null = ปิดตัวเลือก)
 };
 
 /* ย่อ document.querySelector */
@@ -895,9 +897,7 @@ function bar(v, max, text) {
    เรียงมากไปน้อย 8 อันดับ, และ System events (#ev ซ่อนการ์ดเมื่อไม่มี) */
 function renderLists() {
     const m = S.metrics || {}, svcs = Array.isArray(m.services) ? m.services : [], procs = Array.isArray(m.processes) ? m.processes : [];
-    q("#sv").innerHTML = svcs.length
-        ? svcs.map(x => `<div class="row"><span class="st ${svcClass(x.status)}">${escapeHtml(x.name || "-")}</span><span>${escapeHtml(x.status || "-")}</span></div>`).join("")
-        : `<div class="empty">No service data collected</div>`;
+    renderServices(svcs);
     const top = key => [...procs].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0)).slice(0, 8);
     const rows = key => {
         const l = top(key), mx = Math.max(100, ...l.map(p => Number(p[key] || 0)));
@@ -909,6 +909,102 @@ function renderLists() {
     q("#evCard").hidden = !ev.length;
     setText("evCnt", ev.length ? `${ev.length} events` : "");
     q("#ev").innerHTML = ev.map(e => `<div class="row"><span>${escapeHtml(formatTimestamp(e.timestamp))}</span><span>${escapeHtml(e.type || "")}</span><span>${escapeHtml(e.message || "")}</span></div>`).join("");
+}
+
+/* ---------- การ์ด Service: แสดงเฉพาะ service ที่เลือก ----------
+   S.watch = รายชื่อที่เลือกไว้ (เก็บใน puller.yaml ผ่าน /api/targets/<web>/services) ว่าง = แสดงทั้งหมด
+   service ที่เลือกไว้แต่ไม่อยู่ในข้อมูลล่าสุด แสดงเป็น "not collected" (จุดเหลือง) */
+function renderServices(svcs) {
+    const watch = S.watch || [];
+    let list = svcs;
+    if (watch.length) {
+        const byName = new Map(svcs.map(x => [x.name, x]));
+        list = watch.map(n => byName.get(n) || { name: n, status: "not collected" });
+    }
+    setText("svCnt", watch.length ? `${watch.length} of ${svcs.length}` : (svcs.length ? `All ${svcs.length}` : ""));
+    q("#sv").innerHTML = list.length
+        ? list.map(x => `<div class="row"><span class="st ${svcClass(x.status)}">${escapeHtml(x.name || "-")}</span><span>${escapeHtml(x.status || "-")}</span></div>`).join("")
+        : `<div class="empty">No service data collected</div>`;
+}
+
+/* โหลดรายชื่อ service ที่เลือกไว้ของเครื่องปัจจุบัน (ครั้งเดียวต่อการเปลี่ยนเครื่อง) */
+async function loadWatch() {
+    if (S.watchWeb === S.web) return;
+    try {
+        const d = await apiGet(`/api/targets/${encodeURIComponent(S.web)}/services`);
+        S.watch = Array.isArray(d.services) ? d.services : [];
+    } catch (err) {
+        console.error("Failed to load selected services:", err);
+        S.watch = [];
+    }
+    S.watchWeb = S.web;
+}
+
+/* รายชื่อทั้งหมดในตัวเลือก = service ที่เก็บได้ล่าสุด + ที่เลือกไว้ (กันชื่อที่เลือกไว้หายจากรายการ) */
+function pickNames() {
+    const m = S.metrics || {}, svcs = Array.isArray(m.services) ? m.services : [];
+    const status = new Map(svcs.map(x => [x.name, x.status]));
+    (S.watch || []).forEach(n => { if (!status.has(n)) status.set(n, "not collected"); });
+    return [...status.entries()].filter(([n]) => n).sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+/* วาดรายการติ๊กเลือกตามคำค้น */
+function renderPick() {
+    const f = q("#svFind").value.trim().toLowerCase();
+    const rows = pickNames().filter(([n]) => !f || n.toLowerCase().includes(f));
+    q("#svList").innerHTML = rows.length
+        ? rows.map(([n, st]) => `<label><input type="checkbox" data-svc="${escapeHtml(n)}"${S.pick.has(n) ? " checked" : ""}><span class="st ${svcClass(st)}">${escapeHtml(n)}</span><span>${escapeHtml(st || "-")}</span></label>`).join("")
+        : `<div class="empty">No matching service</div>`;
+    setText("svSel", S.pick.size ? `${S.pick.size} selected` : "None selected = show all");
+}
+
+/* เปิด/ปิดตัวเลือก */
+function togglePick(open) {
+    S.pick = open ? new Set(S.watch || []) : null;
+    q("#svPick").hidden = !open;
+    q("#svEdit").setAttribute("aria-expanded", String(open));
+    setText("svErr", "");
+    if (open) { q("#svFind").value = ""; renderPick(); q("#svFind").focus(); }
+}
+
+/* บันทึกการเลือก -> PUT /api/targets/<web>/services */
+async function savePick() {
+    const b = q("#svSave");
+    b.disabled = true; setText("svErr", "");
+    try {
+        const r = await fetch(`/api/targets/${encodeURIComponent(S.web)}/services`, {
+            method: "PUT", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ services: [...S.pick] })
+        });
+        if (r.status === 401) { window.location.href = "/login"; return; }
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((d.fields && d.fields.services) || d.error || `HTTP ${r.status}`);
+        S.watch = d.services || []; S.watchWeb = S.web;
+        togglePick(false);
+        renderServices(Array.isArray((S.metrics || {}).services) ? S.metrics.services : []);
+    } catch (err) {
+        setText("svErr", `Save failed: ${err.message}`);
+    } finally {
+        b.disabled = false;
+    }
+}
+
+function setupServicePicker() {
+    q("#svEdit").addEventListener("click", () => togglePick(q("#svPick").hidden));
+    q("#svCancel").addEventListener("click", () => togglePick(false));
+    q("#svSave").addEventListener("click", savePick);
+    q("#svFind").addEventListener("input", renderPick);
+    q("#svList").addEventListener("change", e => {
+        const c = e.target.closest("input[data-svc]"); if (!c) return;
+        c.checked ? S.pick.add(c.dataset.svc) : S.pick.delete(c.dataset.svc);
+        setText("svSel", S.pick.size ? `${S.pick.size} selected` : "None selected = show all");
+    });
+    q("#svAll").addEventListener("click", () => {
+        q("#svList").querySelectorAll("input[data-svc]").forEach(c => { c.checked = true; S.pick.add(c.dataset.svc); });
+        renderPick();
+    });
+    q("#svNone").addEventListener("click", () => { S.pick.clear(); renderPick(); });
 }
 
 /* ตาราง Logs: 1 แถวต่อ log, คลิกแถว -> openLogDetail */
@@ -1024,6 +1120,7 @@ async function loadAll() {
             apiGet(logUrl()),
             apiGet(`/api/log-stats?web=${w}`)
         ]);
+        await loadWatch();
         S.summary = summary;
         S.metrics = { ...(summary.metrics || {}), ...(metrics || {}) };
         renderMeta();
@@ -1146,9 +1243,11 @@ async function logout() {
 
 document.addEventListener("DOMContentLoaded", () => {
     setupPicker();
+    setupServicePicker();
     setLbl();
     q("#mach").addEventListener("click", e => {
         const b = e.target.closest("button[data-web]"); if (!b) return;
+        if (b.dataset.web !== S.web) togglePick(false);
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {

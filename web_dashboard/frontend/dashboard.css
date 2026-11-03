@@ -842,3 +842,21 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .lvtype{display:inline-flex;align-items:center;gap:8px;color:var(--mut);font-size:13px}
 .lvtype select{font:13px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 .lvstat{color:var(--mut);font-size:13px;margin-left:auto}
+
+/* ---- 9. เลือก service ที่จะแสดง (การ์ด Service: ปุ่ม Select + รายการติ๊กเลือก) ---- */
+.svh{display:flex;align-items:center;gap:10px}
+.svbtn,.svact button,.svfoot button{font:500 13px inherit;font-family:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer}
+.svbtn:hover,.svact button:hover,.svfoot button:hover{border-color:var(--blue)}
+.svbtn[aria-expanded="true"]{border-color:var(--blue);color:var(--blue)}
+.svfoot button.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+.svfoot button:disabled{opacity:.6;cursor:default}
+.svpick{border:1px solid var(--line);border-radius:8px;padding:12px;margin:4px 0 10px;background:var(--bg)}
+.svpick input[type="search"]{width:100%;font:14px inherit;font-family:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.svpick input[type="search"]:focus{outline:2px solid var(--blue);outline-offset:0;border-color:var(--blue)}
+.svact{display:flex;align-items:center;gap:8px;margin:10px 0 6px;flex-wrap:wrap}.svact .cnt{margin-left:auto}
+.svlist{max-height:220px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--soft) transparent;border-top:1px solid var(--line)}
+.svlist label{display:flex;align-items:center;gap:10px;padding:7px 2px;font-size:14px;cursor:pointer;border-bottom:1px solid var(--line)}
+.svlist label span:last-child{margin-left:auto;color:var(--mut);font-size:12px}
+.svlist input{accent-color:var(--blue);width:15px;height:15px;margin:0}
+.svfoot{display:flex;align-items:center;gap:8px;margin-top:10px;justify-content:flex-end}
+.sverr{margin-right:auto;color:#e5484d;font-size:13px}

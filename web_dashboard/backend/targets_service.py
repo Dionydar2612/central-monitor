@@ -399,6 +399,7 @@ def _view(t):
         "prometheus": t.get("prometheus") or {},
         "ssh": {"port": port, "user": ssh.get("user", "")},
         "logs": t.get("logs") or [],
+        "watch_services": t.get("watch_services") or [],
         "host_key_known": host_key_known(str(t.get("host", "")), port) if t.get("host") else False,
     }
 
@@ -461,6 +462,62 @@ def delete_target(name):
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
     return True
+
+
+# ------------------------------------------------------------------
+# เลือก service ที่จะแสดงในการ์ด Service ของหน้า dashboard (ต่อเครื่อง)
+# ------------------------------------------------------------------
+# เก็บใน puller.yaml ที่ targets[].watch_services (รายการชื่อ unit เช่น nginx.service)
+#   - ว่าง/ไม่มีคีย์ = แสดงทุก service (ค่าเริ่มต้น)
+#   - เป็นการตั้งค่าการแสดงผลอย่างเดียว puller ยังเก็บ service ทุกตัวเหมือนเดิม
+#   - เก็บฝั่ง server -> ทุกคน/ทุก browser เห็นการเลือกเดียวกัน
+
+MAX_WATCH_SERVICES = 300
+_SERVICE_NAME = re.compile(r"^[A-Za-z0-9:_.@\\-]{1,256}$")
+
+
+def _find_target(doc, name):
+    return next((n for n in (doc.get("targets") or [])
+                 if isinstance(n, dict) and n.get("name") == name), None)
+
+
+def get_watch_services(name):
+    """คืนรายชื่อ service ที่เลือกไว้ของเครื่อง name ([] = ทั้งหมด) หรือ None ถ้าไม่มีเครื่องนี้"""
+    node = _find_target(_load_doc(_yaml()), name)
+    if node is None:
+        return None
+    return [str(x) for x in (node.get("watch_services") or [])]
+
+
+def set_watch_services(name, services):
+    """บันทึกรายชื่อ service ที่จะแสดง ([] = แสดงทั้งหมด) คืนรายการที่บันทึก หรือ None ถ้าไม่มีเครื่องนี้"""
+    if not isinstance(services, list):
+        raise ValidationError({"services": "ต้องเป็น list ของชื่อ service"})
+    clean = []
+    for item in services:
+        item = str(item).strip()
+        if not _SERVICE_NAME.match(item):
+            raise ValidationError({"services": f"ชื่อ service ไม่ถูกต้อง: {item[:80]!r}"})
+        if item not in clean:
+            clean.append(item)
+    if len(clean) > MAX_WATCH_SERVICES:
+        raise ValidationError({"services": f"เลือกได้ไม่เกิน {MAX_WATCH_SERVICES} service"})
+    clean.sort(key=str.lower)
+
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        node = _find_target(doc, name)
+        if node is None:
+            return None
+        if clean:
+            seq = CommentedSeq(clean)
+            seq.fa.set_flow_style()          # เขียนบรรทัดเดียว: watch_services: [nginx.service, ssh.service]
+            node["watch_services"] = seq
+        elif "watch_services" in node:
+            del node["watch_services"]
+        _write_doc(y, doc)
+    return clean
 
 
 # ------------------------------------------------------------------

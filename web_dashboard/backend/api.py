@@ -30,6 +30,7 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     หน้า Settings (เพิ่ม/แก้/ลบเครื่องใน puller.yaml)  logic อยู่ที่ targets_service.py
     GET  /settings                หน้า Settings (settings.html)
     GET  /api/targets             รายการเครื่อง + public key ของ central
+    GET/PUT /api/targets/<name>/services   service ที่เลือกให้แสดงในการ์ด Service
     POST /api/targets             เพิ่มเครื่อง
     PUT  /api/targets/<name>      แก้เครื่อง (ชื่อเปลี่ยนไม่ได้)
     DELETE /api/targets/<name>    ลบเครื่อง
@@ -394,6 +395,35 @@ def targets_host_key():
     except ValidationError as e:
         return _bad_request(e)
     return jsonify({"keys": [{"type": k["type"], "fingerprint": k["fingerprint"]} for k in keys]})
+
+
+@app.get("/api/targets/<name>/services")
+def targets_watch_services_get(name):
+    """service ที่เลือกให้แสดงในการ์ด Service ของเครื่องนี้ ([] = แสดงทั้งหมด)"""
+    try:
+        services = targets_service.get_watch_services(name)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if services is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"web": name, "services": services})
+
+
+@app.put("/api/targets/<name>/services")
+def targets_watch_services_put(name):
+    """บันทึก service ที่จะแสดง  body: {"services": ["nginx.service", ...]}  ([] = แสดงทั้งหมด)"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        services = targets_service.set_watch_services(name, body.get("services"))
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if services is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"web": name, "services": services})
 
 
 # ============================================================
