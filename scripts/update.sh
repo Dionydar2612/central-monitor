@@ -7,6 +7,10 @@
 #   cm-update --rebuild    build + restart ใหม่ แม้ไม่มีโค้ดใหม่
 #   cm-update --where      บอกว่าโปรเจกต์ติดตั้งอยู่ที่ไหน
 #
+#   เครื่องอื่นที่ยังไม่มีคำสั่งนี้ (ติดตั้งจาก zip / ไม่รู้ path) ใช้คำสั่งเดียว:
+#     curl -fsSL https://raw.githubusercontent.com/Dionydar2612/central-monitor/main/scripts/update.sh | bash
+#   (หาโฟลเดอร์จาก container ที่รันอยู่, แปลงเป็น git clone ในที่เดิม, คง puller.yaml/.env/keys/data)
+#
 #   คำสั่ง cm-update ถูกสร้างโดย install.sh (ลิงก์ /usr/local/bin/cm-update -> ไฟล์นี้)
 #   จึงรู้ตำแหน่งโปรเจกต์เองเสมอ  ถ้ายังไม่มีคำสั่งนี้ (เครื่องที่ติดตั้งก่อนมีไฟล์นี้) ดู docs/INSTALL-TH.md
 #
@@ -20,34 +24,76 @@
 # =====================================================================
 set -euo pipefail
 
-# --- หาโฟลเดอร์โปรเจกต์ (ตามลิงก์ cm-update -> scripts/update.sh) ----------------
-SELF="${BASH_SOURCE[0]:-}"
-if [ -n "$SELF" ] && [ -f "$SELF" ]; then
-  ROOT="$(cd "$(dirname "$(readlink -f "$SELF")")/.." && pwd)"
-else
-  ROOT="$(git rev-parse --show-toplevel)"        # รันแบบ git show ... | bash จากในโปรเจกต์
-fi
-cd "$ROOT"
+REPO_URL="${CM_REPO:-https://github.com/Dionydar2612/central-monitor.git}"
 
-CHECK=0; REBUILD=0
-for a in "$@"; do
-  case "$a" in
+CHECK=0; REBUILD=0; DIR_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --check)   CHECK=1 ;;
     --rebuild) REBUILD=1 ;;
-    --where)   echo "$ROOT"; exit 0 ;;
-    -h|--help) sed -n '2,22p' "$0" 2>/dev/null || true; exit 0 ;;
-    *) echo "ไม่รู้จักตัวเลือก: $a (ดู cm-update --help)" >&2; exit 1 ;;
+    --where)   WHERE=1 ;;
+    --dir)     shift; DIR_ARG="${1:-}" ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
+    *) echo "ไม่รู้จักตัวเลือก: $1 (ดู cm-update --help)" >&2; exit 1 ;;
   esac
+  shift
 done
 
+# --- หาโฟลเดอร์โปรเจกต์ --------------------------------------------------
+#   1) --dir <path>   2) ตามลิงก์ cm-update -> scripts/update.sh
+#   3) รันอยู่ใน git clone ของโปรเจกต์   4) หาจาก container central-api ที่รันอยู่ (ไม่ต้องรู้ path)
+SELF="${BASH_SOURCE[0]:-}"
+if [ -n "$DIR_ARG" ]; then
+  ROOT="$(cd "$DIR_ARG" && pwd)"
+elif [ -n "$SELF" ] && [ -f "$SELF" ] && [ -f "$(dirname "$(readlink -f "$SELF")")/../install.sh" ]; then
+  ROOT="$(cd "$(dirname "$(readlink -f "$SELF")")/.." && pwd)"
+elif TOP="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -f "$TOP/install.sh" ]; then
+  ROOT="$TOP"
+elif WD="$(docker inspect central-api -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null \
+          || sudo docker inspect central-api -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null)" && [ -n "$WD" ]; then
+  ROOT="$(cd "$WD/.." && pwd)"
+else
+  echo "หาโฟลเดอร์ที่ติดตั้ง central-monitor ไม่เจอ (container central-api ไม่ได้รันอยู่)" >&2
+  echo "ระบุเองได้:  ... | bash -s -- --dir /path/to/central-monitor" >&2
+  echo "ถ้ายังไม่เคยติดตั้งเลย:  git clone $REPO_URL && cd central-monitor && bash install.sh" >&2
+  exit 1
+fi
+cd "$ROOT"
+[ "${WHERE:-0}" -eq 1 ] && { echo "$ROOT"; exit 0; }
+
 say() { printf '\n==> %s\n' "$*"; }
-[ -d .git ] || { echo "$ROOT ไม่ใช่ git clone - อัปเดตด้วย git ไม่ได้ (ดู docs/INSTALL-TH.md)" >&2; exit 1; }
+command -v git >/dev/null || { echo "ต้องมี git ก่อน:  sudo apt install -y git" >&2; exit 1; }
 
 # รันด้วย sudo -> ใช้ git ในนามเจ้าของโฟลเดอร์ (ไฟล์ใหม่จะได้ไม่เป็นของ root)
 OWNER="$(stat -c %U "$ROOT")"
-GIT=(git)
-if [ "$(id -u)" -eq 0 ] && [ "$OWNER" != "root" ]; then GIT=(sudo -u "$OWNER" git); fi
+GIT=(git -c "safe.directory=$ROOT")
+if [ "$(id -u)" -eq 0 ] && [ "$OWNER" != "root" ]; then GIT=(sudo -u "$OWNER" git -c "safe.directory=$ROOT"); fi
 g() { "${GIT[@]}" "$@"; }
+
+# --- เครื่องที่ติดตั้งจาก zip (ไม่มี .git): แปลงเป็น git clone ในที่เดิม คงค่าทั้งหมด -----------
+#   ไฟล์โค้ดถูกแทนด้วยเวอร์ชันบน GitHub ; config/puller.yaml, docker/.env, keys/, data/ ไม่ถูกแตะ
+#   (puller.yaml + .env สำรองไว้ก่อนอีกชั้น) แล้วรัน install.sh --keep -> ได้คำสั่ง cm-update ไว้ใช้ครั้งต่อไป
+if [ ! -d .git ]; then
+  [ "$CHECK" -eq 1 ] && { echo "$ROOT ยังไม่ใช่ git clone -> รันโดยไม่ใส่ --check เพื่อแปลงและอัปเดต"; exit 0; }
+  BK="data/state/update-backup/$(date +%Y%m%d-%H%M%S)-convert"
+  say "แปลง $ROOT เป็น git clone ของ $REPO_URL (คงค่าเดิม สำรองไว้ที่ $BK/)"
+  mkdir -p "$BK"
+  [ -f config/puller.yaml ] && cp -p config/puller.yaml "$BK/puller.yaml"
+  [ -f docker/.env ] && cp -p docker/.env "$BK/.env"
+  g init -q
+  g remote add origin "$REPO_URL"
+  g fetch --quiet origin main
+  g reset -q --hard origin/main
+  g branch -q -M main
+  g branch -q --set-upstream-to=origin/main main
+  [ -f "$BK/puller.yaml" ] && cp -p "$BK/puller.yaml" config/puller.yaml
+  [ -f config/puller.yaml ] || cp -p config/puller.example.yaml config/puller.yaml
+  echo "ตอนนี้: $(g log -1 --format='%h %ad %s' --date=short)"
+  say "build + restart (install.sh --keep)"
+  bash install.sh --keep
+  echo; echo "อัปเดตเสร็จ ครั้งต่อไปพิมพ์แค่: cm-update"
+  exit 0
+fi
 
 echo "โปรเจกต์: $ROOT"
 
