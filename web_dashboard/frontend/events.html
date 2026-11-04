@@ -27,6 +27,7 @@
 <button type="button" data-tab="warning">W Warning</button>
 <button type="button" data-tab="ok">✓ OK</button>
 <button type="button" data-tab="paused">II Paused</button>
+<button type="button" data-tab="acknowledged">Acknowledged</button>
 <button type="button" data-tab="all">All sensors</button>
 <span class="evsep"></span>
 <button type="button" data-tab="system">System log</button>
@@ -39,6 +40,11 @@
 <div id="evBody"><div class="empty">Loading...</div></div>
 </section>
 </div>
+<!-- กราฟย้อนหลังของ sensor (คลิกกราฟเล็กในการ์ด) -->
+<div class="evmodal" id="evModal" hidden><div class="evmbox" role="dialog" aria-modal="true" aria-labelledby="evmTitle">
+<div class="evmhead"><h3 id="evmTitle">-</h3><div class="tabs" id="evmRange"><button type="button" data-r="1h">1h</button><button type="button" data-r="6h">6h</button><button type="button" data-r="24h">24h</button><button type="button" data-r="7d">7d</button><button type="button" data-r="30d">30d</button></div><button type="button" class="svbtn" id="evmClose">Close</button></div>
+<div id="evmChart" class="evmchart"></div>
+</div></div>
 <script src="/badges.js"></script>
 <script src="/events.js"></script>
 </body>

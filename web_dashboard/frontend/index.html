@@ -84,7 +84,7 @@
 
 <!-- ตาราง process ที่กิน CPU (#svc) จาก snapshot ของ puller และ Memory (#mem: วัดสดผ่าน puller ถ้าได้ ไม่งั้น snapshot) -->
 <div class="grid two">
-<section class="card"><h2>CPU process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="svc"></tbody></table></div></section>
+<section class="card"><h2>CPU process</h2><div class="asof" id="cpuAsOf"></div><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="svc"></tbody></table></div></section>
 <section class="card"><h2>Memory Usage by Process</h2><div class="tblw scroll procscroll"><table class="memtbl"><thead><tr><th>Process</th><th>PID</th><th style="width:48%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
 </div>
 

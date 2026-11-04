@@ -140,7 +140,7 @@ docker compose exec -T central-api sh -c \
   'curl -sk -u "admin:${OPENSEARCH_ADMIN_PASSWORD}" "https://opensearch:9200/_cat/indices/logs-central-*?v"'
 ```
 
-> รอบดึงคือทุก `scheduler.interval` (ค่าเริ่มต้น 1 ชม.) และเว้น `target_stagger` (5 นาที) ระหว่างเครื่อง — เครื่องที่ 4 จะเริ่มดึงหลังเริ่มรอบ ~15 นาที ถ้าอยากทดสอบเร็ว ให้ตั้ง `target_stagger: 5s` ชั่วคราว
+> log ใหม่เข้ามาทุก `scheduler.log_interval` (ค่าเริ่มต้น 2 นาที) ส่วน service / process / load เก็บทุก `scheduler.interval` (1 ชม.) ดึงหลายเครื่องพร้อมกัน (`scheduler.parallel`) และใช้การเชื่อมต่อ SSH เดิมซ้ำ
 
 ### 3.4 ลบ / แก้เครื่อง
 

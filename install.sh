@@ -102,7 +102,7 @@ echo "vm.max_map_count=$(sysctl -n vm.max_map_count)"
 
 # --- 3) สิทธิ์ไฟล์ -----------------------------------------------------
 say "3/7 ปรับเจ้าของไฟล์เป็น $OWNER:$OWNER_GRP (กัน permission denied)"
-run_o mkdir -p keys config data/buffer data/state/system data/prometheus
+run_o mkdir -p keys keys/tls config data/buffer data/state/system data/prometheus
 if [ ! -f config/puller.yaml ] && [ -f config/puller.example.yaml ]; then
   run_o cp config/puller.example.yaml config/puller.yaml
   echo "สร้าง config/puller.yaml จาก config/puller.example.yaml"

@@ -1078,3 +1078,26 @@ td.bad{color:#e5484d}
 .evtbl td.ok{color:#0a9a60}.evtbl td.bad{color:#e5484d}
 .evtbl a{color:var(--blue);text-decoration:none}
 @media(max-width:600px){.evcards{grid-template-columns:1fr}.evgrid{grid-template-columns:1fr}}
+
+/* ---- Acknowledge + กราฟย้อนหลัง (หน้า Status & Logs) ---- */
+.sbadge.ack{background:#b7791f}
+.evbtns{margin-left:auto}
+.evackt{color:var(--mut);font-size:13px}
+.evack{margin-top:12px;padding:8px 10px;border-radius:6px;background:var(--chip);font-size:12.5px}
+.evnote{margin-top:3px;color:var(--ink);white-space:pre-wrap}
+.evlim{color:var(--mut);font-size:11.5px;margin-left:6px}
+.evgraph[role="button"]{cursor:pointer;border-radius:4px}.evgraph[role="button"]:hover{background:var(--chip)}
+.evmodal{position:fixed;inset:0;background:rgba(10,16,30,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.evmbox{background:var(--card);border-radius:10px;padding:16px 18px;width:min(920px,100%);box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.evmhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}.evmhead h3{margin:0;font-size:16px;flex:1}
+.evbig{width:100%;height:auto}.evmstat{color:var(--mut);font-size:12.5px;margin-top:6px}
+
+.th-grid{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+
+.asof{font-size:12px;color:var(--mut);margin:2px 0 6px}
+.ovack{display:inline-block;margin-left:6px;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;background:#b7791f;color:#fff}
+.pwwarn{margin:-6px 0 16px;padding:10px 14px;border-radius:8px;border:1px solid rgba(229,72,77,.4);background:rgba(229,72,77,.07);font-size:13px;line-height:1.5}
+.pwwarn b{color:#e5484d}.pwwarn code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+
+/* hidden attribute ต้องชนะ display ของ class เสมอ (modal, ปุ่ม INFO ของ viewer ฯลฯ) */
+[hidden]{display:none!important}

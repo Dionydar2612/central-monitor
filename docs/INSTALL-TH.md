@@ -429,7 +429,7 @@ docker compose exec -T central-api sh -c \
 
 จากนั้นเปิดหน้าเว็บ → login → เลือกเครื่อง ควรเห็น CPU/Memory/Disk และรายการ problems
 
-> puller ทำงานรอบละ 1 ชั่วโมง (`scheduler.interval`) และรอบแรกเริ่มทันทีที่สตาร์ท ระหว่างเครื่องหน่วงกัน 5 นาที (`target_stagger`) ถ้ามีหลายเครื่อง รอบแรกจะใช้เวลา ≈ 5 นาที × (จำนวนเครื่อง − 1)
+> puller ดึง log ทุก `scheduler.log_interval` (ปริยาย 2 นาที) และเก็บสถานะเครื่องทุก `scheduler.interval` (ปริยาย 1 ชม.) ทำพร้อมกัน `scheduler.parallel` เครื่อง (ปริยาย 4) รอบแรกเริ่มทันทีที่สตาร์ท (`target_stagger` รุ่นเก่าไม่ใช้แล้ว)
 
 ---
 

@@ -85,6 +85,39 @@ def clean_group(value, errors, field="group"):
     return group
 
 
+THRESHOLD_KINDS = ("cpu", "memory", "disk")
+
+
+def clean_thresholds(value, errors):
+    """เกณฑ์เฉพาะเครื่อง {cpu: {warning, error}, ...} ช่องว่าง = ใช้ค่าทั้งระบบ  คืน dict (อาจว่าง)"""
+    out = {}
+    if not isinstance(value, dict):
+        return out
+    for kind in THRESHOLD_KINDS:
+        item = value.get(kind) or {}
+        if not isinstance(item, dict):
+            continue
+        clean = {}
+        for lv in ("warning", "error"):
+            v = item.get(lv)
+            if v in (None, ""):
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                errors[f"thresholds.{kind}.{lv}"] = "ต้องเป็นตัวเลข 1-100"
+                continue
+            if not 1 <= v <= 100:
+                errors[f"thresholds.{kind}.{lv}"] = "ต้องอยู่ระหว่าง 1-100"
+                continue
+            clean[lv] = int(v) if v.is_integer() else v
+        if "warning" in clean and "error" in clean and clean["warning"] >= clean["error"]:
+            errors[f"thresholds.{kind}.warning"] = "warning ต้องน้อยกว่า error"
+        if clean:
+            out[kind] = clean
+    return out
+
+
 # systemd journal แทนไฟล์: "journal" หรือ "journal:nginx.service,ssh.service" (ดู puller/journal.py)
 JOURNAL_RE = re.compile(r"^journal(?::[A-Za-z0-9@._:-]{1,128}(?:,[A-Za-z0-9@._:-]{1,128}){0,9})?$")
 
@@ -180,6 +213,7 @@ def validate_target(data, existing_names, editing=None):
 
     group = clean_group(data.get("group"), errors)
     paused = bool(data.get("paused", False))
+    thresholds = clean_thresholds(data.get("thresholds"), errors)
 
     if errors:
         raise ValidationError(errors)
@@ -189,6 +223,7 @@ def validate_target(data, existing_names, editing=None):
         "host": host,
         "group": group,
         "paused": paused,
+        "thresholds": thresholds,
         "prometheus": {"job": job, "instance": instance},
         "ssh": {"port": ssh_port, "user": ssh_user},
         "logs": logs,
@@ -244,6 +279,8 @@ def _to_node(t):
         node["group"] = t["group"]
     if t.get("paused"):
         node["paused"] = True
+    if t.get("thresholds"):
+        node["thresholds"] = _thresholds_node(t["thresholds"])
     prom = CommentedMap(t["prometheus"])
     node["prometheus"] = prom
     node["ssh"] = CommentedMap(t["ssh"])
@@ -259,6 +296,7 @@ def _apply(node, t):
     node["host"] = t["host"]
     _set_or_drop(node, "group", t.get("group") or None)
     _set_or_drop(node, "paused", True if t.get("paused") else None)
+    _set_or_drop(node, "thresholds", _thresholds_node(t["thresholds"]) if t.get("thresholds") else None)
     for key in ("prometheus", "ssh"):
         if not isinstance(node.get(key), CommentedMap):
             node[key] = CommentedMap()
@@ -268,6 +306,16 @@ def _apply(node, t):
     for item in t["logs"]:
         logs.append(CommentedMap(item))
     node["logs"] = logs
+
+
+def _thresholds_node(th):
+    """{disk: {warning: 90, error: 95}} -> เขียนบรรทัดเดียวต่อชนิด อ่านง่ายใน puller.yaml"""
+    node = CommentedMap()
+    for kind, levels in th.items():
+        m = CommentedMap(levels)
+        m.fa.set_flow_style()
+        node[kind] = m
+    return node
 
 
 def _set_or_drop(node, key, value):
@@ -443,6 +491,7 @@ def _view(t):
         "host": t.get("host"),
         "group": t.get("group") or "",
         "paused": bool(t.get("paused")),
+        "thresholds": t.get("thresholds") or {},
         "prometheus": t.get("prometheus") or {},
         "ssh": {"port": port, "user": ssh.get("user", "")},
         "logs": t.get("logs") or [],

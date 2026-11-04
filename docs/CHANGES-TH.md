@@ -1,3 +1,19 @@
+# สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 ค่ำ): เติมส่วนที่ขาด (ยกเว้นแจ้งเตือนออกนอกเว็บ)
+
+| เรื่อง | เปลี่ยน |
+|---|---|
+| log เกือบ real-time | `scheduler.log_interval` (ปริยาย 2m) แยกจากสถานะเครื่อง `scheduler.interval` (1h) · ดึงพร้อมกัน `scheduler.parallel` เครื่อง (ปริยาย 4) · SSH ใช้การเชื่อมต่อเดิมซ้ำ (ControlMaster 5 นาที, ปิดได้ `CENTRAL_SSH_MUX=0`) · `target_stagger` ไม่ใช้แล้ว |
+| Acknowledge | หน้า Status & Logs: ปุ่ม Acknowledge + โน้ต (operator ขึ้นไป) · ไม่นับในป้าย ▼/W และไม่ทำให้สถานะเครื่องแดง/เหลือง · หมดอายุเองเมื่อสถานะเปลี่ยน · บันทึกใน Activity log · `data/state/acks.json` |
+| เกณฑ์ต่อเครื่อง | Settings -> ฟอร์มเครื่อง: CPU / Memory / Disk warning-error เฉพาะเครื่อง (`targets[].thresholds`) · ใช้ทั้ง sensor, สถานะในต้นไม้กลุ่ม และสีการ์ด KPI |
+| กราฟย้อนหลัง sensor | คลิกกราฟในการ์ด sensor -> 1h / 6h / 24h / 7d / 30d พร้อมเส้น warning/error และ min/avg/max |
+| HTTPS ในตัว | `./scripts/make-cert.sh` สร้าง self-signed (หรือวางใบรับรองจริงใน `keys/tls/`) -> gunicorn เปิด https เอง (`gunicorn.conf.py`), cookie secure อัตโนมัติ |
+| เตือนรหัสเริ่มต้น | admin ยังใช้ `admin/admin` -> แถบแดงบน Dashboard |
+| การ์ด CPU process | แสดงเวลาของข้อมูล เก่าเกิน 2 รอบเป็นสีแดง "outdated" |
+| เทสต์อัตโนมัติ | `tests/` + `./scripts/test.sh` (หรือ `./scripts/test.sh docker`) 13 เทสต์ |
+| แก้ bug | `[hidden]` ถูก CSS class ทับ (ปุ่ม INFO ของ viewer ไม่ซ่อน) |
+
+---
+
 # สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 เย็น): Sensor status + System log + Activity log
 
 - `puller/sensor_monitor.py` (thread ทุก 30 วินาที): sensor ต่อเครื่อง Availability / CPU average 5m / Memory / Disk ต่อ mount / Log pull (SSH)

@@ -279,10 +279,13 @@ services:
       # เฉพาะ 2 ไฟล์ (ไม่ mount private key): known_hosts เขียนได้ (เก็บ host key), public key อ่านอย่างเดียว
       - ../keys/known_hosts:/run/keys/known_hosts
       - ../keys/central_ed25519.pub:/run/keys/central_ed25519.pub:ro
+      # (ไม่บังคับ) HTTPS: มี cert.pem + key.pem ในโฟลเดอร์นี้ -> gunicorn เปิด https เอง (gunicorn.conf.py)
+      #   สร้างแบบ self-signed: ./scripts/make-cert.sh
+      - ../keys/tls:/run/tls:ro
     depends_on:
       - opensearch
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health || curl -fsSk https://127.0.0.1:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3

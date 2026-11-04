@@ -12,6 +12,9 @@ ssh_client.py - ส่วนที่ "คุยกับเครื่อง�
       ก่อน (ssh-keyscan) กัน man-in-the-middle
     - BatchMode=yes             : ห้ามถามรหัสผ่าน ใช้ key เท่านั้น
     - ConnectTimeout=10         : เครื่องปลายทางไม่ตอบ จะไม่ค้างตลอดไป
+    - ControlMaster / ControlPersist : ใช้การเชื่อมต่อ SSH เดิมซ้ำ 5 นาที
+      ดึง log ถี่ (ทุก 2 นาที) แล้วไม่ต้อง login ใหม่ทุกคำสั่ง -> เครื่องปลายทางไม่โดน SSH ถล่ม,
+      auth.log ไม่ท่วม, เร็วขึ้นมาก  (ตั้ง CENTRAL_SSH_MUX=0 เพื่อปิด)
     - ฝั่งปลายทางควรเป็น user read-only (central-pull) ดู docs/INSTALL-TH.md ข้อ 6
 
 เชื่อมกับอะไร
@@ -22,8 +25,13 @@ ssh_client.py - ส่วนที่ "คุยกับเครื่อง�
 
 import os
 import subprocess
+import tempfile
 
 from config import SSH_KEY_PATH, SSH_KNOWN_HOSTS
+
+SSH_MUX = os.environ.get("CENTRAL_SSH_MUX", "1") != "0"
+# socket ของ ControlMaster (path ต้องสั้น: unix socket จำกัด ~100 ตัวอักษร)
+MUX_DIR = os.path.join(tempfile.gettempdir(), "cm-ssh")
 
 
 def _build_command(target, remote_command):
@@ -41,6 +49,15 @@ def _build_command(target, remote_command):
 
     if SSH_KNOWN_HOSTS:
         cmd += ["-o", f"UserKnownHostsFile={SSH_KNOWN_HOSTS}"]
+
+    if SSH_MUX:
+        os.makedirs(MUX_DIR, mode=0o700, exist_ok=True)
+        cmd += [
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={MUX_DIR}/%C",
+            "-o", "ControlPersist=300",
+            "-o", "ServerAliveInterval=30",
+        ]
 
     cmd += [f"{ssh['user']}@{target['host']}", remote_command]
 

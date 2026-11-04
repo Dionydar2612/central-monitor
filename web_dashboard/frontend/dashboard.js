@@ -757,6 +757,14 @@ const TH = {
     disk: { warn: 80, crit: 90 },
     io_util: { warn: 70, crit: 90 }
 };
+/* ค่าทั้งระบบ (ใช้เมื่อเครื่องไม่มีเกณฑ์เฉพาะ) ; applyTargetThresholds เปลี่ยน TH ตามเครื่องที่เลือก (puller.yaml -> targets[].thresholds) */
+const TH_DEFAULT = JSON.parse(JSON.stringify(TH));
+function applyTargetThresholds(th) {
+    ["cpu", "memory", "disk"].forEach(k => {
+        const t = th && th[k];
+        TH[k] = t && t.warning != null && t.error != null ? { warn: Number(t.warning), crit: Number(t.error) } : { ...TH_DEFAULT[k] };
+    });
+}
 /* ระดับของค่า v ตามเกณฑ์ของ key -> "cr" | "wr" | "" */
 function level(key, v) {
     const t = TH[key], n = Number(v);
@@ -912,7 +920,9 @@ function serverRows(list, cur) {
         list.map(w => {
             const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
-            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}">${escapeHtml(label)}</span></td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+            const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
+            const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
 
@@ -957,6 +967,7 @@ function renderMachines(ov) {
     if (ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
     const cur = webs.some(w => w.web === S.web) ? S.web : ((webs.find(w => !w.paused) || webs[0] || {}).web || null);
     S.web = cur;
+    applyTargetThresholds((webs.find(w => w.web === cur) || {}).thresholds);
     setText("cur", cur || "-");
 
     const cb = c => checks.filter(x => x.status === c).length;
@@ -1347,6 +1358,11 @@ function liveData() { return S.live && S.live.web === S.web ? S.live.data : null
 
 /* การ์ด CPU process (#svc): process ที่กิน CPU สูงสุด 8 อันดับ จาก snapshot ของ puller (ps ตอนรอบดึง) */
 function renderCores(procs) {
+    /* เวลาของข้อมูล (snapshot รอบดึงล่าสุด) เก่าเกิน 2 รอบ -> สีแดง ⚠ (puller เข้าเครื่องไม่ได้) */
+    const ts = (S.metrics || {}).system_timestamp;
+    q("#cpuAsOf").innerHTML = ts ? (isStale(ts)
+        ? `<span class="stale" title="puller could not reach this machine - see the Log pull sensor">data from ${escapeHtml(formatTimestamp(ts))} ⚠ outdated</span>`
+        : `as of ${escapeHtml(formatTimestamp(ts))}`) : "";
     const l = [...(procs || [])].sort((a, b) => Number(b.cpu || 0) - Number(a.cpu || 0)).slice(0, 8);
     const mx = Math.max(100, ...l.map(p => Number(p.cpu || 0)));
     q("#svc").innerHTML = l.length
@@ -1851,6 +1867,12 @@ async function loadCurrentUser() {
         S.role = d.role || "viewer";
         document.querySelectorAll(".st-nav[href='/settings']").forEach(a => { a.hidden = S.role !== "admin"; });
         const info = q(".infold"); if (info) info.hidden = !canOperate();
+        if (d.default_password && !q("#pwWarn")) {
+            const b = document.createElement("div");
+            b.id = "pwWarn"; b.className = "pwwarn";
+            b.innerHTML = `<b>Default password in use.</b> The admin account still uses <code>admin / admin</code>. Change <code>CENTRAL_AUTH_PASSWORD</code> in <code>docker/.env</code>, then run <code>cd docker && docker compose up -d --force-recreate central-api</code> (see docs/CONFIG-TH.md section 2).`;
+            q(".wrap").insertBefore(b, q(".wrap").children[1]);
+        }
         if (S.ov) renderMachines();
     } catch (err) { console.error("Failed to load current user:", err); }
 }

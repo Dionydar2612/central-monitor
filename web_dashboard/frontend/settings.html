@@ -46,6 +46,17 @@
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
 </div>
 
+<div class="st-h3">เกณฑ์แจ้งสถานะเฉพาะเครื่องนี้ (ไม่บังคับ)</div>
+<div style="color:var(--mut);font-size:13px">เว้นว่าง = ใช้ค่าทั้งระบบ (puller.yaml -> thresholds) · ใช้กับเครื่องที่ค่าสูงเป็นปกติ เช่น DB ที่ disk 85% ตลอด</div>
+<div class="st-grid th-grid">
+<div class="st-f" data-f="thresholds.cpu.warning"><label for="th_cpu_warning">CPU average 5m warning %</label><input id="th_cpu_warning" inputmode="decimal" placeholder="75 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.cpu.error"><label for="th_cpu_error">CPU average 5m error %</label><input id="th_cpu_error" inputmode="decimal" placeholder="90 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.memory.warning"><label for="th_memory_warning">Memory warning %</label><input id="th_memory_warning" inputmode="decimal" placeholder="80 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.memory.error"><label for="th_memory_error">Memory error %</label><input id="th_memory_error" inputmode="decimal" placeholder="90 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.disk.warning"><label for="th_disk_warning">Disk (ทุก mount point) warning %</label><input id="th_disk_warning" inputmode="decimal" placeholder="80 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.disk.error"><label for="th_disk_error">Disk (ทุก mount point) error %</label><input id="th_disk_error" inputmode="decimal" placeholder="90 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+</div>
+
 <div class="st-h3">Log files ที่ต้องการดึง</div>
 <div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
 journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>

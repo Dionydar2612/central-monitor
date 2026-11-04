@@ -13,10 +13,12 @@ sensor ต่อเครื่อง
 เครื่องที่ pause -> ทุก sensor = paused ; เครื่อง down -> sensor อื่น = unknown
 
 เกณฑ์ (ปรับได้ใน puller.yaml)
-    thresholds:
+    thresholds:                      # ทั้งระบบ
       cpu:    {warning: 75, error: 90}
       memory: {warning: 80, error: 90}
       disk:   {warning: 80, error: 90}
+    targets[].thresholds:            # (ไม่บังคับ) เฉพาะเครื่องนั้น ทับค่าทั้งระบบ เช่น DB ที่ disk สูงเป็นปกติ
+      disk: {warning: 90, error: 95}
 
 ผลลัพธ์
     data/state/sensors.json   สถานะปัจจุบันของทุก sensor + ตั้งแต่เมื่อไหร่ (since) -> /api/sensors
@@ -77,9 +79,9 @@ def _one(q):
     return rows[0][1] if rows else None
 
 
-def _thresholds(config):
-    th = json.loads(json.dumps(DEFAULT_THRESHOLDS))
-    for key, val in (config.get("thresholds") or {}).items():
+def _merge_thresholds(base, override):
+    th = json.loads(json.dumps(base))
+    for key, val in (override or {}).items():
         if key in th and isinstance(val, dict):
             for lv in ("warning", "error"):
                 try:
@@ -87,6 +89,10 @@ def _thresholds(config):
                 except (KeyError, TypeError, ValueError):
                     pass
     return th
+
+
+def _thresholds(config):
+    return _merge_thresholds(DEFAULT_THRESHOLDS, config.get("thresholds"))
 
 
 def _grade(value, th):
@@ -126,17 +132,21 @@ def _last_contact(name, checkpoints):
     return max(times) if times else None
 
 
-def _target_sensors(t, th, interval, checkpoints):
+def _target_sensors(t, global_th, interval, checkpoints):
     name = t["name"]
+    th = _merge_thresholds(global_th, t.get("thresholds"))
     base = {"web": name, "host": t.get("host"), "group": t.get("group") or ""}
     prom = t.get("prometheus") or {}
     labels = f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
     out = []
 
     def add(sid, kind, label, status, value=None, unit="%", message="", mount=None):
+        limits = th.get(kind)
         out.append({**base, "id": f"{name}:{sid}", "kind": kind, "name": label, "status": status,
                     "value": None if value is None else round(value, 2), "unit": unit,
-                    "message": message, "mount": mount})
+                    "message": message, "mount": mount,
+                    "warning": limits["warning"] if limits else None,
+                    "error": limits["error"] if limits else None})
 
     if t.get("paused"):
         add("availability", "availability", "Availability", "paused", unit="", message="Paused by user")
@@ -228,9 +238,10 @@ def run_once(previous):
                            f"{STATUS_TEXT.get(s['status'], s['status'])} · {s['message']}",
             })
 
+    per_target = {t["name"]: _merge_thresholds(th, t.get("thresholds")) for t in targets}
     tmp = SENSORS_FILE + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"updated_at": now, "thresholds": th, "sensors": sensors}, f)
+        json.dump({"updated_at": now, "thresholds": th, "targets": per_target, "sensors": sensors}, f)
     os.replace(tmp, SENSORS_FILE)
     append_events(events)
     return {s["id"]: s for s in sensors}

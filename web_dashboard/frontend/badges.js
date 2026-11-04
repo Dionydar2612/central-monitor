@@ -49,6 +49,7 @@
             if (c.warning) box.append(badge("/events?status=warning", "wr", "W", c.warning, `${c.warning} sensor(s) Warning`));
             box.append(badge("/events?status=ok", "ok", "✓", c.ok || 0, `${c.ok || 0} sensor(s) OK`));
             if (c.paused) box.append(badge("/events?status=paused", "ps", "II", c.paused, `${c.paused} sensor(s) Paused`));
+            if (c.acknowledged) box.append(badge("/events?status=acknowledged", "ack", "✓!", c.acknowledged, `${c.acknowledged} acknowledged problem(s)`));
             if (c.unknown) box.append(badge("/events?status=unknown", "na", "?", c.unknown, `${c.unknown} sensor(s) Unknown`));
         } catch (e) { /* เครือข่ายหลุดชั่วคราว: รอบหน้าลองใหม่ */ }
     }

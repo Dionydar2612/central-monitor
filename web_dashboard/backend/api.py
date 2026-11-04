@@ -39,6 +39,8 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/sensors?status=warning,error&web=&history=1   sensor ต่อเครื่อง (puller/sensor_monitor.py)
     GET  /api/events?kind=system|activity&limit=&since=&q=   System log / Activity log (activity = admin)
     GET  /api/events/summary?since_system=&since_activity=   ตัวเลขบนป้ายหัวหน้าเว็บ
+    POST /api/sensors/ack {"id","note"}  /api/sensors/unack {"id"}   รับทราบปัญหา (operator ขึ้นไป)
+    GET  /api/sensors/history?id=&range=1h|6h|24h|7d|30d               กราฟย้อนหลังของ sensor
     ทุก POST/PUT/DELETE + ล็อกอิน/ออก ถูกบันทึกใน Activity log (audit_service.py) โดยอัตโนมัติ
 
 สิทธิ์ (role) ตรวจที่ require_authentication -> _required_role
@@ -148,7 +150,7 @@ def require_authentication():
     return None
 
 
-_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$")
+_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/sensors/(un)?ack$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 
 
@@ -186,6 +188,8 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)/pause$"), "check.pause", ("paused",)),
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
+    ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
+    ("POST", re.compile(r"^/api/sensors/unack$"), "sensor.unack", ("id",)),
     ("POST", re.compile(r"^/api/users$"), "user.add", ("username", "role")),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
@@ -220,7 +224,7 @@ def audit_changes(response):
             details["count"] = len(body.get("services") or [])
         if action == "user.update" and isinstance(body, dict) and body.get("password"):
             details["password_changed"] = True
-        target = m.groupdict().get("t") or (body.get("name") or body.get("username") or body.get("host")
+        target = m.groupdict().get("t") or (body.get("name") or body.get("username") or body.get("host") or body.get("id")
                                            if isinstance(body, dict) else None)
         audit(action, target, ok=response.status_code < 400, status=response.status_code, details=details)
         break
@@ -285,8 +289,11 @@ def current_user():
     if not session.get("authenticated"):
         return jsonify({"authenticated": False}), 401
 
-    return jsonify({"authenticated": True, "username": session.get("username", ""),
-                    "role": getattr(g, "role", None) or session.get("role") or "viewer"})
+    role = getattr(g, "role", None) or session.get("role") or "viewer"
+    from auth import AUTH_PASSWORD
+    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role,
+                    # บัญชีหลักยังใช้รหัส admin -> หน้าเว็บเตือน admin ให้เปลี่ยน
+                    "default_password": role == "admin" and AUTH_PASSWORD == "admin"})
 
 
 # ============================================================
@@ -554,6 +561,36 @@ def info_logs():
 @app.get("/events")
 def events_page():
     return send_from_directory(STATIC_DIR, "events.html")
+
+
+@app.post("/api/sensors/ack")
+def sensors_ack():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        ack = sensors_service.acknowledge(str(body.get("id", "")), session.get("username", ""), body.get("note"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(ack)
+
+
+@app.post("/api/sensors/unack")
+def sensors_unack():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    if not sensors_service.unacknowledge(str(body.get("id", ""))):
+        return jsonify({"error": "not acknowledged"}), 404
+    return jsonify({"status": "ok"})
+
+
+@app.get("/api/sensors/history")
+def sensors_history():
+    data = sensors_service.get_history(request.args.get("id", ""), request.args.get("range", "24h"))
+    if data is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(data)
 
 
 @app.get("/api/sensors")

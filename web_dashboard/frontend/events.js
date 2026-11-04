@@ -8,7 +8,7 @@
    ===================================================================== */
 "use strict";
 const $ = id => document.getElementById(id);
-const E = { tab: "warning", role: "viewer", data: null, find: "" };
+const E = { tab: "warning", role: "viewer", data: null, find: "", rows: [], hist: null };
 
 function esc(v) {
     return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -38,7 +38,8 @@ const ST = {
     ok: ["✓", "OK", "ok"], paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"]
 };
 const TAB_TITLE = { "down,error": "Sensors With Status Down / Error", warning: "Sensors With Status Warning",
-    ok: "Sensors With Status OK", paused: "Paused Sensors", all: "All Sensors", system: "System log", activity: "Activity log" };
+    ok: "Sensors With Status OK", paused: "Paused Sensors", acknowledged: "Acknowledged Sensors", all: "All Sensors", system: "System log", activity: "Activity log" };
+const canOperate = () => E.role === "operator" || E.role === "admin";
 
 function spark(pts) {
     if (!pts || pts.length < 2) return `<span class="evnone">no graph</span>`;
@@ -54,18 +55,26 @@ function value(s) {
         : s.unit === "min" ? `${Math.round(s.value)} min ago` : esc(s.value);
 }
 
-function sensorCard(s) {
+function sensorCard(s, i) {
     const [icon, label, cls] = ST[s.status] || ST.unknown;
+    const ack = s.ack ? `<div class="evack"><b>Acknowledged</b> by ${esc(s.ack.by || "-")} · ${esc(fmtTime(s.ack.at))}${s.ack.note ? `<div class="evnote">“${esc(s.ack.note)}”</div>` : ""}</div>` : "";
+    const ackable = ["down", "error", "warning", "unknown"].includes(s.status);
+    const btn = !canOperate() || !ackable ? "" : s.ack
+        ? `<button type="button" class="svbtn sm" data-unack="${i}">Remove acknowledgement</button>`
+        : `<button type="button" class="svbtn sm" data-ack="${i}">Acknowledge</button>`;
+    const limits = s.warning != null ? `<span class="evlim">limits ${esc(s.warning)} / ${esc(s.error)}${s.unit === "%" ? "%" : ""}</span>` : "";
     const path = (s.group ? s.group.split("/") : ["Ungrouped"]).map(esc).join(" » ");
     return `<article class="evcard s-${cls}">
-      <h3><span class="evico ${cls}">${icon}</span>${esc(s.name)}</h3>
+      <h3><span class="evico ${cls}">${icon}</span>${esc(s.name)}${s.ack ? ` <span class="evackt">(Acknowledged)</span>` : ""}<span class="evbtns">${btn}</span></h3>
       <div class="evgrid">
         <div><small>Group » Device</small><span class="evpath">${path} »</span><a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b>${s.host ? ` (${esc(s.host)})` : ""}</a></div>
         <div><small>Status</small><b class="evst ${cls}">${label}</b> <span class="evsince" title="since ${esc(fmtTime(s.since))}">for ${fmtAgo(s.since)}</span></div>
-        <div><small>Last value</small>${value(s)}</div>
+        <div><small>Last value</small>${value(s)} ${limits}</div>
         <div><small>Message</small>${esc(s.message || "-")}</div>
-        <div><small>Graph (last 1 hour)</small><div class="evgraph">${s.history ? spark(s.history) : `<span class="evnone">-</span>`}</div></div>
-      </div>
+        ${["cpu", "memory", "disk", "availability"].includes(s.kind)
+            ? `<div><small>Graph (last 1 hour · click for more)</small><div class="evgraph" data-hist="${i}" role="button" tabindex="0" title="Open history">${s.history ? spark(s.history) : `<span class="evnone">open graph</span>`}</div></div>`
+            : `<div><small>Graph</small><span class="evnone">-</span></div>`}
+      </div>${ack}
     </article>`;
 }
 
@@ -73,12 +82,14 @@ function matches(text) { return !E.find || String(text).toLowerCase().includes(E
 
 async function showSensors() {
     const statuses = E.tab === "all" ? "" : E.tab;
+    E.rows = [];
     const withGraph = E.tab !== "ok" && E.tab !== "all" ? "1" : "0";
     const d = await getJson(`/api/sensors?status=${encodeURIComponent(statuses)}&history=${withGraph}`);
-    const rows = (d.sensors || []).filter(s => matches(`${s.web} ${s.host} ${s.group} ${s.name} ${s.message}`));
+    const rows = (d.sensors || []).filter(s => matches(`${s.web} ${s.host} ${s.group} ${s.name} ${s.message} ${s.ack ? s.ack.note : ""}`));
+    E.rows = rows;
     $("evMeta").textContent = `${rows.length} sensor${rows.length === 1 ? "" : "s"} · updated ${fmtTime(d.updated_at)} · checked every 30 seconds by the puller`
         + (d.thresholds ? ` · limits: CPU ${d.thresholds.cpu.warning}/${d.thresholds.cpu.error}% · Memory ${d.thresholds.memory.warning}/${d.thresholds.memory.error}% · Disk ${d.thresholds.disk.warning}/${d.thresholds.disk.error}% (warning/error)` : "");
-    $("evBody").innerHTML = rows.length ? `<div class="evcards">${rows.map(sensorCard).join("")}</div>`
+    $("evBody").innerHTML = rows.length ? `<div class="evcards">${rows.map((s, i) => sensorCard(s, i)).join("")}</div>`
         : `<div class="empty">${d.updated_at ? "No sensors with this status" : "No sensor data yet - the puller checks every 30 seconds (needs the updated central-puller)"}</div>`;
 }
 
@@ -102,7 +113,8 @@ const ACTION_TEXT = {
     "target.add": "Add machine", "target.update": "Edit machine", "target.delete": "Delete machine", "target.pause": "Pause / Resume machine",
     "target.services": "Select services", "target.deploy_key": "Deploy SSH key", "target.scan_host_key": "Scan host key",
     "check.add": "Add web check", "check.update": "Edit web check", "check.delete": "Delete web check", "check.pause": "Pause / Resume web check",
-    "user.add": "Add user", "user.update": "Edit user", "user.delete": "Delete user"
+    "user.add": "Add user", "user.update": "Edit user", "user.delete": "Delete user",
+    "sensor.ack": "Acknowledge sensor", "sensor.unack": "Remove acknowledgement"
 };
 
 async function showActivity() {
@@ -118,6 +130,56 @@ async function showActivity() {
     $("evBody").innerHTML = rows.length ? `<div class="tblw"><table class="evtbl"><thead><tr><th>Time</th><th>User</th><th>Role</th><th>IP</th><th>Action</th><th>Target</th><th>Result</th><th>Details</th></tr></thead><tbody>${
         rows.map(e => `<tr><td>${esc(fmtTime(e.time))}</td><td><b>${esc(e.user || "-")}</b></td><td>${esc(e.role || "-")}</td><td>${esc(e.ip || "-")}</td><td>${esc(ACTION_TEXT[e.action] || e.action)}</td><td>${esc(e.target ?? "-")}</td><td class="${e.ok ? "ok" : "bad"}">${e.ok ? "✓ OK" : `✕ failed${e.status ? " (" + esc(e.status) + ")" : ""}`}</td><td class="evmsg">${details(e)}</td></tr>`).join("")
     }</tbody></table></div>` : `<div class="empty">No activity yet</div>`;
+}
+
+/* ---------- Acknowledge ---------- */
+async function postJson(url, body) {
+    const r = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    return d;
+}
+async function ack(s) {
+    const note = prompt(`Acknowledge "${s.web} · ${s.name}"\nNote (what is being done / why it is OK for now):`, "");
+    if (note === null) return;
+    try { await postJson("/api/sensors/ack", { id: s.id, note }); render(); }
+    catch (e) { alert("Acknowledge failed: " + e.message); }
+}
+async function unack(s) {
+    try { await postJson("/api/sensors/unack", { id: s.id }); render(); }
+    catch (e) { alert("Failed: " + e.message); }
+}
+
+/* ---------- กราฟย้อนหลัง (modal) ---------- */
+function bigChart(d) {
+    const pts = d.series || [];
+    if (pts.length < 2) return `<div class="empty">No data for this range</div>`;
+    const W = 860, H = 280, L = 44, R = 10, T = 10, B = 26, PW = W - L - R, PH = H - T - B;
+    const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+    const hi = d.unit === "%" ? 100 : Math.max(...pts.map(p => p[1])) * 1.1 || 1;
+    const X = t => L + (t - t0) / (t1 - t0 || 1) * PW, Y = v => T + PH - Math.min(Math.max(v, 0), hi) / hi * PH;
+    let s = "";
+    for (let i = 0; i <= 4; i++) { const v = hi * i / 4, y = Y(v); s += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" font-size="11" fill="var(--mut)">${Math.round(v)}</text>`; }
+    for (let i = 0; i < 6; i++) { const t = t0 + (t1 - t0) * i / 5, dt = new Date(t * 1000);
+        const lab = (t1 - t0) > 2 * 86400 ? dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : dt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+        s += `<text x="${X(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === 5 ? "end" : "middle"}" font-size="11" fill="var(--mut)">${lab}</text>`; }
+    const lim = (v, c, n) => v != null && v <= hi ? `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${c}" stroke-dasharray="6 5"/><text x="${W - R - 4}" y="${Y(v) - 4}" text-anchor="end" font-size="11" fill="${c}">${n} ${v}</text>` : "";
+    s += lim(d.warning, "#d98a00", "warning") + lim(d.error, "#e5484d", "error");
+    const path = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
+    s += `<path d="${path} L${X(t1)},${T + PH} L${X(t0)},${T + PH}Z" fill="var(--fill)"/><path d="${path}" fill="none" stroke="var(--blue)" stroke-width="1.6"/>`;
+    const vals = pts.map(p => p[1]);
+    return `<svg viewBox="0 0 ${W} ${H}" class="evbig" role="img" aria-label="history">${s}</svg>
+      <div class="evmstat">min ${Math.min(...vals).toFixed(1)} · avg ${(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1)} · max ${Math.max(...vals).toFixed(1)}${d.unit === "%" ? " %" : ""}</div>`;
+}
+async function openHistory(s, range) {
+    E.hist = s;
+    $("evModal").hidden = false;
+    $("evmTitle").textContent = `${s.web} · ${s.name}`;
+    [...$("evmRange").children].forEach(b => b.setAttribute("aria-pressed", b.dataset.r === range));
+    $("evmChart").innerHTML = `<div class="empty">Loading...</div>`;
+    if (!["cpu", "memory", "disk", "availability"].includes(s.kind)) { $("evmChart").innerHTML = `<div class="empty">This sensor has no graph</div>`; return; }
+    try { $("evmChart").innerHTML = bigChart(await getJson(`/api/sensors/history?id=${encodeURIComponent(s.id)}&range=${range}`)); }
+    catch (e) { $("evmChart").innerHTML = `<div class="empty">Load failed: ${esc(e.message)}</div>`; }
 }
 
 async function render() {
@@ -151,9 +213,20 @@ document.addEventListener("DOMContentLoaded", async () => {
         render();
     });
     $("evFind").addEventListener("input", e => { E.find = e.target.value.trim().toLowerCase(); render(); });
+    $("evBody").addEventListener("click", e => {
+        const a = e.target.closest("[data-ack]"), u = e.target.closest("[data-unack]"), h = e.target.closest("[data-hist]");
+        if (a) ack(E.rows[+a.dataset.ack]);
+        else if (u) unack(E.rows[+u.dataset.unack]);
+        else if (h) openHistory(E.rows[+h.dataset.hist], "24h");
+    });
+    $("evBody").addEventListener("keydown", e => { const h = e.target.closest("[data-hist]"); if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); h.click(); } });
+    $("evmRange").addEventListener("click", e => { const b = e.target.closest("[data-r]"); if (b && E.hist) openHistory(E.hist, b.dataset.r); });
+    $("evmClose").addEventListener("click", () => { $("evModal").hidden = true; E.hist = null; });
+    $("evModal").addEventListener("click", e => { if (e.target.id === "evModal") { $("evModal").hidden = true; E.hist = null; } });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { $("evModal").hidden = true; E.hist = null; } });
     $("logoutButton").addEventListener("click", async () => {
         try { await fetch("/api/logout", { method: "POST", credentials: "same-origin" }); } finally { location.href = "/login"; }
     });
     render();
-    setInterval(render, 30000);
+    setInterval(() => { if ($("evModal").hidden) render(); }, 30000);
 });

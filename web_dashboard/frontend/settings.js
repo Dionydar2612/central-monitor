@@ -12,6 +12,8 @@
 const $ = id => document.getElementById(id);
 const S = { targets: [], publicKey: null, editing: null, scanned: [], hostKeyKnown: false, checks: [], editingCheck: null, me: null };
 
+const TH_KINDS = ["cpu", "memory", "disk"];
+
 /* ---------- ตัวช่วย ---------- */
 
 function el(tag, props, ...kids) {
@@ -121,6 +123,10 @@ function openForm(t) {
     $("f_name").value = t ? t.name : ""; $("f_name").disabled = !!t;
     $("f_group").value = t ? (t.group || "") : "";
     $("f_paused").checked = !!(t && t.paused);
+    TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => {
+        const v = t && t.thresholds && t.thresholds[k] ? t.thresholds[k][lv] : "";
+        $(`th_${k}_${lv}`).value = v ?? "";
+    }));
     $("f_host").value = t ? t.host : "";
     $("f_port").value = t ? (t.ssh.port || 22) : 22;
     $("f_user").value = t ? t.ssh.user : "central-pull";
@@ -169,6 +175,7 @@ function readForm() {
         name: $("f_name").value.trim(),
         group: $("f_group").value.trim(),
         paused: $("f_paused").checked,
+        thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
         host: $("f_host").value.trim(),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
         prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim() },

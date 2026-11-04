@@ -1,11 +1,19 @@
 """
-sensors_service.py - อ่านสถานะ sensor ที่ puller (sensor_monitor.py) เขียนไว้ + กราฟย้อนหลังสั้น ๆ
-=================================================================================================
+sensors_service.py - สถานะ sensor (จาก puller/sensor_monitor.py) + Acknowledge + กราฟย้อนหลัง
+=============================================================================================
 
 data/state/sensors.json  <- start_push_log/puller/sensor_monitor.py (ทุก 30 วินาที)
-ใช้กับ: แถบป้ายสถานะบนหัวหน้าเว็บ (▼ / W / ✓ / II) และหน้า Status & Logs
+data/state/acks.json     <- Acknowledge จากหน้าเว็บ (operator ขึ้นไป) ไฟล์นี้เขียนเอง
+
+Acknowledge (แบบ PRTG)
+    "รับทราบแล้ว กำลังจัดการ" + บันทึกโน้ต -> sensor นั้นแสดงเป็น "Warning (Acknowledged)" และ
+    ไม่ถูกนับในป้าย ▼ / W บนหัวหน้าเว็บ (นับแยกเป็น ACK)  และไม่ทำให้สถานะเครื่องเป็น WARNING/PROBLEM
+    ยกเลิกอัตโนมัติเมื่อสถานะเปลี่ยน (หายเป็น OK หรือแย่ลง) -> ต้องรับทราบใหม่
+ใช้กับ: ป้ายบนหัวหน้าเว็บ, หน้า Status & Logs, ภาพรวม (overview_service)
 """
 
+import contextlib
+import fcntl
 import json
 import os
 import time
@@ -15,7 +23,12 @@ from metrics_service import PROMQL, _REAL_FS, _labels, get_web_prometheus_config
 from settings import STATE_DIR
 
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
+ACKS_FILE = os.path.join(STATE_DIR, "acks.json")
+ACK_LOCK = os.path.join(STATE_DIR, ".acks.lock")
 STATUSES = ("down", "error", "warning", "unknown", "paused", "ok")
+ACKABLE = ("down", "error", "warning", "unknown")
+MAX_NOTE = 500
+HISTORY_RANGES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
 
 
 def load_sensors():
@@ -27,12 +40,109 @@ def load_sensors():
         return {}
 
 
+# ------------------------------------------------------------------
+# Acknowledge
+# ------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _locked():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(ACK_LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _load_acks():
+    try:
+        with open(ACKS_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_acks(acks):
+    tmp = ACKS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(acks, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, ACKS_FILE)
+
+
+def _attach_acks(sensors):
+    """ใส่ s["ack"] ให้ sensor ที่ ack ยังใช้ได้ (สถานะเดิม) ack ที่หมดอายุไม่ถูกใช้"""
+    acks = _load_acks()
+    for s in sensors:
+        a = acks.get(s.get("id"))
+        if a and a.get("status") == s.get("status") and s.get("status") in ACKABLE:
+            s["ack"] = a
+    return sensors
+
+
+def acknowledge(sensor_id, user, note):
+    """คืน ack ที่บันทึก  ไม่มี sensor / สถานะ OK -> ValueError"""
+    current = next((s for s in load_sensors().get("sensors", []) if s.get("id") == sensor_id), None)
+    if current is None:
+        raise ValueError("ไม่พบ sensor นี้")
+    if current.get("status") not in ACKABLE:
+        raise ValueError("acknowledge ได้เฉพาะ sensor ที่ Down / Error / Warning / Unknown")
+    ack = {"by": user, "at": time.time(), "note": str(note or "").strip()[:MAX_NOTE],
+           "status": current["status"], "web": current.get("web"), "sensor": current.get("name")}
+    with _locked():
+        acks = _load_acks()
+        # ล้าง ack ที่สถานะเปลี่ยนไปแล้ว (หมดอายุ) ไปด้วย
+        live = {s["id"]: s.get("status") for s in load_sensors().get("sensors", [])}
+        acks = {k: v for k, v in acks.items() if live.get(k) == v.get("status")}
+        acks[sensor_id] = ack
+        _save_acks(acks)
+    return ack
+
+
+def unacknowledge(sensor_id):
+    with _locked():
+        acks = _load_acks()
+        if sensor_id not in acks:
+            return False
+        del acks[sensor_id]
+        _save_acks(acks)
+    return True
+
+
+# ------------------------------------------------------------------
+# อ่าน / สรุป
+# ------------------------------------------------------------------
+
 def summary():
     data = load_sensors()
     counts = {s: 0 for s in STATUSES}
-    for s in data.get("sensors", []):
-        counts[s.get("status", "unknown")] = counts.get(s.get("status", "unknown"), 0) + 1
+    counts["acknowledged"] = 0
+    for s in _attach_acks(data.get("sensors", [])):
+        if s.get("ack"):
+            counts["acknowledged"] += 1
+        else:
+            counts[s.get("status", "unknown")] = counts.get(s.get("status", "unknown"), 0) + 1
     return {"counts": counts, "total": sum(counts.values()), "updated_at": data.get("updated_at")}
+
+
+def target_states():
+    """สถานะรวมต่อเครื่องจาก sensor ที่ยังไม่ acknowledge + เกณฑ์ของเครื่อง  {web: {...}}"""
+    data = load_sensors()
+    out = {}
+    rank = {"down": 4, "error": 3, "warning": 2, "unknown": 1, "ok": 0, "paused": 0}
+    for s in _attach_acks(data.get("sensors", [])):
+        w = out.setdefault(s["web"], {"worst": "ok", "acked": 0, "problems": []})
+        if s.get("ack"):
+            w["acked"] += 1
+            continue
+        if rank.get(s["status"], 0) > rank.get(w["worst"], 0):
+            w["worst"] = s["status"]
+        if s["status"] in ACKABLE:
+            w["problems"].append(s["name"])
+    for name, th in (data.get("targets") or {}).items():
+        out.setdefault(name, {"worst": "ok", "acked": 0, "problems": []})["thresholds"] = th
+    return out
 
 
 def _history_query(sensor, labels):
@@ -43,32 +153,59 @@ def _history_query(sensor, labels):
         mount = str(sensor["mount"]).replace("\\", "\\\\").replace('"', '\\"')
         l = f'{labels},mountpoint="{mount}",{_REAL_FS}'
         return f"(1 - node_filesystem_avail_bytes{{{l}}} / node_filesystem_size_bytes{{{l}}}) * 100"
+    if kind == "availability":
+        return f"up{{{labels}}} * 100"
     return None
 
 
+def _series(sensor, seconds, points=120):
+    config = get_web_prometheus_config(sensor.get("web"))
+    q = _history_query(sensor, _labels(config)) if config else None
+    if not q:
+        return []
+    end = time.time()
+    step = max(15, int(seconds / points))
+    try:
+        res = prometheus_query_range(q, end - seconds, end, step)["data"]["result"]
+        return [[float(t), round(float(v), 2)] for t, v in (res[0]["values"] if res else [])
+                if v not in ("NaN", "+Inf", "-Inf")]
+    except Exception:
+        return []
+
+
 def get_sensors(statuses=None, web=None, history=False, limit=500):
+    """statuses มี "acknowledged" ได้ (= sensor ที่รับทราบแล้ว)  ไม่ระบุ = ทั้งหมด"""
     data = load_sensors()
     wanted = {s for s in (statuses or []) if s}
-    rows = [s for s in data.get("sensors", [])
-            if (not wanted or s.get("status") in wanted) and (not web or s.get("web") == web)]
+    rows = []
+    for s in _attach_acks(data.get("sensors", [])):
+        if web and s.get("web") != web:
+            continue
+        if wanted:
+            if s.get("ack"):
+                if "acknowledged" not in wanted:
+                    continue
+            elif s.get("status") not in wanted:
+                continue
+        rows.append(s)
     order = {s: i for i, s in enumerate(STATUSES)}
     rows.sort(key=lambda s: (order.get(s.get("status"), 9), s.get("group") or "", s.get("web") or "", s.get("name") or ""))
     rows = rows[:limit]
 
     if history:
-        end = time.time()
-        start = end - 3600
         for s in rows[:60]:                     # กราฟเล็ก 1 ชม. ล่าสุด (เฉพาะ 60 รายการแรก)
-            config = get_web_prometheus_config(s.get("web"))
-            q = _history_query(s, _labels(config)) if config else None
-            if not q:
-                continue
-            try:
-                res = prometheus_query_range(q, start, end, 60)["data"]["result"]
-                s["history"] = [[float(t), round(float(v), 2)] for t, v in (res[0]["values"] if res else [])
-                                if v not in ("NaN", "+Inf", "-Inf")]
-            except Exception:
-                s["history"] = []
+            s["history"] = _series(s, 3600, 60)
 
     return {"updated_at": data.get("updated_at"), "thresholds": data.get("thresholds"),
             "sensors": rows, "summary": summary()}
+
+
+def get_history(sensor_id, range_key="24h"):
+    """กราฟย้อนหลังของ sensor เดียว (ช่วง 1h / 6h / 24h / 7d / 30d)  ไม่พบ -> None"""
+    sensor = next((s for s in load_sensors().get("sensors", []) if s.get("id") == sensor_id), None)
+    if sensor is None:
+        return None
+    seconds = HISTORY_RANGES.get(range_key, 86400)
+    return {"id": sensor_id, "range": range_key, "warning": sensor.get("warning"), "error": sensor.get("error"),
+            "unit": sensor.get("unit"), "kind": sensor.get("kind"), "name": sensor.get("name"),
+            "web": sensor.get("web"), "series": _series(sensor, seconds, 240)}

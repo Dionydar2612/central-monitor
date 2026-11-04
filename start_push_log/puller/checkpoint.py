@@ -25,8 +25,12 @@ checkpoint.py - จำว่า "ดึง log ของแต่ละไฟล
 
 import json
 import os
+import threading
 
 from config import CHECKPOINT_FILE, STATE_DIR
+
+# scheduler ดึงหลายเครื่องพร้อมกัน (หลาย thread) -> เขียนไฟล์ทีละ thread
+_WRITE_LOCK = threading.Lock()
 
 
 def load_state():
@@ -54,10 +58,12 @@ def save_state(state):
 
     tmp_file = CHECKPOINT_FILE + ".tmp"
 
-    with open(tmp_file, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
+    with _WRITE_LOCK:
+        snapshot = dict(state)          # คัดลอกก่อน (thread อื่นอาจกำลังเพิ่ม key)
+        with open(tmp_file, "w") as f:
+            json.dump(snapshot, f, indent=2, sort_keys=True)
 
-    os.replace(tmp_file, CHECKPOINT_FILE)
+        os.replace(tmp_file, CHECKPOINT_FILE)
 
 
 def prune_state(state, valid_names):

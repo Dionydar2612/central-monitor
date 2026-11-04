@@ -88,7 +88,7 @@ COOKIE_SECURE = os.getenv("CENTRAL_COOKIE_SECURE", "false").strip().lower() in (
     "1",
     "true",
     "yes",
-)
+) or os.path.isfile(os.getenv("CENTRAL_TLS_CERT", "/run/tls/cert.pem"))   # เปิด HTTPS ในตัว -> cookie secure อัตโนมัติ
 
 # --- OpenSearch (แหล่ง log) --------------------------------------------------
 
