@@ -10,7 +10,7 @@
 "use strict";
 
 const $ = id => document.getElementById(id);
-const S = { targets: [], publicKey: null, editing: null, scanned: [], hostKeyKnown: false };
+const S = { targets: [], publicKey: null, editing: null, scanned: [], hostKeyKnown: false, checks: [], editingCheck: null, me: null };
 
 /* ---------- ตัวช่วย ---------- */
 
@@ -46,29 +46,51 @@ async function loadTargets() {
     try {
         const d = await api("GET", "/api/targets");
         S.targets = d.targets; S.publicKey = d.public_key;
-        renderTable();
+        renderTable(); fillGroups();
     } catch (e) { if (e.message !== "auth") say("listMsg", "โหลดรายการไม่สำเร็จ: " + e.message, "bad"); }
 }
 
 function renderTable() {
     const tb = $("tbody"); tb.textContent = "";
     if (!S.targets.length) {
-        tb.append(el("tr", {}, el("td", { colspan: "6", class: "empty" }, "ยังไม่มีเครื่อง กด + Add target")));
+        tb.append(el("tr", {}, el("td", { colspan: "8", class: "empty" }, "ยังไม่มีเครื่อง กด + Add target")));
         return;
     }
     S.targets.forEach(t => {
         const port = t.ssh.port && Number(t.ssh.port) !== 22 ? ":" + t.ssh.port : "";
         tb.append(el("tr", {},
             el("td", {}, el("b", {}, t.name)),
+            el("td", {}, t.group || "-"),
             el("td", {}, t.host + port),
             el("td", {}, t.ssh.user || "-"),
             el("td", {}, String(t.logs.length)),
             el("td", { class: t.host_key_known ? "ok" : "wr" }, t.host_key_known ? "✓ known" : "⚠ missing"),
+            el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
             el("td", {}, el("div", { class: "st-actions" },
+                el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
                 el("button", { class: "st-btn sm", onclick: () => openForm(t) }, "Edit"),
                 el("button", { class: "st-btn sm", onclick: () => { openForm(t); $("dp_pass").focus(); } }, "Deploy key"),
                 el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete")))));
     });
+}
+
+async function pauseTarget(t) {
+    try {
+        await api("PUT", `/api/targets/${encodeURIComponent(t.name)}/pause`, { paused: !t.paused });
+        say("listMsg", `${t.name}: ${t.paused ? "Resumed (ดึงทันที)" : "Paused (หยุดดึง log / สถานะ)"}`, "ok");
+        await loadTargets();
+    } catch (e) { if (e.message !== "auth") say("listMsg", "เปลี่ยนสถานะไม่สำเร็จ: " + e.message, "bad"); }
+}
+
+/* รายชื่อกลุ่มที่มีอยู่ (จากเครื่อง + checks) ให้เลือกในช่อง group */
+function fillGroups() {
+    const set = new Set();
+    [...S.targets, ...S.checks].forEach(x => {
+        const parts = String(x.group || "").split("/").filter(Boolean);
+        parts.forEach((_, i) => set.add(parts.slice(0, i + 1).join("/")));
+    });
+    const dl = $("groupList"); dl.textContent = "";
+    [...set].sort().forEach(g => dl.append(el("option", { value: g })));
 }
 
 async function removeTarget(t) {
@@ -97,6 +119,8 @@ function openForm(t) {
     S.editing = t ? t.name : null; S.scanned = []; S.hostKeyKnown = !!(t && t.host_key_known);
     $("formTitle").textContent = t ? `Edit target: ${t.name}` : "Add target";
     $("f_name").value = t ? t.name : ""; $("f_name").disabled = !!t;
+    $("f_group").value = t ? (t.group || "") : "";
+    $("f_paused").checked = !!(t && t.paused);
     $("f_host").value = t ? t.host : "";
     $("f_port").value = t ? (t.ssh.port || 22) : 22;
     $("f_user").value = t ? t.ssh.user : "central-pull";
@@ -143,6 +167,8 @@ function readForm() {
     }));
     return {
         name: $("f_name").value.trim(),
+        group: $("f_group").value.trim(),
+        paused: $("f_paused").checked,
         host: $("f_host").value.trim(),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
         prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim() },
@@ -254,6 +280,144 @@ async function save() {
     } finally { b.disabled = false; }
 }
 
+/* ---------- Web checks (uptime / SSL) ---------- */
+
+const CHECK_FIELDS = { name: "c_name", url: "c_url", group: "c_group", interval: "c_interval", timeout: "c_timeout",
+    expect_status: "c_expect", keyword: "c_keyword", ssl_warn_days: "c_sslwarn" };
+
+async function loadChecks() {
+    try { S.checks = (await api("GET", "/api/checks")).checks || []; renderChecks(); fillGroups(); }
+    catch (e) { if (e.message !== "auth") say("checkMsg", "โหลด checks ไม่สำเร็จ: " + e.message, "bad"); }
+}
+
+function checkStatus(c) {
+    const map = { up: ["✓ UP", "ok"], warning: ["⚠ Warning", "wr"], down: ["▼ DOWN", "bad"], paused: ["⏸ Paused", "wr"], pending: ["… pending", ""] };
+    const [text, cls] = map[c.status] || [c.status || "-", ""];
+    return el("td", { class: cls, title: c.error || "" }, text);
+}
+
+function renderChecks() {
+    const tb = $("checkBody"); tb.textContent = "";
+    if (!S.checks.length) { tb.append(el("tr", {}, el("td", { colspan: "7", class: "empty" }, "ยังไม่มี check กด + Add check"))); return; }
+    S.checks.forEach(c => tb.append(el("tr", {},
+        el("td", {}, el("b", {}, c.name)),
+        el("td", {}, c.group || "-"),
+        el("td", { class: "st-url" }, c.url),
+        el("td", {}, `${c.interval}s`),
+        el("td", {}, c.expect_status + (c.keyword ? ` + "${c.keyword}"` : "")),
+        checkStatus(c),
+        el("td", {}, el("div", { class: "st-actions" },
+            el("button", { class: "st-btn sm", onclick: () => pauseCheck(c) }, c.paused ? "Resume" : "Pause"),
+            el("button", { class: "st-btn sm", onclick: () => openCheckForm(c) }, "Edit"),
+            el("button", { class: "st-btn sm danger", onclick: () => deleteCheck(c) }, "Delete"))))));
+}
+
+function openCheckForm(c) {
+    S.editingCheck = c ? c.name : null;
+    $("checkTitle").textContent = c ? `Edit check: ${c.name}` : "Add check";
+    Object.entries(CHECK_FIELDS).forEach(([k, id]) => { $(id).value = c && c[k] != null ? c[k] : ""; });
+    $("c_name").disabled = !!c;
+    $("c_verify").checked = !c || c.verify_tls !== false;
+    $("c_paused").checked = !!(c && c.paused);
+    document.querySelectorAll("#checkGrid .st-err").forEach(n => n.textContent = "");
+    document.querySelectorAll("#checkGrid .has-err").forEach(n => n.classList.remove("has-err"));
+    say("checkFormMsg", "");
+    $("checkForm").hidden = false;
+    (c ? $("c_url") : $("c_name")).focus();
+}
+
+async function saveCheck() {
+    const body = {};
+    Object.entries(CHECK_FIELDS).forEach(([k, id]) => { body[k] = $(id).value.trim(); });
+    body.verify_tls = $("c_verify").checked; body.paused = $("c_paused").checked;
+    document.querySelectorAll("#checkGrid .st-err").forEach(n => n.textContent = "");
+    document.querySelectorAll("#checkGrid .has-err").forEach(n => n.classList.remove("has-err"));
+    try {
+        if (S.editingCheck) await api("PUT", "/api/checks/" + encodeURIComponent(S.editingCheck), body);
+        else await api("POST", "/api/checks", body);
+        $("checkForm").hidden = true;
+        say("checkMsg", `บันทึก ${S.editingCheck || body.name} แล้ว — เช็คครั้งแรกภายใน ~10 วินาที`, "ok");
+        await loadChecks();
+    } catch (e) {
+        if (e.message === "auth") return;
+        const general = [];
+        Object.entries(e.fields || {}).forEach(([k, msg]) => {
+            const box = document.querySelector(`#checkGrid [data-c="${CSS.escape(k)}"]`);
+            if (box) { box.classList.add("has-err"); box.querySelector(".st-err").textContent = msg; } else general.push(msg);
+        });
+        say("checkFormMsg", general.join(" · ") || (e.fields ? "กรุณาแก้ช่องที่มีข้อความสีแดง" : "บันทึกไม่สำเร็จ: " + e.message), "bad");
+    }
+}
+
+async function pauseCheck(c) {
+    try { await api("PUT", `/api/checks/${encodeURIComponent(c.name)}/pause`, { paused: !c.paused }); await loadChecks(); }
+    catch (e) { if (e.message !== "auth") say("checkMsg", "เปลี่ยนสถานะไม่สำเร็จ: " + e.message, "bad"); }
+}
+
+async function deleteCheck(c) {
+    if (!confirm(`ลบ check "${c.name}" ?`)) return;
+    try { await api("DELETE", "/api/checks/" + encodeURIComponent(c.name)); say("checkMsg", `ลบ ${c.name} แล้ว`, "ok"); await loadChecks(); }
+    catch (e) { if (e.message !== "auth") say("checkMsg", "ลบไม่สำเร็จ: " + e.message, "bad"); }
+}
+
+/* ---------- Users ---------- */
+
+function fmtTime(sec) { return sec ? new Date(sec * 1000).toLocaleString("en-GB") : "-"; }
+
+async function loadUsers() {
+    try {
+        const d = await api("GET", "/api/users");
+        const tb = $("userBody"); tb.textContent = "";
+        tb.append(el("tr", {}, el("td", {}, el("b", {}, d.builtin_admin), " ", el("small", { class: "st-mut" }, "(docker/.env)")),
+            el("td", {}, "admin"), el("td", {}, "-"), el("td", {}, el("small", { class: "st-mut" }, "เปลี่ยนที่ docker/.env"))));
+        d.users.forEach(u => {
+            const sel = el("select", { class: "st-sel", "aria-label": `Role of ${u.username}` });
+            (d.roles || ["viewer", "operator", "admin"]).forEach(r => { const o = el("option", { value: r }, r); if (r === u.role) o.selected = true; sel.append(o); });
+            sel.addEventListener("change", () => updateUser(u.username, { role: sel.value }));
+            tb.append(el("tr", {},
+                el("td", {}, el("b", {}, u.username)),
+                el("td", {}, sel),
+                el("td", {}, fmtTime(u.last_login)),
+                el("td", {}, el("div", { class: "st-actions" },
+                    el("button", { class: "st-btn sm", onclick: () => resetPassword(u.username) }, "Reset password"),
+                    el("button", { class: "st-btn sm danger", onclick: () => deleteUser(u.username) }, "Delete")))));
+        });
+    } catch (e) { if (e.message !== "auth") say("userMsg", "โหลดผู้ใช้ไม่สำเร็จ: " + e.message, "bad"); }
+}
+
+async function updateUser(name, body) {
+    try { await api("PUT", "/api/users/" + encodeURIComponent(name), body); say("userMsg", `แก้ ${name} แล้ว`, "ok"); }
+    catch (e) { if (e.message !== "auth") say("userMsg", (e.fields ? Object.values(e.fields).join(" · ") : e.message), "bad"); }
+    await loadUsers();
+}
+
+async function resetPassword(name) {
+    const pw = prompt(`รหัสผ่านใหม่ของ ${name} (อย่างน้อย 8 ตัว)`);
+    if (pw) await updateUser(name, { password: pw });
+}
+
+async function deleteUser(name) {
+    if (!confirm(`ลบผู้ใช้ "${name}" ?`)) return;
+    try { await api("DELETE", "/api/users/" + encodeURIComponent(name)); say("userMsg", `ลบ ${name} แล้ว`, "ok"); }
+    catch (e) { if (e.message !== "auth") say("userMsg", "ลบไม่สำเร็จ: " + e.message, "bad"); }
+    await loadUsers();
+}
+
+async function addUser() {
+    document.querySelectorAll("[data-u] .st-err").forEach(n => n.textContent = "");
+    const body = { username: $("u_name").value.trim(), password: $("u_pass").value, role: $("u_role").value };
+    try {
+        await api("POST", "/api/users", body);
+        $("u_name").value = ""; $("u_pass").value = "";
+        say("userMsg", `เพิ่ม ${body.username} (${body.role}) แล้ว`, "ok");
+        await loadUsers();
+    } catch (e) {
+        if (e.message === "auth") return;
+        Object.entries(e.fields || {}).forEach(([k, msg]) => { const b = document.querySelector(`[data-u="${k}"] .st-err`); if (b) b.textContent = msg; });
+        say("userMsg", e.fields ? "กรุณาแก้ช่องที่มีข้อความสีแดง" : "เพิ่มไม่สำเร็จ: " + e.message, "bad");
+    }
+}
+
 /* ---------- ผู้ใช้ / Logout / เริ่มต้น ---------- */
 
 async function loadUser() {
@@ -281,5 +445,9 @@ document.addEventListener("DOMContentLoaded", () => {
     ["f_host", "f_port"].forEach(id => $(id).addEventListener("input", () => { S.scanned = []; $("hkKeys").textContent = ""; S.hostKeyKnown = false; renderHostKeyStatus(); }));
     $("logoutButton").onclick = logout;
     document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("formCard").hidden) closeForm(); });
-    loadUser(); loadTargets();
+    $("addCheckBtn").onclick = () => openCheckForm(null);
+    $("checkCancel").onclick = () => { $("checkForm").hidden = true; };
+    $("checkSave").onclick = saveCheck;
+    $("userAdd").onclick = addUser;
+    loadUser(); loadTargets(); loadChecks(); loadUsers();
 });

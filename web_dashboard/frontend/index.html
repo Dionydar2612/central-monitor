@@ -37,16 +37,16 @@
 <div class="user"><span><span id="systemDot" class="dot green"></span><span id="systemStatus">Loading...</span></span><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings">Settings</a><button id="logoutButton">Logout</button></div>
 </header>
 
-<!-- การ์ด WEB status: ภาพรวมทุกเครื่องจาก /api/overview
-       #ovTiles = Total / Up / Down / Not OK
-       #mach    = ตาราง Server Status 1 แถวต่อเครื่อง (คลิกแถว = เลือกเครื่องที่จะดูรายละเอียดด้านล่าง)
+<!-- การ์ด WEB status: ภาพรวมทุกเครื่อง + web checks จาก /api/overview แบ่งตามกลุ่ม (group ใน puller.yaml)
+       #ovTiles = Total / OK / Warning / Down / Paused / Web checks
+       #ovFind  = กรองชื่อ / IP / กลุ่ม / URL      #ovExpand #ovCollapse = ขยาย/ยุบทุกกลุ่ม
+       #mach    = ต้นไม้กลุ่ม: หัวกลุ่ม (คลิกยุบ/ขยาย) + ตารางเครื่อง (คลิกแถว = เลือกเครื่อง) + ตาราง web checks
      แถบข้อมูลสรุปของเครื่องที่เลือก (#meta: State, Last pull, Load, Uptime, ... จาก /api/summary + /api/metrics) -->
 <section class="card mach">
-<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px">Showing <b id="cur" style="color:var(--ink)">-</b> · click a row to select · auto refresh 10 seconds</span></div>
-<div class="ov">
+<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px">Showing <b id="cur" style="color:var(--ink)">-</b> · click a machine to see details below · auto refresh 10 seconds</span></div>
 <div class="ovtiles" id="ovTiles"></div>
-<div class="tblw scroll ovscroll"><table class="ovtbl"><thead><tr><th>Name</th><th>IP</th><th>Status</th><th>CPU avg 5m</th><th>Memory %</th><th>Disk %</th><th>Last pull</th></tr></thead><tbody id="mach"></tbody></table></div>
-</div>
+<div class="ovtools"><input type="search" id="ovFind" placeholder="Filter by name, IP, group or URL..." aria-label="Filter machines and checks" autocomplete="off"><button type="button" class="svbtn" id="ovExpand">Expand all</button><button type="button" class="svbtn" id="ovCollapse">Collapse all</button></div>
+<div class="gtree" id="mach"></div>
 <div class="mm" id="meta"></div>
 </section>
 
@@ -93,6 +93,9 @@
 <!-- ตาราง Logs (#plog): log ของเครื่องที่เลือก คลิกแถวเพื่อเปิดหน้าต่างรายละเอียด (showProblemModal) -->
 <section class="card svc" style="margin-top:16px"><div class="top"><h2>Logs</h2><span style="color:var(--mut);font-size:13px"><span id="logCnt"></span> All logs correlated with WEB and metrics · click a row for details</span></div>
 <!-- ตัวกรอง log: ระดับ (#lvTabs) + ชนิด (#ltSel) ตัวเลขบนปุ่มมาจาก /api/log-stats (#lvStat = สรุปว่าแสดงอะไรอยู่) -->
+<!-- ค้นหาข้อความใน log (#logQ) ทั้งที่เก็บไว้ใน OpenSearch: คำ / "วลี" / a | b / -ไม่เอา / คำ*  ขอบเขต = เครื่องนี้ หรือทุกเครื่อง
+     ใช้ช่วงเวลาด้านบน + ตัวกรอง Level / Type ด้วย -->
+<form class="lsearch" id="logSearch" role="search"><input type="search" id="logQ" placeholder='Search logs: words · "exact phrase" · a | b · -exclude · prefix*' aria-label="Search logs" autocomplete="off"><select id="logScope" aria-label="Search scope"><option value="web">This WEB</option><option value="all">All WEB</option></select><button type="submit" class="svbtn" id="logGo">Search</button><button type="button" class="svbtn" id="logClear" hidden>Clear search</button></form>
 <!-- ระบบไม่เก็บ INFO: ปุ่ม Load INFO log (#infoBtn) ดึงสดจากเครื่องผ่าน /api/info-logs เฉพาะตอนกด แสดงแล้วไม่เก็บ -->
 <div class="lvbar"><div class="tabs" id="lvTabs" role="group" aria-label="Filter by level"><button type="button" data-lv="ALL" aria-pressed="true">All</button><button type="button" data-lv="ERROR" aria-pressed="false">Error</button><button type="button" data-lv="WARN" aria-pressed="false">Warn</button></div><label class="lvtype">Type <select id="ltSel" aria-label="Filter by log type"><option value="ALL">All types</option></select></label><span class="infold" title="INFO is not stored. Loads the last N lines of each log file live from the machine, shows them, and keeps nothing."><select id="infoLines" aria-label="Lines per log file"><option value="200">last 200 lines</option><option value="500" selected>last 500 lines</option><option value="1000">last 1000 lines</option><option value="2000">last 2000 lines</option></select><button type="button" class="svbtn" id="infoBtn">Load INFO log</button><button type="button" class="svbtn" id="infoClear" hidden>Close INFO</button></span><span class="lvstat" id="lvStat"></span></div>
 <div class="tblw scroll logscroll"><table class="pl"><thead><tr><th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th>Message</th><th>Metrics at time</th></tr></thead><tbody id="plog"><tr><td colspan="6" class="empty">Loading logs...</td></tr></tbody></table></div></section>

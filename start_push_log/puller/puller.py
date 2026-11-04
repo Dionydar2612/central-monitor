@@ -19,6 +19,7 @@ puller.py - จุดเริ่มต้นของ central-puller (ระบ
     log_filter.py          แยก log เป็นรายการ + คัดระดับ (log_levels.py)
     journal.py             อ่าน systemd journal (logs[].path = journal / journal:<unit>)
     ondemand.py            ดึง INFO สดเฉพาะตอนกดปุ่มบนหน้าเว็บ (ไม่เก็บ)
+    web_checks.py          เช็คเว็บ (uptime) + วันหมดอายุ SSL ตาม checks: ใน puller.yaml
     checkpoint.py          จำ byte offset ที่ดึงแล้ว (data/state/checkpoints.json)
     system_info.py         เก็บ load/memory/service/process/event + history
     prometheus_targets.py  สร้าง data/prometheus/web-nodes.json ให้ Prometheus
@@ -35,6 +36,7 @@ from prometheus_client import start_http_server
 from config import METRICS_PORT
 from ondemand import start_server as start_ondemand_server
 from scheduler import run_forever
+from web_checks import start as start_web_checks
 
 
 def main():
@@ -48,6 +50,8 @@ def main():
         start_ondemand_server()
     except Exception as e:      # เปิดพอร์ตไม่ได้ -> ปุ่ม Load INFO log ใช้ไม่ได้ แต่การดึงปกติยังทำงาน
         print(f"[ONDEMAND ERROR] {e}")
+
+    start_web_checks()          # เช็คเว็บ/SSL (puller.yaml -> checks:) thread แยก
 
     run_forever()
 

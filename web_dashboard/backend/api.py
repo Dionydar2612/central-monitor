@@ -30,6 +30,15 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/log-markers?web=&start=&end=   จุด ERROR/WARN บนเส้นเวลาของกราฟ
          (/api/problems และ /api/log-stats รับ start/end ได้ด้วย = เฉพาะช่วงนั้น)
     GET  /api/problems/detail     log 1 รายการ + สถานะเครื่อง ณ เวลานั้น (web, id)
+    GET  /api/logs/search?q=&web=&level=&type=&start=&end=   ค้นข้อความใน log ทั้ง index (web ว่าง = ทุกเครื่อง)
+    PUT  /api/targets/<name>/pause   {"paused": true|false}  (operator ขึ้นไป)
+    GET  /api/checks              web / SSL checks + ผลล่าสุด   POST/PUT/DELETE /api/checks[/<name>] (admin)
+    PUT  /api/checks/<name>/pause    (operator ขึ้นไป)
+    GET/POST /api/users  PUT/DELETE /api/users/<name>   จัดการผู้ใช้ (admin)
+
+สิทธิ์ (role) ตรวจที่ require_authentication -> _required_role
+    viewer   ดูอย่างเดียว      operator  + pause/resume, Load INFO log, เลือก service ที่แสดง
+    admin    + Settings ทั้งหมด (เครื่อง, checks, ผู้ใช้)
     GET  /api/info-logs?web=&lines=&source=&start=&end=
                                   ปุ่ม "Load INFO log": INFO สดจากเครื่อง (ผ่าน puller) ไม่เก็บไว้ที่ไหน
          (/api/problems, /api/log-stats แสดงเฉพาะ ERROR / WARN: ระบบไม่เก็บ INFO)
@@ -44,13 +53,17 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     POST /api/targets/host-key    สแกน SSH host key ของ host:port (ยังไม่เก็บ)
 """
 
+import re
 import time
 
 from ruamel.yaml import YAMLError
-from flask import Flask, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, g, jsonify, redirect, request, send_from_directory, session
 
 import settings
-from auth import check_credentials
+from auth import AUTH_USERNAME, check_credentials, session_role
+import checks_service
+import users_service
+from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
 from logs_service import (
@@ -61,6 +74,7 @@ from logs_service import (
     get_log_stats,
     get_logs,
     get_problem_count,
+    search_logs,
 )
 from metrics_service import (
     classify_state,
@@ -105,13 +119,45 @@ def require_authentication():
     if request.path.startswith("/static/"):
         return None
 
-    if session.get("authenticated"):
-        return None
+    if not session.get("authenticated"):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "authentication_required"}), 401
+        return redirect("/login")
 
-    if request.path.startswith("/api/"):
-        return jsonify({"error": "authentication_required"}), 401
+    # role ปัจจุบัน (ผู้ใช้ถูกลบ -> ออกจากระบบทันที, ถูกลดสิทธิ์ -> มีผลทันที)
+    role = session_role(session.get("username", ""), session.get("role"))
+    if role is None:
+        session.clear()
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "authentication_required"}), 401
+        return redirect("/login")
+    g.role = role
 
-    return redirect("/login")
+    needed = _required_role(request.method, request.path)
+    if not role_at_least(role, needed):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "forbidden", "required_role": needed}), 403
+        return redirect("/")
+    return None
+
+
+_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$")
+_SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
+
+
+def _required_role(method, path):
+    """role ขั้นต่ำของแต่ละเส้นทาง (ไม่ระบุ = viewer)"""
+    if _PAUSE_PATH.match(path):
+        return "operator"
+    if _SERVICES_PATH.match(path):
+        return "viewer" if method == "GET" else "operator"
+    if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users")):
+        return "admin"
+    if path.startswith("/api/checks"):
+        return "viewer" if method == "GET" else "admin"
+    if path == "/api/info-logs":
+        return "operator"
+    return "viewer"
 
 
 # ============================================================
@@ -144,11 +190,14 @@ def login():
     """รับ {"username","password"} ถูกต้อง -> ตั้ง session"""
     data = request.get_json(silent=True) or {}
 
-    if not check_credentials(data.get("username", ""), data.get("password", "")):
+    role = check_credentials(data.get("username", ""), data.get("password", ""))
+    if not role:
         return jsonify({"error": "invalid_credentials"}), 401
 
+    session.clear()
     session["authenticated"] = True
     session["username"] = data.get("username", "")
+    session["role"] = role
 
     return jsonify({"status": "ok"})
 
@@ -165,7 +214,58 @@ def current_user():
     if not session.get("authenticated"):
         return jsonify({"authenticated": False}), 401
 
-    return jsonify({"authenticated": True, "username": session.get("username", "")})
+    return jsonify({"authenticated": True, "username": session.get("username", ""),
+                    "role": getattr(g, "role", None) or session.get("role") or "viewer"})
+
+
+# ============================================================
+# ผู้ใช้ (admin)
+# ============================================================
+
+def _user_error(e):
+    return jsonify({"error": "validation", "fields": e.fields}), e.status
+
+
+@app.get("/api/users")
+def users_list():
+    return jsonify({"users": users_service.list_users(), "builtin_admin": AUTH_USERNAME,
+                    "roles": list(users_service.ROLES)})
+
+
+@app.post("/api/users")
+def users_add():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        return jsonify(users_service.add_user(body, AUTH_USERNAME)), 201
+    except UserError as e:
+        return _user_error(e)
+
+
+@app.put("/api/users/<name>")
+def users_update(name):
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    if name == session.get("username") and body.get("role") not in (None, "admin"):
+        return jsonify({"error": "validation", "fields": {"role": "ลดสิทธิ์ตัวเองไม่ได้"}}), 400
+    try:
+        user = users_service.update_user(name, {k: body[k] for k in ("role", "password") if k in body})
+    except UserError as e:
+        return _user_error(e)
+    if user is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(user)
+
+
+@app.delete("/api/users/<name>")
+def users_delete(name):
+    if name == session.get("username"):
+        return jsonify({"error": "ลบบัญชีที่กำลังใช้อยู่ไม่ได้"}), 400
+    if not users_service.delete_user(name):
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"status": "ok"})
 
 
 # ============================================================
@@ -376,6 +476,27 @@ def info_logs():
         return jsonify({"error": f"ดึง INFO log จาก puller ไม่ได้: {e}"}), 502
 
 
+@app.get("/api/logs/search")
+def logs_search():
+    """ค้นข้อความใน log  q = คำค้น, web = เครื่อง (ว่าง = ทุกเครื่อง), level / type / start / end เหมือน /api/problems"""
+    start, end = _range_args()
+    try:
+        size = min(int(request.args.get("size", "300")), 1000)
+    except ValueError:
+        size = 300
+    try:
+        return jsonify(search_logs(
+            request.args.get("q", ""),
+            web=request.args.get("web") or None,
+            levels=request.args.get("level", ""),
+            types=request.args.get("type", ""),
+            start=start, end=end, size=size,
+        ))
+    except Exception as e:
+        print(f"[SEARCH ERROR] {e!r}")
+        return jsonify({"error": f"ค้นหาไม่สำเร็จ: {e}"}), 502
+
+
 @app.get("/api/problems/detail")
 def problem_detail():
     """log 1 รายการ + สถานะเครื่อง ณ เวลาที่ log เกิด (ใช้ history ของ puller)"""
@@ -498,6 +619,87 @@ def targets_host_key():
     except ValidationError as e:
         return _bad_request(e)
     return jsonify({"keys": [{"type": k["type"], "fingerprint": k["fingerprint"]} for k in keys]})
+
+
+@app.put("/api/targets/<name>/pause")
+def targets_pause(name):
+    """Pause / Resume เครื่อง  body: {"paused": true|false}"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        result = targets_service.set_paused(name, bool(body.get("paused")))
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if result is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(result)
+
+
+# ============================================================
+# Web / SSL checks
+# ============================================================
+
+@app.get("/api/checks")
+def checks_list():
+    try:
+        return jsonify({"checks": checks_service.get_checks()})
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.post("/api/checks")
+def checks_add():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        return jsonify(checks_service.add_check(body)), 201
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.put("/api/checks/<name>")
+def checks_update(name):
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        result = checks_service.update_check(name, body)
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if result is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(result)
+
+
+@app.put("/api/checks/<name>/pause")
+def checks_pause(name):
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        result = checks_service.set_check_paused(name, bool(body.get("paused")))
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if result is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(result)
+
+
+@app.delete("/api/checks/<name>")
+def checks_delete(name):
+    try:
+        deleted = checks_service.delete_check(name)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if not deleted:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"status": "ok"})
 
 
 @app.get("/api/targets/<name>/services")

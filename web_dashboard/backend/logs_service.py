@@ -369,6 +369,110 @@ def get_log_stats(web, start=None, end=None):
     return {"levels": levels, "types": types, "total": len(entries)}
 
 
+# ---------------------------------------------------------------------------
+# ค้นหาข้อความใน log (ช่อง Search ของการ์ด Logs)
+# ---------------------------------------------------------------------------
+# ไวยากรณ์ (simple_query_string ของ OpenSearch: พิมพ์ผิดก็ไม่ error)
+#   timeout nginx        ต้องมีทุกคำ (AND)
+#   "connection reset"   ทั้งวลี
+#   timeout | refused    คำใดคำหนึ่ง (OR)
+#   error -cron          มี error แต่ไม่มี cron
+#   time*                ขึ้นต้นด้วย time
+# ค้นทั้ง index (ไม่จำกัด 10,000 รายการล่าสุดแบบ _scan) แล้วกรองเครื่อง/level/type ฝั่ง Python
+# ส่วนที่ตรงคำค้นถูกครอบด้วย \x02 ... \x03 (หน้าเว็บ escape ข้อความก่อน แล้วค่อยแปลงเป็น <mark>)
+
+SEARCH_FETCH = 2000           # เอกสารสูงสุดที่ขอจาก OpenSearch ต่อการค้น 1 ครั้ง
+HL_PRE, HL_POST = "\u0002", "\u0003"
+
+
+def _web_of(filename):
+    """ชื่อเครื่องจากชื่อไฟล์ buffer  <site>__<เครื่อง>__<source>__..."""
+    parts = str(filename or "").split("__")
+    return parts[1] if len(parts) > 2 else ""
+
+
+def search_logs(query, web=None, levels=None, types=None, start=None, end=None, size=300):
+    """ค้นข้อความใน log  web=None = ทุกเครื่อง
+    คืน {"results": [...], "total": จำนวนที่ OpenSearch เจอ (ก่อนกรองเครื่อง/level), "truncated": bool}
+    """
+    query = str(query or "").strip()
+    if not query:
+        return {"results": [], "total": 0, "truncated": False}
+
+    filters = []
+    if start is not None or end is not None:
+        rng = {}
+        if start is not None:
+            rng["gte"] = int(start * 1000)
+        if end is not None:
+            rng["lte"] = int(end * 1000)
+        filters.append({"range": {"@timestamp": {**rng, "format": "epoch_millis"}}})
+
+    result = opensearch_request(LOG_INDEX_PATTERN, {
+        "size": SEARCH_FETCH,
+        "_source": SOURCE_FIELDS,
+        "track_total_hits": True,
+        "sort": [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}],
+        "query": {"bool": {
+            "must": [{"simple_query_string": {
+                "query": query,
+                "fields": ["body", "message"],
+                "default_operator": "and",
+                "analyze_wildcard": True,
+                "lenient": True,
+            }}],
+            "filter": filters,
+        }},
+        "highlight": {
+            "fields": {"body": {"number_of_fragments": 0}, "message": {"number_of_fragments": 0}},
+            "pre_tags": [HL_PRE], "post_tags": [HL_POST],
+        },
+    })
+
+    hits = result.get("hits", {}).get("hits", [])
+    total = result.get("hits", {}).get("total", {})
+    total = total.get("value", 0) if isinstance(total, dict) else int(total or 0)
+
+    wanted_levels = _clean_levels(levels)
+    if isinstance(types, str):
+        types = types.split(",")
+    wanted_types = {str(t).strip() for t in (types or []) if str(t).strip()} or None
+    target = resolve_web_name(web) if web else None
+
+    out = []
+    for hit in hits:
+        source, resource, body, filename, timestamp = _hit_fields(hit)
+        hit_web = _web_of(filename)
+        if target and hit_web != target:
+            continue
+        level = detect_log_level(body)
+        if level not in LEVELS:
+            continue
+        if wanted_levels and level not in wanted_levels:
+            continue
+        log_type = resource.get("log.source", "") or "application"
+        if wanted_types and log_type not in wanted_types:
+            continue
+        hl = (hit.get("highlight") or {})
+        marked = (hl.get("body") or hl.get("message") or [None])[0]
+        out.append({
+            "id": hit.get("_id"),
+            "index": hit.get("_index"),
+            "timestamp": timestamp,
+            "web": web or hit_web,
+            "level": level,
+            "type": log_type,
+            "message": body,
+            "highlight": marked,
+            "source_file": filename,
+            "correlated_metrics": {},
+        })
+
+    out.sort(key=lambda e: to_unix(e["timestamp"]) or 0, reverse=True)
+    return {"results": out[:size], "total": total, "matched": len(out),
+            "truncated": len(hits) >= SEARCH_FETCH or len(out) > size}
+
+
 def get_info_logs(web, lines=500, source=None, start=None, end=None):
     """INFO สดจากเครื่อง (ผ่าน puller/ondemand.py) - แสดงอย่างเดียว ไม่เก็บ ไม่ cache
 
