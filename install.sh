@@ -201,6 +201,13 @@ fix_owner
 # --- สรุป ------------------------------------------------------------
 USER_NAME="$(grep -E '^CENTRAL_AUTH_USERNAME=' docker/.env | cut -d= -f2-)"
 USER_PASS="$(grep -E '^CENTRAL_AUTH_PASSWORD=' docker/.env | cut -d= -f2-)"
+if [ "$KEEP" -eq 1 ]; then
+  KEY_NOTE="      (--keep: ใช้ SSH key และ .env เดิม เครื่องที่ตั้งไว้แล้วไม่ต้อง Deploy key ใหม่)"
+  KEEP_NOTE="หมายเหตุ: รันด้วย --keep -> รหัสเว็บ, รหัส OpenSearch และ SSH key เป็นค่าเดิม"
+else
+  KEY_NOTE="      เครื่องที่เพิ่มไว้ก่อนหน้านี้: กดปุ่ม Deploy key ที่แถวของเครื่อง (สร้าง key ใหม่แล้ว)"
+  KEEP_NOTE="หมายเหตุ: รันโดยไม่ใส่ --keep จะสร้าง .env และ SSH key ใหม่ (อัปเดตโค้ดครั้งหน้าใช้ cm-update)"
+fi
 cat <<MSG
 
 ======================================================================
@@ -213,9 +220,9 @@ cat <<MSG
  ขั้นต่อไป
    1) เข้าเว็บ -> Settings -> + Add target : กรอกเครื่อง + Scan host key + (Admin user/Password เพื่อวาง
       public key ให้อัตโนมัติ ไม่เก็บรหัสผ่าน) แล้ว Save
-      เครื่องที่เพิ่มไว้ก่อนหน้านี้: กดปุ่ม Deploy key ที่แถวของเครื่อง (key ถูกสร้างใหม่ทุกครั้งที่รัน install.sh)
+${KEY_NOTE}
    2) ./scripts/preflight.sh --ssh   เช็คว่า SSH เข้าทุกเครื่องได้
    3) อัปเดตโค้ดจาก GitHub ภายหลัง: พิมพ์ cm-update จากที่ไหนก็ได้ (cm-update --check = ดูอย่างเดียว)
- หมายเหตุ: ทุกครั้งที่รัน install.sh จะสร้าง .env และ SSH key ใหม่ (รหัสเว็บกลับเป็นค่าเริ่มต้น)
+ ${KEEP_NOTE}
 ======================================================================
 MSG
