@@ -456,12 +456,16 @@ docker compose logs -f --tail=100 otel
 **อัปเดตโค้ด** — พิมพ์ `cm-update` จากที่ไหนก็ได้ (ไม่ต้อง cd) ระบบจะ git pull, คืน `config/puller.yaml` ของเครื่อง, แล้ว `install.sh --keep` ให้เอง
 (`cm-update --check` = ดูว่ามีอะไรใหม่, `cm-update --rebuild` = build ใหม่แม้ไม่มีโค้ดใหม่, `cm-update --where` = บอกว่าติดตั้งอยู่ที่ไหน, ค่าเดิมสำรองไว้ที่ `data/state/update-backup/`)
 
-เครื่องที่ติดตั้งก่อนมี `cm-update` (ครั้งแรกครั้งเดียว ไม่ต้องรู้ path ก็ได้ ระบบหาจาก container ที่รันอยู่):
+เครื่องที่ยังไม่มี `cm-update` (ติดตั้งจาก zip / ไม่รู้ path) — คำสั่งเดียว รันที่ไหนก็ได้:
 
 ```bash
-cd "$(docker inspect central-api -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')/.." \
-  && git fetch origin && git show origin/main:scripts/update.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Dionydar2612/central-monitor/main/scripts/update.sh | bash
 ```
+
+สคริปต์หาโฟลเดอร์จาก container `central-api` ที่รันอยู่ แปลงเป็น git clone ในที่เดิม (แทนเฉพาะไฟล์โค้ด
+คง `config/puller.yaml`, `docker/.env`, `keys/`, `data/` และสำรอง puller.yaml/.env ไว้ที่ `data/state/update-backup/`)
+แล้ว `install.sh --keep` ให้ ครั้งต่อไปใช้ `cm-update` ได้เลย  ถ้า container ไม่ได้รันอยู่ ระบุโฟลเดอร์เอง:
+`... | bash -s -- --dir /path/to/central-monitor`
 
 **สำรองข้อมูล** — ที่ต้องเก็บจริง ๆ คือ `docker/.env`, `keys/`, `config/` และ `data/state/checkpoints.json` (ตำแหน่งที่อ่าน log ถึงแล้ว) ส่วน log ใน OpenSearch เป็นข้อมูลชั่วคราวตามนโยบาย retention
 

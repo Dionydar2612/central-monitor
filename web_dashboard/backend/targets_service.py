@@ -66,6 +66,25 @@ LOGTYPE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 # path: ขึ้นต้น / ใช้ได้เฉพาะอักขระปลอดภัย (ห้าม ' " $ ` ; | & ช่องว่าง ขึ้นบรรทัดใหม่)
 PATH_RE = re.compile(r"^/[A-Za-z0-9._/*?+@%=:,~\[\]-]{1,300}$")
 WILDCARDS = "*?["
+# กลุ่มของเครื่อง: path คั่นด้วย / ลึกได้ 5 ชั้น เช่น "TQ/IT" หรือ "ThaiQuest/TQ/PP/Server" (ไทยได้)
+GROUP_PART = r"[A-Za-z0-9฀-๿ _.()&+-]{1,40}"
+GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,4}}$")
+
+
+def clean_group(value, errors, field="group"):
+    """"  TQ / IT " -> "TQ/IT"  ว่าง -> ""  ผิดรูปแบบ -> ใส่ errors"""
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        errors[field] = "ต้องเป็นข้อความ"
+        return ""
+    parts = [p.strip() for p in value.strip().strip("/").split("/")]
+    group = "/".join(p for p in parts if p)
+    if group and not GROUP_RE.match(group):
+        errors[field] = "กลุ่มคั่นชั้นด้วย / (ไม่เกิน 5 ชั้น) ใช้ตัวอักษร ตัวเลข ไทย ช่องว่าง _ . ( ) & + -"
+    return group
+
+
 # systemd journal แทนไฟล์: "journal" หรือ "journal:nginx.service,ssh.service" (ดู puller/journal.py)
 JOURNAL_RE = re.compile(r"^journal(?::[A-Za-z0-9@._:-]{1,128}(?:,[A-Za-z0-9@._:-]{1,128}){0,9})?$")
 
@@ -159,12 +178,17 @@ def validate_target(data, existing_names, editing=None):
             errors[prefix + "type"] = "ใช้ A-Z a-z 0-9 _ - เท่านั้น"
         logs.append({"name": l_name, "path": l_path, "type": l_type})
 
+    group = clean_group(data.get("group"), errors)
+    paused = bool(data.get("paused", False))
+
     if errors:
         raise ValidationError(errors)
 
     return {
         "name": name,
         "host": host,
+        "group": group,
+        "paused": paused,
         "prometheus": {"job": job, "instance": instance},
         "ssh": {"port": ssh_port, "user": ssh_user},
         "logs": logs,
@@ -216,6 +240,10 @@ def _to_node(t):
     node = CommentedMap()
     node["name"] = t["name"]
     node["host"] = t["host"]
+    if t.get("group"):
+        node["group"] = t["group"]
+    if t.get("paused"):
+        node["paused"] = True
     prom = CommentedMap(t["prometheus"])
     node["prometheus"] = prom
     node["ssh"] = CommentedMap(t["ssh"])
@@ -229,6 +257,8 @@ def _to_node(t):
 def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
     node["host"] = t["host"]
+    _set_or_drop(node, "group", t.get("group") or None)
+    _set_or_drop(node, "paused", True if t.get("paused") else None)
     for key in ("prometheus", "ssh"):
         if not isinstance(node.get(key), CommentedMap):
             node[key] = CommentedMap()
@@ -238,6 +268,15 @@ def _apply(node, t):
     for item in t["logs"]:
         logs.append(CommentedMap(item))
     node["logs"] = logs
+
+
+def _set_or_drop(node, key, value):
+    """ตั้งค่า key หรือลบทิ้งถ้า value เป็น None (ไม่ทิ้ง key ว่าง ๆ ไว้ใน yaml)"""
+    if value is None:
+        if key in node:
+            del node[key]
+    else:
+        node[key] = value
 
 
 def _write_doc(y, doc):
@@ -402,6 +441,8 @@ def _view(t):
     return {
         "name": t.get("name"),
         "host": t.get("host"),
+        "group": t.get("group") or "",
+        "paused": bool(t.get("paused")),
         "prometheus": t.get("prometheus") or {},
         "ssh": {"port": port, "user": ssh.get("user", "")},
         "logs": t.get("logs") or [],
@@ -454,6 +495,21 @@ def update_target(name, payload):
         regenerate_prometheus_targets(doc)
         request_pull(name)
     return _view(t)
+
+
+def set_paused(name, paused):
+    """Pause / Resume เครื่อง (puller ข้ามเครื่องที่ pause: ไม่ดึง log ไม่เก็บสถานะ) ไม่มีเครื่อง -> None"""
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        node = _find_target(doc, name)
+        if node is None:
+            return None
+        _set_or_drop(node, "paused", True if paused else None)
+        _write_doc(y, doc)
+        if not paused:
+            request_pull(name)          # resume -> ดึงทันที
+    return {"name": name, "paused": bool(paused)}
 
 
 def delete_target(name):

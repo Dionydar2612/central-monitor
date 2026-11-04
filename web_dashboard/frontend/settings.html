@@ -26,8 +26,8 @@
 <section class="card">
 <div class="top"><h2>Targets</h2><button class="st-btn primary" id="addBtn">+ Add target</button></div>
 <div class="tblw"><table>
-<thead><tr><th>Name</th><th>Host</th><th>SSH user</th><th>Log files</th><th>Host key</th><th></th></tr></thead>
-<tbody id="tbody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+<thead><tr><th>Name</th><th>Group</th><th>Host</th><th>SSH user</th><th>Log files</th><th>Host key</th><th>Status</th><th></th></tr></thead>
+<tbody id="tbody"><tr><td colspan="8" class="empty">Loading...</td></tr></tbody>
 </table></div>
 <div class="st-msg" id="listMsg" role="status"></div>
 </section>
@@ -36,11 +36,13 @@
 <div class="top"><h2 id="formTitle">Add target</h2></div>
 <div class="st-grid">
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
+<div class="st-f" data-f="group"><label for="f_group">กลุ่ม (group)</label><input id="f_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><small>คั่นชั้นด้วย / เช่น ThaiQuest/TQ/IT · เว้นว่าง = Ungrouped</small><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
 <div class="st-f" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div>
 <div class="st-f" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
 <div class="st-f" data-f="prometheus.job"><label for="f_job">Prometheus job</label><input id="f_job" autocomplete="off" placeholder="(อัตโนมัติ: ชื่อเครื่อง-node)"><div class="st-err"></div></div>
 <div class="st-f" data-f="prometheus.instance"><label for="f_inst">node_exporter (host:port)</label><input id="f_inst" autocomplete="off" placeholder="(อัตโนมัติ: host:9100)"><div class="st-err"></div></div>
+<div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
 </div>
 
 <div class="st-h3">Log files ที่ต้องการดึง</div>
@@ -74,6 +76,52 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-msg" id="formMsg" role="alert"></div>
 <div class="st-row-end"><button class="st-btn" id="cancelBtn">Cancel</button><button class="st-btn primary" id="saveBtn">Save</button></div>
 </section>
+
+<!-- Web / SSL checks: puller.yaml -> checks: (ตัวเช็คจริง = start_push_log/puller/web_checks.py) -->
+<section class="card svc">
+<div class="top"><h2>Web checks (uptime / SSL)</h2><button class="st-btn primary" id="addCheckBtn">+ Add check</button></div>
+<div style="color:var(--mut);font-size:13px">เช็ค URL ทุก ๆ interval วินาที: status code, keyword ในหน้าเว็บ, เวลาตอบสนอง และวันหมดอายุใบรับรอง SSL · ผลแสดงในกลุ่มเดียวกับเครื่องที่หน้า Dashboard</div>
+<div class="tblw"><table>
+<thead><tr><th>Name</th><th>Group</th><th>URL</th><th>Every</th><th>Expect</th><th>Status</th><th></th></tr></thead>
+<tbody id="checkBody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+</table></div>
+<div class="st-msg" id="checkMsg" role="status"></div>
+<div id="checkForm" hidden>
+<div class="st-h3" id="checkTitle">Add check</div>
+<div class="st-grid" id="checkGrid">
+<div class="st-f" data-c="name"><label for="c_name">ชื่อ (name)</label><input id="c_name" autocomplete="off" placeholder="tq-website"><small>a-z 0-9 - เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
+<div class="st-f" data-c="url" style="grid-column:span 2"><label for="c_url">URL</label><input id="c_url" autocomplete="off" placeholder="https://www.example.com/health"><div class="st-err"></div></div>
+<div class="st-f" data-c="group"><label for="c_group">กลุ่ม (group)</label><input id="c_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><div class="st-err"></div></div>
+<div class="st-f" data-c="interval"><label for="c_interval">เช็คทุก (วินาที)</label><input id="c_interval" inputmode="numeric" placeholder="60"><div class="st-err"></div></div>
+<div class="st-f" data-c="timeout"><label for="c_timeout">Timeout (วินาที)</label><input id="c_timeout" inputmode="numeric" placeholder="10"><div class="st-err"></div></div>
+<div class="st-f" data-c="expect_status"><label for="c_expect">Status code ที่ถือว่า UP</label><input id="c_expect" autocomplete="off" placeholder="200-399"><div class="st-err"></div></div>
+<div class="st-f" data-c="keyword"><label for="c_keyword">Keyword ที่ต้องเจอ (ไม่บังคับ)</label><input id="c_keyword" autocomplete="off"><div class="st-err"></div></div>
+<div class="st-f" data-c="ssl_warn_days"><label for="c_sslwarn">เตือน SSL เมื่อเหลือ (วัน)</label><input id="c_sslwarn" inputmode="numeric" placeholder="14"><div class="st-err"></div></div>
+<div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="c_verify" checked> ตรวจความถูกต้องของใบรับรอง</label><label class="st-check"><input type="checkbox" id="c_paused"> Paused</label></div>
+</div>
+<div class="st-msg" id="checkFormMsg" role="alert"></div>
+<div class="st-row-end"><button class="st-btn" id="checkCancel">Cancel</button><button class="st-btn primary" id="checkSave">Save</button></div>
+</div>
+</section>
+
+<!-- ผู้ใช้ + สิทธิ์ (data/state/users.json) -->
+<section class="card svc">
+<div class="top"><h2>Users</h2></div>
+<div style="color:var(--mut);font-size:13px"><b>viewer</b> ดูอย่างเดียว · <b>operator</b> + Pause/Resume, Load INFO log, เลือก service · <b>admin</b> + หน้า Settings ทั้งหมด · บัญชีจาก docker/.env เป็น admin เสมอ (ใช้กู้ระบบได้)</div>
+<div class="tblw"><table>
+<thead><tr><th>Username</th><th>Role</th><th>Last login</th><th></th></tr></thead>
+<tbody id="userBody"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+</table></div>
+<div class="st-h3">Add user</div>
+<div class="st-grid">
+<div class="st-f" data-u="username"><label for="u_name">Username</label><input id="u_name" autocomplete="off"><div class="st-err"></div></div>
+<div class="st-f" data-u="password"><label for="u_pass">Password (อย่างน้อย 8 ตัว)</label><input id="u_pass" type="password" autocomplete="new-password"><div class="st-err"></div></div>
+<div class="st-f" data-u="role"><label for="u_role">Role</label><select id="u_role"><option value="viewer">viewer</option><option value="operator">operator</option><option value="admin">admin</option></select><div class="st-err"></div></div>
+<div class="st-f"><label>&nbsp;</label><button class="st-btn primary" id="userAdd" type="button">Add user</button></div>
+</div>
+<div class="st-msg" id="userMsg" role="status"></div>
+</section>
+<datalist id="groupList"></datalist>
 </div>
 <script src="/settings.js"></script>
 </body>

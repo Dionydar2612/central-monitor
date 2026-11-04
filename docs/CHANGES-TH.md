@@ -1,3 +1,23 @@
+# สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 บ่าย)
+
+## กลุ่ม + Pause
+- `targets[].group` (เช่น `TQ/IT`, ลึกได้ 5 ชั้น) และ `targets[].paused` ใน puller.yaml · ตั้งที่หน้า Settings ได้
+- puller ข้ามเครื่องที่ pause (ไม่ SSH ไม่ดึง log) · Resume แล้วดึงทันที
+- Dashboard การ์ด WEB status เป็นต้นไม้กลุ่ม: ป้ายนับสถานะต่อกลุ่ม (▼ Down/Problem · W Warning · ✓ OK · II Paused) ยุบ/ขยาย (จำใน browser), ช่องกรอง, ปุ่ม Pause/Resume ต่อแถว
+
+## Web uptime + SSL
+- `checks:` ใน puller.yaml + หน้า Settings -> Web checks · ตัวเช็ค `puller/web_checks.py` (thread ใน central-puller)
+- ผล: UP/Warning/Down, HTTP code, เวลาตอบสนอง, uptime 24 ชม., วันหมดอายุใบรับรอง -> `data/state/checks.json`
+
+## ค้นหา log
+- ช่อง Search ในการ์ด Logs ค้นทั้ง OpenSearch · คำ / "วลี" / a | b / -ไม่เอา / prefix* · เครื่องนี้หรือทุกเครื่อง · ไฮไลต์คำที่เจอ
+
+## ผู้ใช้ + สิทธิ์
+- `data/state/users.json` (PBKDF2) · role viewer / operator / admin · หน้า Settings -> Users · ทุก API ตรวจสิทธิ์
+- บัญชีจาก docker/.env เป็น admin เสมอ
+
+---
+
 # สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026)
 
 ## 1) ไม่เก็บ log ระดับ INFO + ปุ่ม "Load INFO log"

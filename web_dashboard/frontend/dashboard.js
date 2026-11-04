@@ -731,7 +731,10 @@ const S = {
     hoverX: null, drag: null, tipPos: null, zoomPrev: null, logKey: null,
     info: null, infoBusy: false,           // INFO ที่กดโหลดสด {rows, errors, lines} (null = แสดง ERROR/WARN ปกติ) ไม่เก็บที่ไหน
     live: null, liveAt: 0, liveBusy: false, liveErr: null,   // process ต่อ core + top memory วัดสด (/api/live-processes)
-    pullInterval: 3600                     // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
+    pullInterval: 3600,                    // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
+    ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
+    role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
+    search: null, searchBusy: false        // ผลค้นหา log {q, scope, rows, total, matched, truncated}
 };
 /* วัด process สดใหม่ทุกกี่ ms (ขณะเปิดหน้า) */
 const LIVE_EVERY = 60000;
@@ -842,26 +845,147 @@ function setLbl() {
 /* ---------- renderers ---------- */
 
 /* ---------- F. ตัววาดส่วนต่าง ๆ ----------
-   การ์ด WEB status (จาก /api/overview): ช่อง Total / Up / Down / Not OK + ตาราง Server Status
-   1 แถวต่อเครื่อง คลิกแถวเพื่อเลือกเครื่อง ; ถ้าเครื่องที่เลือกอยู่หายไป จะเลือกเครื่องแรกให้ */
-const STATE_LABEL = { HEALTHY: ["OK", "ok"], WARNING: ["Warning", "wr"], PROBLEM: ["Problem", "cr"], DOWN: ["Down", "cr"] };
-function renderMachines(ov) {
-    const webs = (ov && Array.isArray(ov.servers)) ? ov.servers : [];
-    S.webs = webs;
-    if (ov && ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
-    const cur = webs.some(w => w.web === S.web) ? S.web : (webs[0] && webs[0].web) || null;
-    S.web = cur;
-    setText("cur", cur || "-");
-    const tile = (label, n, cls) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b></div>`;
-    q("#ovTiles").innerHTML = tile("Total", ov && ov.total, "tot") + tile("Up", ov && ov.up, "up") + tile("Down", ov && ov.down, "dn") + tile("Not OK", ov && ov.not_ok, "nok");
+   การ์ด WEB status (จาก /api/overview) แบบกลุ่ม (เหมือน device tree)
+     ช่องบน     : Total / OK / Warning / Down / Paused  (+ Web checks)
+     ต้นไม้กลุ่ม : group ของเครื่อง/check ใน puller.yaml คั่นชั้นด้วย "/" (เช่น TQ/IT) ไม่มีกลุ่ม = Ungrouped
+                  หัวกลุ่มมีป้ายนับสถานะของทุกอย่างข้างใน (รวมกลุ่มย่อย) คลิกหัวกลุ่ม = ยุบ/ขยาย (จำไว้ใน browser)
+     ในกลุ่ม    : ตารางเครื่อง (คลิกแถว = เลือกเครื่องที่จะดูรายละเอียดด้านล่าง) + ตาราง web checks
+     ปุ่ม Pause/Resume แสดงเฉพาะ operator / admin */
+const STATE_LABEL = { HEALTHY: ["OK", "ok"], WARNING: ["Warning", "wr"], PROBLEM: ["Problem", "cr"], DOWN: ["Down", "cr"], PAUSED: ["Paused", "ps"] };
+const CHECK_LABEL = { up: ["Up", "ok"], warning: ["Warning", "wr"], down: ["Down", "cr"], paused: ["Paused", "ps"], pending: ["Pending", ""] };
+const UNGROUPED = "Ungrouped";
+
+/* สถานะรวม 4 แบบ (ใช้นับป้ายของกลุ่ม) */
+function itemBucket(x, isCheck) {
+    if (isCheck) return { up: "ok", warning: "wr", down: "dn", paused: "ps" }[x.status] || "na";
+    return { HEALTHY: "ok", WARNING: "wr", PROBLEM: "dn", DOWN: "dn", PAUSED: "ps" }[x.state] || "na";
+}
+const BUCKET_PILL = { dn: ["▼", "Down / Problem"], wr: ["W", "Warning"], ok: ["✓", "OK"], ps: ["II", "Paused"], na: ["?", "Unknown"] };
+
+function loadClosedGroups() {
+    try { return new Set(JSON.parse(localStorage.getItem("cm.closedGroups") || "[]")); } catch (e) { return new Set(); }
+}
+function saveClosedGroups() {
+    try { localStorage.setItem("cm.closedGroups", JSON.stringify([...S.closed])); } catch (e) { /* browser ไม่ให้เก็บ -> ไม่จำ */ }
+}
+
+function canOperate() { return S.role === "operator" || S.role === "admin"; }
+
+function buildTree(servers, checks) {
+    const root = { name: "", path: "", kids: new Map(), servers: [], checks: [], counts: {} };
+    const node = path => {
+        let n = root;
+        String(path || UNGROUPED).split("/").filter(Boolean).forEach((part, i, all) => {
+            if (!n.kids.has(part)) n.kids.set(part, { name: part, path: all.slice(0, i + 1).join("/"), kids: new Map(), servers: [], checks: [], counts: {} });
+            n = n.kids.get(part);
+        });
+        return n;
+    };
+    servers.forEach(x => node(x.group).servers.push(x));
+    checks.forEach(x => node(x.group).checks.push(x));
+    const count = n => {
+        const c = {};
+        n.servers.forEach(x => { const k = itemBucket(x); c[k] = (c[k] || 0) + 1; });
+        n.checks.forEach(x => { const k = itemBucket(x, true); c[k] = (c[k] || 0) + 1; });
+        n.kids.forEach(k => Object.entries(count(k)).forEach(([b, v]) => { c[b] = (c[b] || 0) + v; }));
+        n.counts = c;
+        return c;
+    };
+    count(root);
+    return root;
+}
+
+function pillsHtml(counts) {
+    return ["dn", "wr", "ok", "ps", "na"].filter(k => counts[k]).map(k =>
+        `<span class="gpill ${k}" title="${BUCKET_PILL[k][1]}"><i>${BUCKET_PILL[k][0]}</i>${counts[k]}</span>`).join("");
+}
+
+function serverRows(list, cur) {
     const cell = (key, v) => {
         const ok = hasValue(v) && Number.isFinite(Number(v));
         return `<td class="ovv ${ok ? level(key, v) || "ok" : ""}">${ok ? Number(v).toFixed(1) : "-"}</td>`;
     };
-    q("#mach").innerHTML = webs.length ? webs.map(w => {
-        const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
-        return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}">${escapeHtml(label)}</span></td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${pullHtml(w.last_pull)}</td></tr>`;
-    }).join("") : `<tr><td colspan="7" class="empty">No WEB configured - open Settings and add a target</td></tr>`;
+    const op = canOperate();
+    return `<table class="ovtbl"><thead><tr><th>Name</th><th>IP</th><th>Status</th><th>CPU avg 5m</th><th>Memory %</th><th>Disk %</th><th>Last pull</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
+        list.map(w => {
+            const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
+            const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}">${escapeHtml(label)}</span></td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+        }).join("") + `</tbody></table>`;
+}
+
+function checkRows(list) {
+    const op = canOperate();
+    const sslCell = c => {
+        const d = c.ssl && c.ssl.days_left;
+        if (!c.ssl) return `<td>-</td>`;
+        if (!hasValue(d)) return `<td class="ovv cr" title="${escapeHtml(c.ssl.error || "")}">error</td>`;
+        const cls = d < 0 ? "cr" : d <= (c.ssl_warn_days || 14) ? "wr" : "ok";
+        return `<td class="ovv ${cls}" title="${escapeHtml(`${c.ssl.issuer || ""} · expires ${c.ssl.expires_at ? formatTimestamp(c.ssl.expires_at) : "-"}${c.ssl.valid === false ? " · " + (c.ssl.error || "invalid") : ""}`)}">${d < 0 ? "expired" : d + " days"}</td>`;
+    };
+    return `<table class="ovtbl chk"><thead><tr><th>Web check</th><th>URL</th><th>Status</th><th>HTTP</th><th>Response</th><th>Uptime 24h</th><th>SSL expires</th><th>Last check</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
+        list.map(c => {
+            const [label, cls] = CHECK_LABEL[c.status] || [c.status || "-", ""];
+            const up = hasValue(c.uptime_24h) ? Number(c.uptime_24h) : null;
+            const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(c.name)}" data-kind="checks" data-paused="${c.paused ? 1 : 0}">${c.paused ? "Resume" : "Pause"}</button></td>` : "";
+            return `<tr class="${c.paused ? "paused" : ""}"><td><b>${escapeHtml(c.name)}</b></td><td class="url"><a href="${escapeHtml(c.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(c.url)}</a></td><td><span class="ovst ${cls}" title="${escapeHtml(c.error || "")}">${escapeHtml(label)}</span>${c.error && c.status !== "up" ? `<div class="cerr">${escapeHtml(c.error)}</div>` : ""}</td><td>${hasValue(c.code) ? escapeHtml(c.code) : "-"}</td><td>${hasValue(c.ms) ? escapeHtml(c.ms) + " ms" : "-"}</td><td class="ovv ${up == null ? "" : up >= 99.9 ? "ok" : up >= 99 ? "wr" : "cr"}">${up == null ? "-" : up.toFixed(up >= 99.9 ? 2 : 1) + "%"}</td>${sslCell(c)}<td>${c.checked_at ? escapeHtml(formatTimestamp(c.checked_at)) : "-"}</td>${btn}</tr>`;
+        }).join("") + `</tbody></table>`;
+}
+
+function groupHtml(n, cur, depth, forceOpen) {
+    const open = forceOpen || !S.closed.has(n.path);
+    const body = !open ? "" :
+        `<div class="gbody">${n.servers.length ? `<div class="tblw">${serverRows(n.servers, cur)}</div>` : ""}${n.checks.length ? `<div class="tblw">${checkRows(n.checks)}</div>` : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
+    const items = n.servers.length + n.checks.length;
+    return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
+}
+
+function matchesFilter(x, f, isCheck) {
+    if (!f) return true;
+    const hay = isCheck ? [x.name, x.url, x.group] : [x.web, x.host, x.instance, x.group, x.state];
+    return hay.some(v => String(v || "").toLowerCase().includes(f));
+}
+
+function renderMachines(ov) {
+    S.ov = ov || S.ov;
+    ov = S.ov || {};
+    const webs = Array.isArray(ov.servers) ? ov.servers : [];
+    const checks = Array.isArray(ov.checks) ? ov.checks : [];
+    S.webs = webs;
+    if (ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
+    const cur = webs.some(w => w.web === S.web) ? S.web : ((webs.find(w => !w.paused) || webs[0] || {}).web || null);
+    S.web = cur;
+    setText("cur", cur || "-");
+
+    const cb = c => checks.filter(x => x.status === c).length;
+    const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
+    const okCount = webs.filter(w => w.state === "HEALTHY").length;
+    q("#ovTiles").innerHTML =
+        tile("Total", ov.total, "tot", "machines") +
+        tile("OK", okCount, "up", hasValue(ov.up) ? `${ov.up} up` : "") +
+        tile("Warning", (ov.warning || 0), "nok", "≥ warning threshold") +
+        tile("Down / Problem", (ov.down || 0) + (ov.problem || 0), "dn", `${ov.down || 0} down · ${ov.problem || 0} problem`) +
+        tile("Paused", ov.paused || 0, "ps", "") +
+        tile("Web checks", checks.length, "chk", checks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none");
+
+    const f = (S.ovq || "").trim().toLowerCase();
+    const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
+    const tops = [...tree.kids.values()].sort((a, b) => (a.name === UNGROUPED) - (b.name === UNGROUPED) || a.name.localeCompare(b.name));
+    q("#mach").innerHTML = !webs.length && !checks.length
+        ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
+        : tops.length ? tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
+}
+
+async function togglePause(btn) {
+    const kind = btn.dataset.kind, name = btn.dataset.pause, paused = btn.dataset.paused !== "1";
+    if (paused && !confirm(`Pause ${name}?\n${kind === "targets" ? "หยุดดึง log และเก็บสถานะของเครื่องนี้จนกว่าจะกด Resume" : "หยุดเช็ค URL นี้จนกว่าจะกด Resume"}`)) return;
+    btn.disabled = true;
+    try {
+        const r = await fetch(`/api/${kind}/${encodeURIComponent(name)}/pause`, {
+            method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+        renderMachines(await apiGet("/api/overview"));
+    } catch (err) { alert("Pause/Resume failed: " + err.message); btn.disabled = false; }
 }
 
 /* แถบสรุปใต้ปุ่มเครื่อง: State, Last pull, Problem logs, Errors 15m, Load, Uptime, Net, ... (ช่องไม่มีค่าจะไม่แสดง) */
@@ -1405,17 +1529,17 @@ function renderProblems(list) {
     const tb = q("#plog");
     const filtered = S.lv !== "ALL" || S.lt !== "ALL";
     if (!Array.isArray(list) || !list.length) {
-        tb.innerHTML = `<tr><td colspan="6" class="empty">${S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="6" class="empty">${S.search ? "No logs match this search" : S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
         setText("logCnt", "");
         renderLogStat(0);
         return;
     }
     tb.innerHTML = "";
-    setText("logCnt", S.info ? `${list.length} INFO logs (live, not stored) ·` : `${list.length} logs ·`);
+    setText("logCnt", S.search ? `${list.length} search results ·` : S.info ? `${list.length} INFO logs (live, not stored) ·` : `${list.length} logs ·`);
     renderLogStat(list.length);
     list.forEach(p => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg">${escapeHtml(p.message || "")}</td><td>${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "-")}</td>`;
+        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td><td>${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "-")}</td>`;
         tr.addEventListener("click", () => openLogDetail(p));
         tb.appendChild(tr);
     });
@@ -1462,7 +1586,18 @@ function renderLogFilter(stats) {
 }
 
 /* ข้อความสรุปข้างตัวกรอง: กำลังแสดงอะไรอยู่ */
+/* ข้อความที่ OpenSearch ครอบส่วนที่ตรงคำค้นด้วย \x02...\x03 -> escape ก่อน แล้วค่อยเปลี่ยนเป็น <mark> (ปลอดภัยจาก HTML ใน log) */
+function hlHtml(text) {
+    return escapeHtml(text).replace(/\u0002/g, "<mark>").replace(/\u0003/g, "</mark>");
+}
+
 function renderLogStat(shown) {
+    if (S.search) {
+        const sr = S.search, scope = sr.scope === "all" ? "all WEB" : sr.web;
+        const more = sr.truncated ? " · showing the newest matches only, narrow the search or time range to see more" : "";
+        setText("lvStat", `Search "${sr.q}" in ${scope}${S.start ? " · selected time range" : ""} · ${sr.matched} match${sr.matched === 1 ? "" : "es"}${more}`);
+        return;
+    }
     if (S.info) {
         const err = (S.info.errors || []).length ? ` · ${S.info.errors.length} source error(s): ${S.info.errors.join("; ")}` : "";
         setText("lvStat", `INFO · last ${S.info.lines} lines per log${S.start ? " · in selected range" : ""}${err}`);
@@ -1483,7 +1618,8 @@ async function reloadLogs() {
         S.logKey = logKey();
         const [problems, stats] = await Promise.all([apiGet(logUrl()), apiGet(statsUrl())]);
         renderLogFilter(stats);
-        if (!S.info) renderProblems(problems);
+        if (S.search) await runSearch(true);
+        else if (!S.info) renderProblems(problems);
     } catch (err) { console.error("Log filter error:", err); }
 }
 
@@ -1502,6 +1638,7 @@ async function loadInfo() {
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
         if (web !== S.web) return;                 /* เปลี่ยนเครื่องระหว่างรอ */
         S.info = { rows: d.entries || [], errors: d.errors || [], lines: d.lines || q("#infoLines").value };
+        if (S.search) { S.search = null; q("#logClear").hidden = true; }
         showInfo();
     } catch (err) {
         console.error("INFO log error:", err);
@@ -1517,6 +1654,39 @@ function showInfo() {
     if (S.info) renderProblems(S.info.rows);
 }
 function closeInfo() { S.info = null; showInfo(); reloadLogs(); }
+
+/* ---------- ค้นหาข้อความใน log ----------
+   ค้นทั้งหมดที่เก็บใน OpenSearch (ไม่ใช่แค่ 300 รายการล่าสุด) ด้วยตัวกรอง Level / Type / ช่วงเวลาเดียวกับตาราง
+   ผลค้นค้างไว้จนกด Clear search (รีเฟรชอัตโนมัติไม่ทับ)  keep = ค้นซ้ำด้วยคำเดิม (เปลี่ยนตัวกรอง) */
+async function runSearch(keep) {
+    const qv = keep && S.search ? S.search.q : q("#logQ").value.trim();
+    if (!qv) { clearSearch(); return; }
+    if (S.searchBusy) return;
+    const scope = keep && S.search ? S.search.scope : q("#logScope").value;
+    const p = logRange(new URLSearchParams({ q: qv, size: "300" }));
+    if (scope !== "all" && S.web) p.set("web", S.web);
+    if (S.lv !== "ALL") p.set("level", S.lv);
+    if (S.lt !== "ALL") p.set("type", S.lt);
+    const btn = q("#logGo");
+    S.searchBusy = true; btn.disabled = true; btn.textContent = "Searching...";
+    try {
+        const r = await fetch(`/api/logs/search?${p}`, { cache: "no-store", credentials: "same-origin" });
+        if (r.status === 401) { window.location.href = "/login"; return; }
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+        S.search = { q: qv, scope, web: S.web, rows: d.results || [], total: d.total, matched: d.matched ?? (d.results || []).length, truncated: !!d.truncated };
+        if (S.info) { S.info = null; showInfo(); }
+        q("#logClear").hidden = false;
+        renderProblems(S.search.rows);
+    } catch (err) {
+        console.error("Log search error:", err);
+        setText("lvStat", `Search failed: ${err.message}`);
+    } finally { S.searchBusy = false; btn.disabled = false; btn.textContent = "Search"; }
+}
+function clearSearch() {
+    S.search = null; q("#logClear").hidden = true; q("#logQ").value = "";
+    reloadLogs();
+}
 
 /* คลิกแถว log: เปิดหน้าต่างทันทีด้วยข้อมูลที่มี แล้วโหลดรายละเอียดเต็มมาเติม
    แถว INFO ที่โหลดสด (on_demand) ไม่มีใน OpenSearch -> แสดงเท่าที่มี */
@@ -1576,7 +1746,7 @@ async function loadAll() {
         renderMeta();
         renderLists();
         renderLogFilter(stats);
-        if (S.info) renderProblems(S.info.rows); else renderProblems(problems);
+        if (S.search) renderProblems(S.search.rows); else if (S.info) renderProblems(S.info.rows); else renderProblems(problems);
         loadLive(false);
         await loadHist();
         const st = String(summary.status || "").toLowerCase(), cs = summary.current_state;
@@ -1675,6 +1845,10 @@ async function loadCurrentUser() {
         const d = await apiGet("/api/me");
         if (!d.authenticated) { window.location.href = "/login"; return; }
         setText("currentUsername", d.username || "Unknown");
+        S.role = d.role || "viewer";
+        document.querySelectorAll(".st-nav[href='/settings']").forEach(a => { a.hidden = S.role !== "admin"; });
+        const info = q(".infold"); if (info) info.hidden = !canOperate();
+        if (S.ov) renderMachines();
     } catch (err) { console.error("Failed to load current user:", err); }
 }
 
@@ -1697,18 +1871,38 @@ document.addEventListener("DOMContentLoaded", () => {
     setupServicePicker();
     setupChart();
     setLbl();
-    q("#mach").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.target.click(); } });
+    q("#mach").addEventListener("keydown", e => {
+        if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-web],[data-group]")) { e.preventDefault(); e.target.click(); }
+    });
     q("#mach").addEventListener("click", e => {
+        if (e.target.closest("a")) return;
+        const pb = e.target.closest("button[data-pause]");
+        if (pb) { e.stopPropagation(); togglePause(pb); return; }
+        const gh = e.target.closest("[data-group]");
+        if (gh) {
+            const path = gh.dataset.group;
+            S.closed.has(path) ? S.closed.delete(path) : S.closed.add(path);
+            saveClosedGroups(); renderMachines(); return;
+        }
         const b = e.target.closest("[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; S.live = null; S.liveErr = null; }
+        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; S.live = null; S.liveErr = null; if (S.search && S.search.scope !== "all") { S.search = null; q("#logClear").hidden = true; } }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {
         const b = e.target.closest("button[data-lv]"); if (!b) return;
-        S.lv = b.dataset.lv; S.info = null; showInfo(); reloadLogs();
+        S.lv = b.dataset.lv; S.info = null; showInfo(); reloadLogs();     /* ค้นอยู่ -> reloadLogs ค้นซ้ำด้วยตัวกรองใหม่ */
     });
     q("#ltSel").addEventListener("change", e => { S.lt = e.target.value; S.info = null; showInfo(); reloadLogs(); });
     q("#infoBtn").addEventListener("click", loadInfo);
+    q("#logSearch").addEventListener("submit", e => { e.preventDefault(); runSearch(false); });
+    q("#logClear").addEventListener("click", clearSearch);
+    q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
+    q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
+    q("#ovCollapse").addEventListener("click", () => {
+        const all = [...(S.ov && S.ov.servers || []), ...(S.ov && S.ov.checks || [])];
+        all.forEach(x => { const parts = String(x.group || UNGROUPED).split("/").filter(Boolean); parts.forEach((_, i) => S.closed.add(parts.slice(0, i + 1).join("/"))); });
+        saveClosedGroups(); renderMachines();
+    });
     q("#infoClear").addEventListener("click", closeInfo);
     $("logoutButton").addEventListener("click", logout);
     loadCurrentUser();

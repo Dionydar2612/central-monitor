@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+from checks_service import get_checks
 from clients import prom_value
 from metrics_service import PROMQL, _labels, _round, classify_state, get_web_prometheus_config
 from settings import load_web_targets
@@ -28,6 +29,14 @@ _CACHE = {"until": 0, "data": None}
 
 def _server(target):
     name = target.get("name")
+    base = {"web": name, "host": target.get("host"), "group": target.get("group") or "",
+            "paused": bool(target.get("paused"))}
+
+    if base["paused"]:          # pause = ไม่ถาม Prometheus ไม่นับเป็นปัญหา
+        return {**base, "instance": (target.get("prometheus") or {}).get("instance"),
+                "status": "paused", "state": "PAUSED", "cpu": None, "memory": None, "disk": None,
+                "last_pull": last_pull_time(name)}
+
     config = get_web_prometheus_config(name)
 
     # up{web=...} มาจาก web-nodes.json (Prometheus ที่มากับ stack) ; ไม่มี -> ใช้ job/instance ใน puller.yaml
@@ -45,8 +54,7 @@ def _server(target):
     state = classify_state(values) if online else "DOWN"
 
     return {
-        "web": name,
-        "host": target.get("host"),
+        **base,
         "instance": (config or {}).get("instance"),
         "status": "online" if online else "offline",
         "state": state,
@@ -65,14 +73,24 @@ def get_overview():
     with ThreadPoolExecutor(max_workers=8) as pool:
         servers = list(pool.map(_server, targets))
 
+    try:
+        checks = get_checks()
+    except Exception as e:
+        print(f"[OVERVIEW] checks error: {e}")
+        checks = []
+
     data = {
         "time": datetime.now(timezone.utc).isoformat(),
         "pull_interval": pull_interval_seconds(),
         "total": len(servers),
         "up": sum(1 for s in servers if s["status"] == "online"),
-        "down": sum(1 for s in servers if s["status"] != "online"),
-        "not_ok": sum(1 for s in servers if s["state"] != "HEALTHY"),
+        "down": sum(1 for s in servers if s["status"] == "offline"),
+        "paused": sum(1 for s in servers if s["status"] == "paused"),
+        "warning": sum(1 for s in servers if s["state"] == "WARNING"),
+        "problem": sum(1 for s in servers if s["state"] == "PROBLEM"),
+        "not_ok": sum(1 for s in servers if s["state"] in ("WARNING", "PROBLEM", "DOWN")),
         "servers": servers,
+        "checks": checks,
     }
 
     _CACHE.update(until=now + CACHE_TTL, data=data)

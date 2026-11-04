@@ -89,6 +89,12 @@ def run_once(config, only=None):
         stagger = 0
         print(f" (on-demand: {', '.join(t.get('name') for t in targets) or 'none'})")
 
+    # เครื่องที่ pause (หน้าเว็บ / puller.yaml -> paused: true) ไม่ดึง log ไม่เก็บสถานะ
+    paused = [t.get("name") for t in targets if t.get("paused")]
+    if paused:
+        print(f"[PAUSED] skip: {', '.join(paused)}")
+    targets = [t for t in targets if not t.get("paused")]
+
     for index, target in enumerate(targets):
 
         pull_target(config, target, state)
