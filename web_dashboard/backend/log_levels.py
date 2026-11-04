@@ -7,6 +7,8 @@ log_levels.py - จัดระดับความรุนแรงของ�
     เช่น "0 errors", "errors=0", "error.log", "no failures"  และไม่ดูว่า log บอกระดับเองไว้แล้ว
     (เช่น level=info, [WARN], INFO) ตอนนี้ตัดสินตามลำดับ
 
+    0) ระดับในวงเล็บถัดจากเวลาต้นบรรทัด "<เวลา> [ERROR] ..." (รูปแบบที่ puller เขียนให้ journal log)
+       ถือเป็นค่าที่แน่นอนที่สุด ตัดสินก่อนข้ออื่น
     1) log บอกระดับเอง  : level=error / "level":"info" / [ERROR] / คำพิมพ์ใหญ่ ERROR ต้นข้อความ
     2) ตัดวลีที่ไม่ใช่ปัญหาออกก่อน : "0 errors", "no failures", "failed=0", "error.log" ...
     3) ค้นคำที่แปลว่าพัง/เตือน ด้วยขอบเขตคำ (\\b) กัน "room" / "zoom" ไม่ให้เป็น oom
@@ -15,6 +17,11 @@ log_levels.py - จัดระดับความรุนแรงของ�
     จึงตรงกันเสมอ (ที่นับว่า error = ที่แสดงว่า ERROR)
 
 คืนค่า: "ERROR" | "WARN" | "INFO"
+
+!! ไฟล์นี้มี 2 ชุดที่ต้องเหมือนกัน:
+     web_dashboard/backend/log_levels.py   (หน้าเว็บจัดระดับ/กรอง)
+     start_push_log/puller/log_levels.py   (puller ตัด INFO ทิ้งก่อนเก็บ)
+   แก้ที่หนึ่ง ให้คัดลอกไปอีกที่ด้วย
 """
 
 import re
@@ -29,6 +36,9 @@ _LEVEL_WORDS = {
     "info": "INFO", "notice": "INFO", "debug": "INFO", "trace": "INFO",
 }
 _WORD_ALT = "|".join(sorted(_LEVEL_WORDS, key=len, reverse=True))
+
+# 0) "<เวลา> [LEVEL] ..." ต้นบรรทัด
+_LEAD_LEVEL = re.compile(r"^\S+\s+\[\s*(" + _WORD_ALT + r")\s*\]", re.I)
 
 # 1) ระดับที่ log บอกเอง
 _KV_LEVEL = re.compile(
@@ -67,6 +77,10 @@ _UPPER_SCAN_CHARS = 160
 
 
 def _explicit_level(text):
+    m = _LEAD_LEVEL.match(text)
+    if m:
+        return _LEVEL_WORDS[m.group(1).lower()]
+
     m = _KV_LEVEL.search(text) or _BRACKET_LEVEL.search(text)
     if m:
         return _LEVEL_WORDS[m.group(1).lower()]

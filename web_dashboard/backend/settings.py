@@ -75,6 +75,10 @@ PROMETHEUS_TARGET_FILE = os.getenv(
 PULL_TRIGGER_FILE = os.path.join(STATE_DIR, "pull-now.json")
 TARGETS_LOCK_FILE = os.path.join(STATE_DIR, ".targets.lock")
 
+# --- puller (ปุ่ม "Load INFO log": ดึง INFO สดผ่าน puller ซึ่งถือ SSH key) ---------
+PULLER_URL = os.getenv("PULLER_URL", "http://central-puller:8001").rstrip("/")
+PULLER_TOKEN = os.getenv("CENTRAL_PULLER_TOKEN", "")
+
 # --- session / cookie --------------------------------------------------------
 
 SECRET_KEY = require_env("CENTRAL_SECRET_KEY")

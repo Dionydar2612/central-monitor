@@ -66,6 +66,8 @@ LOGTYPE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 # path: ขึ้นต้น / ใช้ได้เฉพาะอักขระปลอดภัย (ห้าม ' " $ ` ; | & ช่องว่าง ขึ้นบรรทัดใหม่)
 PATH_RE = re.compile(r"^/[A-Za-z0-9._/*?+@%=:,~\[\]-]{1,300}$")
 WILDCARDS = "*?["
+# systemd journal แทนไฟล์: "journal" หรือ "journal:nginx.service,ssh.service" (ดู puller/journal.py)
+JOURNAL_RE = re.compile(r"^journal(?::[A-Za-z0-9@._:-]{1,128}(?:,[A-Za-z0-9@._:-]{1,128}){0,9})?$")
 
 
 def _valid_host(host):
@@ -145,8 +147,12 @@ def validate_target(data, existing_names, editing=None):
         prefix = f"logs.{i}."
         if not LOGNAME_RE.match(l_name):
             errors[prefix + "name"] = "ใช้ A-Z a-z 0-9 _ - เท่านั้น"
-        if not PATH_RE.match(l_path) or ".." in l_path.split("/"):
-            errors[prefix + "path"] = "path ต้องขึ้นต้นด้วย / ใช้ได้เฉพาะ A-Z a-z 0-9 . _ / * ? - (ไม่มีช่องว่าง/เครื่องหมายคำพูด)"
+        if JOURNAL_RE.match(l_path):
+            pass        # journal (journalctl) ไม่ใช่ไฟล์
+        elif l_path.startswith("journal"):
+            errors[prefix + "path"] = "journal ใช้รูปแบบ journal หรือ journal:nginx.service,ssh.service"
+        elif not PATH_RE.match(l_path) or ".." in l_path.split("/"):
+            errors[prefix + "path"] = "path ต้องขึ้นต้นด้วย / (หรือ journal) ใช้ได้เฉพาะ A-Z a-z 0-9 . _ / * ? - (ไม่มีช่องว่าง/เครื่องหมายคำพูด)"
         elif any(ch in os.path.dirname(l_path) for ch in WILDCARDS):
             errors[prefix + "path"] = "wildcard ใช้ได้เฉพาะชื่อไฟล์ (ส่วนท้าย) ไม่ใช่ชื่อโฟลเดอร์"
         if not LOGTYPE_RE.match(l_type):

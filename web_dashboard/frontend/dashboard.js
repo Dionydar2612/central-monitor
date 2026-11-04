@@ -8,7 +8,8 @@
           /api/web-status      รายชื่อเครื่อง + online/offline     -> renderMachines
           /api/summary         สรุปเครื่อง (State, Last pull, ...)  -> renderMeta
           /api/metrics         ตัวเลข + service/process/event       -> renderLists
-          /api/problems        รายการ log                           -> renderProblems
+          /api/problems        รายการ log (ERROR / WARN เท่านั้น)   -> renderProblems
+          /api/info-logs       INFO สด เฉพาะตอนกดปุ่ม Load INFO log  -> loadInfo (ไม่เก็บ)
           /api/metrics/history อนุกรมเวลาสำหรับกราฟ                 -> renderKPIs, renderLoad
      3) รีเฟรชอัตโนมัติทุก 10 วินาที (setInterval ท้ายไฟล์) หรือกดปุ่ม Refresh
      4) คลิกแถว log -> openLogDetail -> /api/problems/detail -> หน้าต่างรายละเอียด
@@ -727,7 +728,8 @@ const S = {
     svf: "all", svnf: false,               // ตัวกรองการ์ด Service: แท็บ (all/failed/active/inactive) + แสดง not-found ไหม
     chart: "main", cmp: false, ext: null,  // กราฟ System Load: แท็บ, เทียบเมื่อวาน, ข้อมูลของแท็บ (main = S.hist)
     marks: [], markGroups: [], view: null, // จุด ERROR/WARN log + ข้อมูลที่วาดอยู่ (ใช้ตอนชี้เมาส์)
-    hoverX: null, drag: null, tipPos: null, zoomPrev: null, logKey: null
+    hoverX: null, drag: null, tipPos: null, zoomPrev: null, logKey: null,
+    info: null, infoBusy: false            // INFO ที่กดโหลดสด {rows, errors, lines} (null = แสดง ERROR/WARN ปกติ) ไม่เก็บที่ไหน
 };
 
 /* เกณฑ์สีของการ์ด KPI (%) : ถึง warn = เหลือง, ถึง crit = แดง  (แก้ตัวเลขที่นี่ที่เดียว) */
@@ -858,10 +860,24 @@ function renderMeta() {
     q("#meta").innerHTML = out.join("");
 }
 
-/* การ์ด KPI 4 ใบ: CPU / MEMORY / DISK / DISK I/O พร้อมเส้นกราฟเล็กและ ▲▼ เทียบก่อนหน้า */
+/* รายการ mount point ในการ์ด Disk (เต็มมากสุดขึ้นก่อน แสดง 5 อันแรก ที่เหลือดูได้จาก tooltip) */
+function mountsHtml(mounts) {
+    if (!Array.isArray(mounts) || !mounts.length) return "";
+    const show = mounts.slice(0, 5), more = mounts.length - show.length;
+    const rows = show.map(x => {
+        const lv = level("disk", x.used), w = Math.max(0, Math.min(100, Number(x.used) || 0));
+        return `<div class="${lv}" title="${escapeHtml(`${x.mountpoint} · ${x.device || ""} ${x.fstype || ""}`)}"><code>${escapeHtml(x.mountpoint)}</code><u><i style="width:${w}%"></i></u><b>${Math.round(Number(x.used))}%</b></div>`;
+    }).join("");
+    const rest = more > 0 ? `<div title="${escapeHtml(mounts.slice(5).map(x => `${x.mountpoint} ${Math.round(x.used)}%`).join("\n"))}"><code>+${more} more</code></div>` : "";
+    return `<div class="mnts">${rows}${rest}</div>`;
+}
+
+/* การ์ด KPI 4 ใบ: CPU average 5m / Memory Usage % / Disk Usage % (Per Mount Point) / Disk I/O utilization (%)
+   พร้อมเส้นกราฟเล็กและ ▲▼ เทียบก่อนหน้า
+   Disk: ตัวเลขใหญ่ = mount point ที่เต็มที่สุด, ด้านล่างแสดงทีละ mount point */
 function renderKPIs() {
     const m = S.metrics || {}, ser = (S.hist && S.hist.series) || {};
-    const K = [["CPU USAGE", "cpu"], ["MEMORY USAGE", "memory"], ["DISK USAGE", "disk"], ["DISK I/O UTILIZATION (%)", "io_util"]];
+    const K = [["CPU average 5m", "cpu"], ["Memory Usage %", "memory"], ["Disk Usage % (Per Mount Point)", "disk"], ["Disk I/O utilization (%)", "io_util"]];
     q("#kpis").innerHTML = K.map(([label, key]) => {
         const v = m[key], pts = ser[key] || [], dl = delta(pts);
         const ok = hasValue(v) && Number.isFinite(Number(v)), val = ok ? Math.round(Number(v)) + "%" : "–";
@@ -874,7 +890,8 @@ function renderKPIs() {
         }
         const tip = t ? ` title="warning ≥ ${t.warn}% · critical ≥ ${t.crit}%"` : "";
         const badge = lv === "cr" ? `<em class="kb cr">Critical</em>` : lv === "wr" ? `<em class="kb wr">Warning</em>` : "";
-        return `<div class="card k ${lv}"${tip}><div><small>${label}</small><div class="v">${val}${badge}</div><div class="d">${d}</div></div>${sparkSvg(pts)}</div>`;
+        const extra = key === "disk" ? mountsHtml(m.disk_mounts) : "";
+        return `<div class="card k ${lv}${extra ? " dk" : ""}"${tip}><div><small>${label}</small><div class="v">${val}${badge}</div><div class="d">${d}</div></div>${sparkSvg(pts)}${extra}</div>`;
     }).join("");
 }
 
@@ -888,7 +905,7 @@ function renderKPIs() {
    ชั้นบน #loadOv (overlay) แยกจาก #load เพื่อไม่ให้รีเฟรชทุก 10 วินาทีลบสิ่งที่กำลังชี้/ลากอยู่ */
 const CH = {
     main: { label: "CPU & Memory", unit: "%", max: 100, th: "cpu",
-        lines: [["cpu", "CPU", "#1f7bff", true], ["memory", "Memory", "#8b5cf6"]] },
+        lines: [["cpu", "CPU avg 5m", "#1f7bff", true], ["memory", "Memory", "#8b5cf6"]] },
     cpu: { label: "CPU breakdown", unit: "%", max: 100, th: "cpu", stacked: true,
         lines: [["cpu_user", "User", "#1f7bff"], ["cpu_system", "System", "#8b5cf6"], ["cpu_iowait", "I/O wait", "#f5a524"]] },
     io: { label: "Disk I/O", unit: "MB/s",
@@ -896,7 +913,11 @@ const CH = {
     net: { label: "Network", unit: "MB/s",
         lines: [["net_rx", "Receive ↓", "#1f7bff", true], ["net_tx", "Send ↑", "#10c27a"]] },
     load: { label: "Load", unit: "", ref: "cores",
-        lines: [["load1", "1 min", "#1f7bff", true], ["load5", "5 min", "#8b5cf6"], ["load15", "15 min", "#94a3b8"]] }
+        lines: [["load1", "1 min", "#1f7bff", true], ["load5", "5 min", "#8b5cf6"], ["load15", "15 min", "#94a3b8"]],
+        note: "<b>Load average</b> = จำนวนงานที่ \"กำลังใช้ CPU + รอคิว CPU\" (รวมงานที่รอดิสก์ด้วย) เฉลี่ย 1 / 5 / 15 นาที " +
+              "ต่างจาก CPU % ตรงที่บอกได้ว่า <b>มีงานต่อคิวรอ</b> หรือไม่ · เทียบกับเส้นประ <b>จำนวน CPU core</b>: " +
+              "ต่ำกว่าเส้น = CPU ยังรับไหว, เกินเส้นนาน ๆ = งานรอคิว เครื่องเริ่มช้า (ถ้า CPU % ไม่สูงแต่ load สูง มักเป็นเพราะรอดิสก์ ดูแท็บ CPU breakdown → I/O wait) · " +
+              "เส้น 1 min ขึ้นก่อน = เพิ่งเริ่มหนัก, 15 min สูงด้วย = หนักต่อเนื่อง" }
 };
 /* เรขาคณิตของกราฟ (หน่วย viewBox) */
 const GW = 900, GH = 312, PL = 52, PR = 12, PT = 10, PH = 230, PW = GW - PL - PR, MY = 262;
@@ -964,6 +985,7 @@ function chartView() {
 function renderLoad() {
     const v = chartView(), { cfg, lines, t0, t1, span, gap, ymax, X, Y } = v;
     q("#chTabs").innerHTML = Object.keys(CH).map(k => `<button type="button" data-ch="${k}" aria-pressed="${S.chart === k}">${CH[k].label}</button>`).join("");
+    q("#chNote").innerHTML = cfg.note || "";      /* ข้อความคงที่ของเราเอง (ไม่ใช่ข้อมูลจากเซิร์ฟเวอร์) */
     let s = "";
     /* แกน Y + เส้นตาราง */
     for (let i = 0; i <= 4; i++) {
@@ -1173,17 +1195,44 @@ function bar(v, max, text) {
     return `<div class="bar"><u><i style="width:${w}%"></i></u><b style="width:auto;min-width:64px">${escapeHtml(text)}</b></div>`;
 }
 
-/* รายการจาก snapshot ของ puller: Service (#sv), process ที่กิน CPU (#svc) / Memory (#mem)
+/* การ์ด "CPU process per CPU core": 1 กล่องต่อ core
+     หัวกล่อง  = % การใช้งานของ core (Prometheus เฉลี่ย 5 นาที; ไม่มี -> ค่าจาก snapshot)
+     รายการ   = process ที่รันบน core นั้น + กิน CPU ของ core นั้นกี่ % (snapshot ของ puller วัด 1 วินาที)
+   process เดียวอาจโผล่หลาย core ได้ (thread ของมันกระจายอยู่หลาย core) */
+function renderCores() {
+    const m = S.metrics || {}, snap = m.cpu_cores || {};
+    const live = new Map((Array.isArray(m.cpu_per_core) ? m.cpu_per_core : []).map(c => [Number(c.core), c.usage]));
+    const per = new Map((Array.isArray(snap.per_core) ? snap.per_core : []).map(c => [Number(c.core), c]));
+    const ids = [...new Set([...live.keys(), ...per.keys()])].sort((a, b) => a - b);
+    setText("coreCnt", ids.length ? `${ids.length} CPU cores` : "");
+    const busy = [...per.values()].filter(c => (c.active || 0) > 0).length;
+    setText("coreMeta", per.size
+        ? `Core % = average 5m (Prometheus) · processes = 1-second sample at ${formatTimestamp(m.system_timestamp)} · ${busy} of ${per.size} cores were running processes`
+        : (ids.length ? "Core % = average 5m (Prometheus) · no per-core process sample yet (waits for the next pull cycle)" : ""));
+    if (!ids.length) { q("#cores").innerHTML = `<div class="empty">No per-core data collected</div>`; return; }
+    q("#cores").innerHTML = ids.map(id => {
+        const c = per.get(id) || {}, u = live.has(id) ? live.get(id) : c.usage;
+        const lv = level("cpu", u), procs = Array.isArray(c.processes) ? c.processes : [];
+        const sub = per.has(id)
+            ? `<div class="sub">at sample: ${hasValue(c.usage) ? formatPercent(c.usage) : "-"} busy · ${c.active || 0} process${(c.active || 0) === 1 ? "" : "es"} running</div>` : "";
+        const list = procs.length
+            ? `<ul>${procs.map(p => `<li><span>${escapeHtml(p.name || "-")} <em>PID ${escapeHtml(p.pid ?? "-")}${p.threads > 1 ? ` · ${escapeHtml(p.threads)} threads` : ""}</em></span>${bar(p.cpu, 100, formatPercent(p.cpu))}</li>`).join("")}</ul>`
+            : (per.has(id) ? `<div class="idle">idle (no process used this core)</div>` : "");
+        return `<div class="core ${lv}"><h3>CPU ${escapeHtml(id)}<span>avg 5m</span></h3>${bar(u, 100, hasValue(u) ? formatPercent(u) : "-")}${sub}${list}</div>`;
+    }).join("");
+}
+
+/* รายการจาก snapshot ของ puller: Service (#sv), CPU ต่อ core (#cores), process ที่กิน Memory (#mem)
    เรียงมากไปน้อย 8 อันดับ, และ System events (#ev ซ่อนการ์ดเมื่อไม่มี) */
 function renderLists() {
     const m = S.metrics || {}, svcs = Array.isArray(m.services) ? m.services : [], procs = Array.isArray(m.processes) ? m.processes : [];
     renderServices(svcs);
+    renderCores();
     const top = key => [...procs].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0)).slice(0, 8);
     const rows = key => {
         const l = top(key), mx = Math.max(100, ...l.map(p => Number(p[key] || 0)));
         return l.length ? l.map(p => `<tr><td>${escapeHtml(p.name || "-")}</td><td>${escapeHtml(p.pid ?? "-")}</td><td>${bar(p[key], mx, formatPercent(p[key]))}</td></tr>`).join("") : `<tr><td colspan="3" class="empty">No process data collected</td></tr>`;
     };
-    q("#svc").innerHTML = rows("cpu");
     q("#mem").innerHTML = rows("memory");
     const ev = Array.isArray(m.system_events) ? m.system_events.filter(e => hasValue(e.message) || hasValue(e.type)) : [];
     q("#evCard").hidden = !ev.length;
@@ -1311,18 +1360,19 @@ function setupServicePicker() {
     q("#svNone").addEventListener("click", () => { S.pick.clear(); renderPick(); });
 }
 
-/* ตาราง Logs: 1 แถวต่อ log, คลิกแถว -> openLogDetail */
+/* ตาราง Logs: 1 แถวต่อ log, คลิกแถว -> openLogDetail
+   โหมด INFO (S.info): แสดงแถวที่โหลดสดจากปุ่ม Load INFO log (ไม่ได้มาจาก OpenSearch) */
 function renderProblems(list) {
     const tb = q("#plog");
     const filtered = S.lv !== "ALL" || S.lt !== "ALL";
     if (!Array.isArray(list) || !list.length) {
-        tb.innerHTML = `<tr><td colspan="6" class="empty">${filtered ? "No logs match this filter" : "No logs"}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="6" class="empty">${S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
         setText("logCnt", "");
         renderLogStat(0);
         return;
     }
     tb.innerHTML = "";
-    setText("logCnt", `${list.length} logs ·`);
+    setText("logCnt", S.info ? `${list.length} INFO logs (live, not stored) ·` : `${list.length} logs ·`);
     renderLogStat(list.length);
     list.forEach(p => {
         const tr = document.createElement("tr");
@@ -1359,9 +1409,9 @@ function renderLogFilter(stats) {
     const total = stats ? stats.total : null;
     [...q("#lvTabs").children].forEach(b => {
         const k = b.dataset.lv, n = k === "ALL" ? total : lv[k];
-        const label = { ALL: "All", ERROR: "Error", WARN: "Warn", INFO: "Info" }[k];
+        const label = { ALL: "All", ERROR: "Error", WARN: "Warn" }[k];
         b.innerHTML = hasValue(n) ? `${label}<i>${n}</i>` : label;
-        b.setAttribute("aria-pressed", k === S.lv);
+        b.setAttribute("aria-pressed", !S.info && k === S.lv);
     });
     const types = Object.keys((stats && stats.types) || {}).sort();
     if (S.lt !== "ALL" && !types.includes(S.lt)) types.push(S.lt);     // ชนิดที่เลือกอยู่ต้องไม่หายไปจากรายการ
@@ -1374,6 +1424,11 @@ function renderLogFilter(stats) {
 
 /* ข้อความสรุปข้างตัวกรอง: กำลังแสดงอะไรอยู่ */
 function renderLogStat(shown) {
+    if (S.info) {
+        const err = (S.info.errors || []).length ? ` · ${S.info.errors.length} source error(s): ${S.info.errors.join("; ")}` : "";
+        setText("lvStat", `INFO · last ${S.info.lines} lines per log${S.start ? " · in selected range" : ""}${err}`);
+        return;
+    }
     const parts = [];
     if (S.lv !== "ALL") parts.push(S.lv);
     if (S.lt !== "ALL") parts.push(S.lt);
@@ -1389,13 +1444,46 @@ async function reloadLogs() {
         S.logKey = logKey();
         const [problems, stats] = await Promise.all([apiGet(logUrl()), apiGet(statsUrl())]);
         renderLogFilter(stats);
-        renderProblems(problems);
+        if (!S.info) renderProblems(problems);
     } catch (err) { console.error("Log filter error:", err); }
 }
 
-/* คลิกแถว log: เปิดหน้าต่างทันทีด้วยข้อมูลที่มี แล้วโหลดรายละเอียดเต็มมาเติม */
+/* ---------- ปุ่ม Load INFO log ----------
+   ระบบไม่เก็บ INFO -> กดปุ่มแล้วดึงสดจากเครื่อง (N บรรทัดท้ายของแต่ละ log, ถ้าเลือกช่วงเวลาไว้กรองตามช่วงนั้น)
+   ผลอยู่ในหน่วยความจำของหน้าเว็บเท่านั้น (S.info) กด Close INFO / เปลี่ยนเครื่อง / รีโหลดหน้า = หายไป */
+async function loadInfo() {
+    if (!S.web || S.infoBusy) return;
+    const btn = q("#infoBtn"), web = S.web;
+    S.infoBusy = true; btn.disabled = true; btn.textContent = "Loading INFO...";
+    try {
+        const p = logRange(new URLSearchParams({ web, lines: q("#infoLines").value }));
+        const r = await fetch(`/api/info-logs?${p}`, { cache: "no-store", credentials: "same-origin" });
+        if (r.status === 401) { window.location.href = "/login"; return; }
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+        if (web !== S.web) return;                 /* เปลี่ยนเครื่องระหว่างรอ */
+        S.info = { rows: d.entries || [], errors: d.errors || [], lines: d.lines || q("#infoLines").value };
+        showInfo();
+    } catch (err) {
+        console.error("INFO log error:", err);
+        setText("lvStat", `Load INFO failed: ${err.message}`);
+    } finally {
+        S.infoBusy = false; btn.disabled = false; btn.textContent = S.info ? "Reload INFO" : "Load INFO log";
+    }
+}
+function showInfo() {
+    q("#infoClear").hidden = !S.info;
+    q("#infoBtn").textContent = S.info ? "Reload INFO" : "Load INFO log";
+    renderLogFilter(S.stats);
+    if (S.info) renderProblems(S.info.rows);
+}
+function closeInfo() { S.info = null; showInfo(); reloadLogs(); }
+
+/* คลิกแถว log: เปิดหน้าต่างทันทีด้วยข้อมูลที่มี แล้วโหลดรายละเอียดเต็มมาเติม
+   แถว INFO ที่โหลดสด (on_demand) ไม่มีใน OpenSearch -> แสดงเท่าที่มี */
 async function openLogDetail(p) {
     showProblemModal(p);
+    if (p.on_demand) return;
     try {
         const d = await apiGet(`/api/problems/detail?web=${encodeURIComponent(p.web)}&id=${encodeURIComponent(p.id)}`);
         showProblemModal(d);
@@ -1449,7 +1537,7 @@ async function loadAll() {
         renderMeta();
         renderLists();
         renderLogFilter(stats);
-        renderProblems(problems);
+        if (S.info) renderProblems(S.info.rows); else renderProblems(problems);
         await loadHist();
         const st = String(summary.status || "").toLowerCase(), cs = summary.current_state;
         if (st === "offline") setSystemStatus(`${S.web} is DOWN`, "red");
@@ -1571,14 +1659,16 @@ document.addEventListener("DOMContentLoaded", () => {
     setLbl();
     q("#mach").addEventListener("click", e => {
         const b = e.target.closest("button[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; }
+        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {
         const b = e.target.closest("button[data-lv]"); if (!b) return;
-        S.lv = b.dataset.lv; reloadLogs();
+        S.lv = b.dataset.lv; S.info = null; showInfo(); reloadLogs();
     });
-    q("#ltSel").addEventListener("change", e => { S.lt = e.target.value; reloadLogs(); });
+    q("#ltSel").addEventListener("change", e => { S.lt = e.target.value; S.info = null; showInfo(); reloadLogs(); });
+    q("#infoBtn").addEventListener("click", loadInfo);
+    q("#infoClear").addEventListener("click", closeInfo);
     $("logoutButton").addEventListener("click", logout);
     loadCurrentUser();
     loadAll();

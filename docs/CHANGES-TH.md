@@ -1,3 +1,35 @@
+# สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026)
+
+## 1) ไม่เก็บ log ระดับ INFO + ปุ่ม "Load INFO log"
+| ไฟล์ | เปลี่ยน |
+|---|---|
+| `puller/log_filter.py` (ใหม่), `puller/log_levels.py` (สำเนาของฝั่งเว็บ) | แยก log เป็นรายการ (บรรทัดต่อ เช่น stack trace ไปกับบรรทัดก่อนหน้า) แล้วจัดระดับด้วยตัวเดียวกับหน้าเว็บ |
+| `puller/log_puller.py` | ตัด INFO ทิ้งก่อนเขียน `data/buffer` → INFO ไม่เข้า OpenSearch · ก้อนที่เป็น INFO ล้วนไม่เขียนไฟล์ แต่ checkpoint ยังเดินต่อ |
+| `config/puller.yaml` | `storage.store_info_logs: false` (เปิดเป็น `true` ถ้าอยากกลับไปเก็บ INFO) |
+| `puller/ondemand.py` (ใหม่), `puller.py` | HTTP ภายในพอร์ต 8001 (`/info-logs`) ดึง N บรรทัดท้ายของทุก log ของเครื่อง คืนเฉพาะ INFO · ไม่เขียนไฟล์/ไม่เก็บ · ต้องมี header token |
+| `backend/api.py, logs_service.py, clients.py, settings.py` | `/api/info-logs` ส่งต่อไป puller · `/api/problems`, `/api/log-stats`, ตัวนับ แสดงเฉพาะ ERROR/WARN (INFO เก่าที่ค้างใน OpenSearch ถูกซ่อนจนหมดอายุ) |
+| `docker/docker-compose.yml` | `CENTRAL_PULLER_TOKEN` (= `CENTRAL_SECRET_KEY`) ให้ทั้ง puller และ api · `PULLER_URL` ของ api (ปริยาย `http://central-puller:8001`; ถ้ารัน puller ด้วย systemd ให้ตั้งเป็น `http://host.docker.internal:8001`) |
+| `frontend` | ลบแท็บ Info · เพิ่มเลือกจำนวนบรรทัด + ปุ่ม **Load INFO log** / **Close INFO** (ผลอยู่ในหน้าเว็บอย่างเดียว ถ้าเลือกช่วงเวลาไว้จะกรองตามช่วงนั้น) |
+
+## 2) journal log
+| ไฟล์ | เปลี่ยน |
+|---|---|
+| `puller/journal.py` (ใหม่), `log_puller.py` | `logs[].path: journal` หรือ `journal:nginx.service,ssh.service` · จำตำแหน่งด้วย cursor ของ journal · ครั้งแรกดึงย้อนหลัง 1 รอบ `scheduler.interval` · เก็บเฉพาะ priority 0-4 (ERROR/WARN) · 1 รายการ = 1 บรรทัด `<เวลา UTC> [LEVEL] <host> <โปรแกรม>[pid]: ข้อความ` |
+| `backend/targets_service.py`, `settings.html/js` | รับ path `journal...` · ปุ่ม **+ Add journal log** · คำสั่งตั้งค่าเครื่องเพิ่ม `usermod -aG systemd-journal` |
+| `otel/otelcol.yaml` | ชื่อ source `journal` ใช้ parser `application` |
+| `log_levels.py` (ทั้ง 2 ชุด) | `<เวลา> [LEVEL]` ต้นบรรทัดถือเป็นระดับที่แน่นอนที่สุด |
+
+## 3) การ์ด KPI
+- ชื่อใหม่: **CPU average 5m**, **Memory Usage %**, **Disk Usage % (Per Mount Point)**, **Disk I/O utilization (%)**
+- Disk: ตัวเลขใหญ่ = mount point ที่เต็มที่สุด (เดิมดูแค่ `/`) + รายการแต่ละ mount point ใต้การ์ด · สถานะเครื่อง (WARNING/PROBLEM) ใช้ค่าเดียวกันนี้
+- กราฟ System Load แท็บ **Load** มีคำอธิบายใต้กราฟ
+
+## 4) CPU process per CPU core
+- `puller/system_info.py`: อ่าน `/proc/stat` และ `/proc/<pid>/task/<tid>/stat` 2 ครั้งห่างกัน 1 วินาที → `cpu_cores` ใน snapshot: จำนวน core, % ของแต่ละ core, process ที่รันบน core นั้นและกิน CPU ของ core กี่ % (นับทีละ thread จึงเห็น process เดียวกระจายหลาย core ได้)
+- หน้าเว็บ: การ์ด 1 กล่องต่อ core · % หัวกล่องเป็นค่าเฉลี่ย 5 นาทีจาก Prometheus · รายการ process มาจาก snapshot รอบดึงล่าสุด
+
+---
+
 # สรุปการเปลี่ยนแปลง (รอบตรวจ 20 ต.ค. 2026)
 
 ## 1) log: เวลา, การกรอง error, การนับ

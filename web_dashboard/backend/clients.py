@@ -72,6 +72,32 @@ def prometheus_query_range(query, start, end, step):
         return json.loads(response.read().decode("utf-8"))
 
 
+def puller_info_logs(params):
+    """ขอ log ระดับ INFO สดจาก puller (ondemand.py)  ผลไม่ถูกเก็บที่ใด"""
+    from settings import PULLER_TOKEN, PULLER_URL
+
+    url = PULLER_URL + "/info-logs?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"X-Central-Token": PULLER_TOKEN})
+
+    with urllib.request.urlopen(req, timeout=55) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def prom_vector(query, timestamp=None):
+    """instant query ที่คืนหลาย series -> [(labels dict, ค่า float)]  ล้มเหลว -> []"""
+    try:
+        result = prometheus_query(query, timestamp)
+        out = []
+        for row in result.get("data", {}).get("result", []):
+            try:
+                out.append((row.get("metric", {}), float(row["value"][1])))
+            except (KeyError, ValueError, TypeError, IndexError):
+                continue
+        return out
+    except Exception:
+        return []
+
+
 def prom_value(query, timestamp=None):
     """ค่าตัวเลขตัวแรกของ instant query คืน None ถ้าไม่มีข้อมูล/เรียกไม่ได้"""
     try:

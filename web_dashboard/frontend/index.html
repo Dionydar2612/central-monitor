@@ -45,7 +45,8 @@
 <div class="mm" id="meta"></div>
 </section>
 
-<!-- KPI 4 ใบ: CPU / Memory / Disk / Disk I/O (ค่าปัจจุบัน + เส้นกราฟเล็ก จาก /api/metrics/history) -->
+<!-- KPI 4 ใบ: CPU average 5m / Memory Usage % / Disk Usage % (Per Mount Point) / Disk I/O utilization (%)
+     (ค่าปัจจุบัน + เส้นกราฟเล็ก จาก /api/metrics/history ; รายการ mount point จาก /api/metrics -> disk_mounts) -->
 <div class="grid kpis" id="kpis"></div>
 
 <!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) และรายการ Service (#sv: จาก snapshot ของ puller) -->
@@ -58,6 +59,7 @@
 <svg id="loadOv" viewBox="0 0 900 312" aria-hidden="true"><g id="ovMarks"></g><g id="ovHover"></g></svg>
 <div class="chtip" id="chTip" hidden></div>
 </div>
+<div class="chnote" id="chNote"></div>
 <div class="chhint">Hover for values · drag to zoom · click a dot to open the log</div>
 </section>
 <section class="card">
@@ -74,9 +76,11 @@
 </section>
 </div>
 
-<!-- ตาราง process ที่กิน CPU (#svc) และ Memory (#mem) สูงสุด จาก snapshot ของ puller -->
-<div class="grid two">
-<section class="card"><h2>CPU process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="svc"></tbody></table></div></section>
+<!-- CPU process per CPU core (#cores): 1 กล่องต่อ core = % การใช้งาน (Prometheus เฉลี่ย 5 นาที)
+     + process ที่รันบน core นั้นและกิน CPU ของ core เท่าไหร่ (snapshot ของ puller: วัด 1 วินาที)
+     และตาราง Memory (#mem) จาก snapshot ของ puller -->
+<div class="grid two cpuw">
+<section class="card"><div class="top"><h2>CPU process per CPU core</h2><span class="cnt" id="coreCnt"></span></div><div class="coremeta" id="coreMeta"></div><div class="cores scroll" id="cores"></div></section>
 <section class="card"><h2>Memory Usage by Process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
 </div>
 
@@ -86,7 +90,8 @@
 <!-- ตาราง Logs (#plog): log ของเครื่องที่เลือก คลิกแถวเพื่อเปิดหน้าต่างรายละเอียด (showProblemModal) -->
 <section class="card svc" style="margin-top:16px"><div class="top"><h2>Logs</h2><span style="color:var(--mut);font-size:13px"><span id="logCnt"></span> All logs correlated with WEB and metrics · click a row for details</span></div>
 <!-- ตัวกรอง log: ระดับ (#lvTabs) + ชนิด (#ltSel) ตัวเลขบนปุ่มมาจาก /api/log-stats (#lvStat = สรุปว่าแสดงอะไรอยู่) -->
-<div class="lvbar"><div class="tabs" id="lvTabs" role="group" aria-label="Filter by level"><button type="button" data-lv="ALL" aria-pressed="true">All</button><button type="button" data-lv="ERROR" aria-pressed="false">Error</button><button type="button" data-lv="WARN" aria-pressed="false">Warn</button><button type="button" data-lv="INFO" aria-pressed="false">Info</button></div><label class="lvtype">Type <select id="ltSel" aria-label="Filter by log type"><option value="ALL">All types</option></select></label><span class="lvstat" id="lvStat"></span></div>
+<!-- ระบบไม่เก็บ INFO: ปุ่ม Load INFO log (#infoBtn) ดึงสดจากเครื่องผ่าน /api/info-logs เฉพาะตอนกด แสดงแล้วไม่เก็บ -->
+<div class="lvbar"><div class="tabs" id="lvTabs" role="group" aria-label="Filter by level"><button type="button" data-lv="ALL" aria-pressed="true">All</button><button type="button" data-lv="ERROR" aria-pressed="false">Error</button><button type="button" data-lv="WARN" aria-pressed="false">Warn</button></div><label class="lvtype">Type <select id="ltSel" aria-label="Filter by log type"><option value="ALL">All types</option></select></label><span class="infold" title="INFO is not stored. Loads the last N lines of each log file live from the machine, shows them, and keeps nothing."><select id="infoLines" aria-label="Lines per log file"><option value="200">last 200 lines</option><option value="500" selected>last 500 lines</option><option value="1000">last 1000 lines</option><option value="2000">last 2000 lines</option></select><button type="button" class="svbtn" id="infoBtn">Load INFO log</button><button type="button" class="svbtn" id="infoClear" hidden>Close INFO</button></span><span class="lvstat" id="lvStat"></span></div>
 <div class="tblw scroll logscroll"><table class="pl"><thead><tr><th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th>Message</th><th>Metrics at time</th></tr></thead><tbody id="plog"><tr><td colspan="6" class="empty">Loading logs...</td></tr></tbody></table></div></section>
 </div>
 <!-- ตรรกะทั้งหมดของหน้านี้ -->

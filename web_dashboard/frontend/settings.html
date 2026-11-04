@@ -44,10 +44,12 @@
 </div>
 
 <div class="st-h3">Log files ที่ต้องการดึง</div>
-<div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code></div>
+<div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
+journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>
 <div id="logs"></div>
 <div class="st-err" id="logsErr" style="color:#e5484d;font-size:12px;margin-top:6px"></div>
 <button class="st-btn sm" id="addLog" style="margin-top:10px">+ Add log file</button>
+<button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
 
 <div class="st-h3">SSH host key</div>
 <div class="st-box" id="hkBox">

@@ -84,6 +84,9 @@ services:
       TZ: Asia/Bangkok
       CENTRAL_SSH_KEY: /run/keys/central_ed25519
       CENTRAL_SSH_KNOWN_HOSTS: /run/keys/known_hosts
+      # ปุ่ม "Load INFO log" ของหน้าเว็บเรียก puller ที่พอร์ต 8001 (ภายใน network เท่านั้น)
+      # token ต้องตรงกับฝั่ง central-api (ใช้ CENTRAL_SECRET_KEY ใน docker/.env)
+      CENTRAL_PULLER_TOKEN: ${CENTRAL_SECRET_KEY:-}
     # puller เปิด /metrics ที่พอร์ต 8000 -> ใช้เช็คว่าโปรเซสยังทำงาน
     healthcheck:
       test:
@@ -250,6 +253,9 @@ services:
       CENTRAL_COOKIE_SECURE: ${CENTRAL_COOKIE_SECURE:-false}
       # (ไม่บังคับ) ใส่ from="<IP>" หน้า public key ตอนวางลงเครื่อง target จากหน้า Settings
       CENTRAL_KEY_FROM: ${CENTRAL_KEY_FROM:-}
+      # ปุ่ม "Load INFO log": ขอ INFO สดผ่าน puller (puller ถือ SSH key) ไม่เก็บลงที่ไหน
+      PULLER_URL: ${PULLER_URL:-http://central-puller:8001}
+      CENTRAL_PULLER_TOKEN: ${CENTRAL_SECRET_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"   # ให้ container เรียก Prometheus บน host ได้
     networks:

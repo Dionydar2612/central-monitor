@@ -28,6 +28,9 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/log-markers?web=&start=&end=   จุด ERROR/WARN บนเส้นเวลาของกราฟ
          (/api/problems และ /api/log-stats รับ start/end ได้ด้วย = เฉพาะช่วงนั้น)
     GET  /api/problems/detail     log 1 รายการ + สถานะเครื่อง ณ เวลานั้น (web, id)
+    GET  /api/info-logs?web=&lines=&source=&start=&end=
+                                  ปุ่ม "Load INFO log": INFO สดจากเครื่อง (ผ่าน puller) ไม่เก็บไว้ที่ไหน
+         (/api/problems, /api/log-stats แสดงเฉพาะ ERROR / WARN: ระบบไม่เก็บ INFO)
 
     หน้า Settings (เพิ่ม/แก้/ลบเครื่องใน puller.yaml)  logic อยู่ที่ targets_service.py
     GET  /settings                หน้า Settings (settings.html)
@@ -49,6 +52,7 @@ from auth import check_credentials
 from clients import prom_value
 from logs_service import (
     get_errors_15m,
+    get_info_logs,
     get_log_detail,
     get_log_markers,
     get_log_stats,
@@ -312,6 +316,29 @@ def log_stats():
     web = request.args.get("web", "web-01")
     start, end = _range_args()
     return jsonify(get_log_stats(web, start, end))
+
+
+@app.get("/api/info-logs")
+def info_logs():
+    """INFO สดจากเครื่อง เฉพาะตอนผู้ใช้กดปุ่ม (ไม่เก็บ / ไม่ cache)"""
+    web = request.args.get("web", "")
+    if not web:
+        return jsonify({"error": "web required"}), 400
+
+    try:
+        lines = max(1, min(int(request.args.get("lines", "500")), 5000))
+    except ValueError:
+        lines = 500
+
+    start, end = _range_args()
+
+    try:
+        return jsonify(get_info_logs(
+            web, lines, source=request.args.get("source") or None, start=start, end=end
+        ))
+    except Exception as e:
+        print(f"[INFO LOGS ERROR] web={web} error={e!r}")
+        return jsonify({"error": f"ดึง INFO log จาก puller ไม่ได้: {e}"}), 502
 
 
 @app.get("/api/problems/detail")

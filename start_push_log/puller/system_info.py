@@ -12,6 +12,9 @@ system_info.py - เก็บ "สถานะของเครื่อง" �
     resource      <- /proc/loadavg, /proc/meminfo, df -P /, df -Pi /,
                      /proc/uptime, /sys/class/net/*/statistics/{rx,tx}_errors
     processes     <- ps (10 อันดับ CPU สูงสุด)
+    cpu_cores     <- /proc/stat + /proc/<pid>/task/<tid>/stat อ่าน 2 ครั้งห่างกัน 1 วินาที
+                     -> จำนวน core, % การใช้งานของแต่ละ core, และ process ที่รันบนแต่ละ core
+                        กิน CPU ของ core นั้นเท่าไหร่ (ณ วินาทีที่เก็บ ไม่ใช่ค่าเฉลี่ยตลอดอายุแบบ ps)
     services      <- systemctl list-units --type=service --all
     system_events <- journalctl 15 นาทีล่าสุด ระดับ warning ขึ้นไป
                      (แต่ละรายการมี type จาก classify_event, timestamp จากต้นบรรทัด, message)
@@ -196,18 +199,20 @@ def _collect_processes(target):
     processes = []
 
     try:
-        output = run_ssh(target, "ps -eo pid,comm,pcpu,pmem --sort=-pcpu | head -11")
+        # comm ไว้ท้ายสุด (ชื่อ process อาจมีช่องว่าง)
+        output = run_ssh(target, "ps -eo pid,psr,pcpu,pmem,comm --sort=-pcpu | head -11")
 
         for line in output.splitlines()[1:]:      # ข้ามบรรทัดหัวตาราง
-            parts = line.split()
+            parts = line.split(None, 4)
 
-            if len(parts) < 4:
+            if len(parts) < 5:
                 continue
 
             try:
                 processes.append({
                     "pid": int(parts[0]),
-                    "name": parts[1],
+                    "core": int(parts[1]),
+                    "name": parts[4].strip(),
                     "cpu": float(parts[2]),
                     "memory": float(parts[3]),
                 })
@@ -218,6 +223,132 @@ def _collect_processes(target):
         print(f"[SYSTEM] processes failed target={target['name']} error={e}")
 
     return processes
+
+
+# ---------------------------------------------------------------------------
+# CPU แยกตาม core
+# ---------------------------------------------------------------------------
+# อ่าน 2 รอบห่างกัน 1 วินาที แต่ละรอบ:
+#   uptime, บรรทัด cpuN ของ /proc/stat, และทุก thread: "<pid>/task/<tid>/stat <utime+stime> <core> <ชื่อ>"
+#   (awk ตัดเอาเฉพาะ field ที่ใช้ ข้อมูลที่ส่งกลับจึงเล็ก; ชื่อ process อาจมีช่องว่าง -> อยู่ท้ายสุด)
+#   field ของ stat หลังวงเล็บชื่อ: 1=state ... 12=utime 13=stime ... 37=processor (core ที่รันล่าสุด)
+_THREAD_AWK = (
+    "awk '{p=index($0,\":\"); f=substr($0,1,p-1); s=substr($0,p+1); "
+    "c=s; sub(/^[^(]*\\(/,\"\",c); sub(/\\) [^)]*$/,\"\",c); "
+    "r=s; sub(/.*\\) /,\"\",r); split(r,a,\" \"); print f, a[12]+a[13], a[37], c}'"
+)
+_SAMPLE = (
+    "cat /proc/uptime; grep '^cpu[0-9]' /proc/stat; "
+    "grep -H '' [0-9]*/task/[0-9]*/stat 2>/dev/null | " + _THREAD_AWK
+)
+CPU_CORE_COMMAND = (
+    "getconf CLK_TCK; cd /proc || exit 1; "
+    f"echo @@S1; {_SAMPLE}; sleep 1; echo @@S2; {_SAMPLE}; true"
+)
+
+TOP_PER_CORE = 8
+
+
+def _parse_core_sample(lines):
+    """1 รอบ -> (uptime, {core: (busy, total)}, {(pid, tid): (ticks, core, name)})"""
+    uptime, cores, threads = None, {}, {}
+
+    for line in lines:
+        if uptime is None:
+            try:
+                uptime = float(line.split()[0])
+            except (ValueError, IndexError):
+                pass
+            continue
+
+        if line.startswith("cpu"):
+            parts = line.split()
+            try:
+                values = [int(v) for v in parts[1:]]
+                core = int(parts[0][3:])
+            except ValueError:
+                continue
+            total = sum(values[:8])          # user nice system idle iowait irq softirq steal
+            idle = values[3] + (values[4] if len(values) > 4 else 0)
+            cores[core] = (total - idle, total)
+            continue
+
+        parts = line.split(" ", 3)
+        if len(parts) < 3:
+            continue
+        path = parts[0].split("/")
+        try:
+            pid, tid = int(path[0]), int(path[2])
+            threads[(pid, tid)] = (int(parts[1]), int(parts[2]), parts[3] if len(parts) > 3 else "?")
+        except (ValueError, IndexError):
+            continue
+
+    return uptime, cores, threads
+
+
+def parse_cpu_cores(output):
+    """ผลของ CPU_CORE_COMMAND -> {"count", "interval", "per_core": [...]} หรือ {} ถ้าอ่านไม่ได้"""
+    text = output.split("@@S1", 1)
+    if len(text) < 2 or "@@S2" not in text[1]:
+        return {}
+
+    try:
+        clk = int(text[0].strip().splitlines()[0])
+    except (ValueError, IndexError):
+        clk = 100
+
+    first, second = text[1].split("@@S2", 1)
+    up1, cores1, th1 = _parse_core_sample([l for l in first.splitlines() if l.strip()])
+    up2, cores2, th2 = _parse_core_sample([l for l in second.splitlines() if l.strip()])
+
+    if not cores2:
+        return {}
+
+    interval = (up2 - up1) if (up1 is not None and up2 is not None and up2 > up1) else 1.0
+    ticks = interval * clk
+
+    per_core = {}
+    for core in sorted(cores2):
+        busy2, total2 = cores2[core]
+        busy1, total1 = cores1.get(core, (busy2, total2))
+        span = total2 - total1
+        per_core[core] = {
+            "core": core,
+            "usage": round((busy2 - busy1) / span * 100, 1) if span > 0 else None,
+            "processes": {},
+        }
+
+    names = {pid: name for (pid, tid), (_, _, name) in th2.items() if pid == tid}
+
+    for (pid, tid), (ticks2, core, name) in th2.items():
+        ticks1 = th1.get((pid, tid), (None,))[0]
+        if ticks1 is None or ticks2 <= ticks1 or core not in per_core:
+            continue
+        cpu = (ticks2 - ticks1) / ticks * 100
+        procs = per_core[core]["processes"]
+        item = procs.setdefault(pid, {"pid": pid, "name": names.get(pid, name), "cpu": 0.0, "threads": 0})
+        item["cpu"] += cpu
+        item["threads"] += 1
+
+    result = []
+    for core in sorted(per_core):
+        entry = per_core[core]
+        procs = sorted(entry["processes"].values(), key=lambda p: p["cpu"], reverse=True)
+        for p in procs:
+            p["cpu"] = round(min(p["cpu"], 100.0), 1)
+        entry["active"] = len(procs)
+        entry["processes"] = procs[:TOP_PER_CORE]
+        result.append(entry)
+
+    return {"count": len(result), "interval": round(interval, 2), "per_core": result}
+
+
+def _collect_cpu_cores(target):
+    try:
+        return parse_cpu_cores(run_ssh(target, CPU_CORE_COMMAND))
+    except Exception as e:
+        print(f"[SYSTEM] cpu cores failed target={target['name']} error={e}")
+        return {}
 
 
 def _parse_services(output):
@@ -384,6 +515,7 @@ def collect_web_system_info(config, target):
         "resource": _collect_resource(target),
         "services": _collect_services(target),
         "processes": _collect_processes(target),
+        "cpu_cores": _collect_cpu_cores(target),
         "system_events": _collect_events(target),
     }
 
@@ -412,6 +544,7 @@ def collect_web_system_info(config, target):
         f"[SYSTEM OK] {name} "
         f"services={len(result['services'])} "
         f"processes={len(result['processes'])} "
+        f"cores={result['cpu_cores'].get('count', 0)} "
         f"events={len(result['system_events'])} "
         f"history_pruned={pruned}"
     )

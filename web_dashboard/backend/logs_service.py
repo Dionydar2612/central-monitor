@@ -21,6 +21,11 @@ log เป็นของเครื่องไหน?
             - จำนวนต่อ level/type บนปุ่มตัวกรอง    get_log_stats
           ผลสแกนเก็บ cache สั้น ๆ (SCAN_TTL วินาที) ไม่ให้ยิง OpenSearch ซ้ำทุกคำขอ
 
+ไม่แสดง INFO
+    ระบบไม่เก็บ INFO แล้ว (puller ตัดทิ้ง) แต่ใน OpenSearch อาจยังมี INFO เก่าค้างอยู่จนกว่า
+    index จะหมดอายุ -> _light_entry ตัด INFO ทิ้งทุกครั้ง หน้าเว็บจึงเห็นแค่ ERROR / WARN
+    INFO ดูได้จากปุ่ม "Load INFO log" -> get_info_logs (ดึงสดผ่าน puller ไม่เก็บ)
+
 เวลาของ log (timestamp)
     ใช้ @timestamp ถ้าถูกต้อง ถ้าเป็น 1970 (otel อ่านเวลาไม่ได้) ใช้เวลาจากต้นข้อความ
     ถ้ายังไม่ได้ ใช้เวลาดึงไฟล์ (อยู่ในชื่อไฟล์ buffer) แทน -> ไม่ตกไปท้ายรายการ
@@ -37,8 +42,8 @@ import re
 import time
 from datetime import datetime, timezone
 
-from clients import opensearch_request
-from log_levels import LEVELS, detect_log_level
+from clients import opensearch_request, puller_info_logs
+from log_levels import detect_log_level
 from metrics_service import get_metrics_at_time
 from settings import resolve_web_name
 from system_state import load_system_snapshot_at
@@ -69,6 +74,9 @@ _BODY_TS = re.compile(
 _FILE_TS = re.compile(r"__(\d{8}T\d{6}Z)__")
 
 _SCAN_CACHE = {}     # web -> (หมดอายุเมื่อ, [entry])
+
+# ระดับที่เก็บ/แสดงจาก OpenSearch (INFO ไม่เก็บ ดูได้เฉพาะตอนกด Load INFO log)
+LEVELS = ("ERROR", "WARN")
 
 
 # ---------------------------------------------------------------------------
@@ -146,13 +154,17 @@ def _light_entry(web, marker, hit):
     if marker not in str(filename or ""):
         return None
 
+    level = detect_log_level(body)
+    if level not in LEVELS:          # INFO เก่าที่ค้างใน OpenSearch -> ไม่แสดง
+        return None
+
     return {
         "id": hit.get("_id"),
         "index": hit.get("_index"),
         "timestamp": timestamp,
         "_ts": to_unix(timestamp) or 0.0,
         "web": web,
-        "level": detect_log_level(body),
+        "level": level,
         "type": resource.get("log.source", "") or "application",
         "message": body,
         "source_file": filename,
@@ -343,7 +355,7 @@ def get_log_markers(web, start, end, limit=500):
 def get_log_stats(web, start=None, end=None):
     """จำนวน log แยกตาม level และ type  -> ใช้เป็นตัวเลขบนปุ่มตัวกรอง
 
-    {"levels": {"ERROR": 3, "WARN": 1, "INFO": 120}, "types": {"application": 90, ...}, "total": 124}
+    {"levels": {"ERROR": 3, "WARN": 1}, "types": {"application": 3, ...}, "total": 4}
     """
     levels = {name: 0 for name in LEVELS}
     types = {}
@@ -355,6 +367,39 @@ def get_log_stats(web, start=None, end=None):
         types[entry["type"]] = types.get(entry["type"], 0) + 1
 
     return {"levels": levels, "types": types, "total": len(entries)}
+
+
+def get_info_logs(web, lines=500, source=None, start=None, end=None):
+    """INFO สดจากเครื่อง (ผ่าน puller/ondemand.py) - แสดงอย่างเดียว ไม่เก็บ ไม่ cache
+
+    คืน {"entries": [...แถวรูปแบบเดียวกับ get_logs...], "errors": [...]}
+    puller ติดต่อไม่ได้ -> raise (api.py ตอบ 502)
+    """
+    params = {"target": resolve_web_name(web), "lines": int(lines)}
+    if source:
+        params["source"] = source
+    if start is not None:
+        params["start"] = int(start)
+    if end is not None:
+        params["end"] = int(end)
+
+    result = puller_info_logs(params)
+
+    entries = []
+    for i, item in enumerate(result.get("entries") or []):
+        entries.append({
+            "id": f"info-{i}",
+            "on_demand": True,
+            "timestamp": item.get("timestamp"),
+            "web": web,
+            "level": "INFO",
+            "type": item.get("type") or "application",
+            "message": item.get("message", ""),
+            "source_file": item.get("source_file"),
+            "correlated_metrics": {},
+        })
+
+    return {"entries": entries, "errors": result.get("errors") or [], "lines": result.get("lines")}
 
 
 def get_problem_count(web):

@@ -8,7 +8,8 @@
 #   source                         receiver            log.source (ใช้กรอง Type ในหน้าเว็บ)
 #   logapp                         filelog/logapp      logapp
 #   loginuser, auth                filelog/loginuser   loginuser
-#   application, system, kernel    filelog/application application
+#   application, system, kernel,   filelog/application application
+#   journal
 #   ชื่ออื่นทั้งหมด                  filelog/other       other      <- กันไฟล์ที่ไม่มี parser ถูกลบทิ้งเงียบ ๆ
 #
 # เวลาของ log (@timestamp)
@@ -132,6 +133,7 @@ receivers:
       - /data/buffer/*__application__*.log
       - /data/buffer/*__system__*.log
       - /data/buffer/*__kernel__*.log
+      - /data/buffer/*__journal__*.log
 
     start_at: beginning
     include_file_name: true
@@ -179,6 +181,7 @@ receivers:
       - /data/buffer/*__application__*.log
       - /data/buffer/*__system__*.log
       - /data/buffer/*__kernel__*.log
+      - /data/buffer/*__journal__*.log
 
     start_at: beginning
     include_file_name: true

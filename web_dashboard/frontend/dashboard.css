@@ -896,3 +896,37 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .chtip .lg{margin-top:4px;padding-top:4px;border-top:1px solid var(--line);color:var(--mut)}
 .chtip .msg{display:block;color:var(--mut);font-size:11px;line-height:1.35;word-break:break-word}
 .chhint{font-size:12px;color:var(--mut);margin-top:4px}
+
+/* ---- คำอธิบายใต้กราฟ System Load (เช่น แท็บ Load) ---- */
+.chnote{font-size:12.5px;color:var(--mut);margin-top:8px;line-height:1.5}.chnote:empty{display:none}.chnote b{color:var(--ink)}
+
+/* ---- KPI Disk: รายการ mount point ---- */
+.mnts{margin-top:6px;display:grid;gap:3px;font-size:12px;max-width:100%}
+.mnts div{display:grid;grid-template-columns:minmax(40px,auto) 1fr 40px;gap:6px;align-items:center;color:var(--mut)}
+.mnts code{font-family:inherit;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
+.mnts u{display:block;height:4px;border-radius:2px;background:var(--chip);text-decoration:none;overflow:hidden;min-width:30px}
+.mnts u i{display:block;height:100%;background:var(--blue)}.mnts .wr u i{background:#f5a524}.mnts .cr u i{background:#e5484d}
+.mnts b{font-weight:600;text-align:right;color:var(--ink)}
+.k.dk{flex-wrap:wrap}.k.dk>div:first-child{flex:1;min-width:0}.k.dk .mnts{flex-basis:100%;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.mnts code{max-width:160px}
+
+/* ---- CPU process per CPU core ---- */
+.cpuw{grid-template-columns:2fr 1fr}
+.coremeta{font-size:12px;color:var(--mut);margin:4px 0 10px}
+.cores{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;max-height:460px;overflow:auto}
+.core{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
+.core h3{margin:0 0 6px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
+.core h3 span{color:var(--mut);font-weight:400}
+.core.wr{border-color:#f5a524}.core.cr{border-color:#e5484d}
+.core .sub{color:var(--mut);font-size:12px;margin:4px 0 6px}
+.core ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.core li{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center}
+.core li em{font-style:normal;color:var(--mut);font-size:11px}
+.core li .bar{grid-column:1/-1}.core li .bar u{min-width:40px}
+.core .idle{color:var(--mut);font-size:12px}
+
+/* ---- ปุ่ม Load INFO log ---- */
+.infold{display:inline-flex;gap:6px;align-items:center}
+.infold select{font:inherit;font-size:13px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 6px}
+.lv.info{color:var(--mut)}
+@media(max-width:900px){.cpuw{grid-template-columns:1fr}}

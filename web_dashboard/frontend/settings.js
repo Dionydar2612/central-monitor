@@ -88,7 +88,7 @@ function logRow(item) {
     };
     return el("div", { class: "st-logrow" },
         mk("n", "name", "name", item.name, "application", "logNames"),
-        mk("p", "path", "path", item.path, "/var/log/myapp/app.log"),
+        mk("p", "path", "path", item.path, "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
         mk("t", "type", "type", item.type || "application", "application"),
         el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"));
 }
@@ -188,6 +188,7 @@ function renderSetup() {
 sudo apt install -y prometheus-node-exporter && sudo systemctl enable --now prometheus-node-exporter
 sudo adduser --disabled-password --gecos "" ${user}
 sudo usermod -aG adm ${user}          # ให้อ่านไฟล์ log ใน /var/log ได้ (ปรับตามจริง)
+sudo usermod -aG systemd-journal ${user}   # ให้อ่าน journal (journalctl) ได้ ถ้าใช้ journal log
 sudo -u ${user} mkdir -p /home/${user}/.ssh
 echo '${pub}' | sudo -u ${user} tee -a /home/${user}/.ssh/authorized_keys
 sudo chmod 700 /home/${user}/.ssh && sudo chmod 600 /home/${user}/.ssh/authorized_keys
@@ -266,12 +267,13 @@ async function logout() {
 
 document.addEventListener("DOMContentLoaded", () => {
     const dl = el("datalist", { id: "logNames" });
-    ["application", "logapp", "loginuser"].forEach(v => dl.append(el("option", { value: v })));
+    ["application", "logapp", "loginuser", "journal"].forEach(v => dl.append(el("option", { value: v })));
     document.body.append(dl);
     $("addBtn").onclick = () => openForm(null);
     $("cancelBtn").onclick = closeForm;
     $("saveBtn").onclick = save;
     $("addLog").onclick = () => $("logs").append(logRow(null));
+    $("addJournal").onclick = () => $("logs").append(logRow({ name: "journal", path: "journal", type: "system" }));
     $("scanBtn").onclick = scanHostKey;
     $("copyCmd").onclick = copySetup;
     $("deployBtn").onclick = deployNow;

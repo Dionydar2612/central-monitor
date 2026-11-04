@@ -39,6 +39,8 @@ storage:
   cleanup_interval: 10m       # cleaner ตรวจ/ลบทุกกี่เวลา
   system_history_retention: 7d  # เก็บสถานะเครื่องย้อนหลัง (data/state/system/history/)
                                 #   ใช้ตอนคลิกดู log เก่าแล้วอยากเห็น service/process ณ เวลานั้น
+  store_info_logs: false        # false = ไม่เก็บ log ระดับ INFO (puller ตัดทิ้งก่อนส่งเข้า OpenSearch)
+                                #   ดู INFO ได้จากปุ่ม "Load INFO log" ในหน้า dashboard (ดึงสดตอนกด ไม่เก็บ)
 
 # ---------------------------------------------------------------------
 # targets = เครื่องที่ต้องการดึงข้อมูล
@@ -56,7 +58,10 @@ storage:
 #       user: central-pull      # user (read-only) ที่ปลายทาง
 #     logs:                     # ไฟล์ log ที่ต้องการดึง
 #       - name: system          # ชนิด log -> เลือก parser ใน otel (application, system, auth, kernel, logapp,
-#         path: /var/log/syslog #   loginuser; ชื่ออื่น = other)  path = ไฟล์เดียวหรือ wildcard /dir/*.log
+#         path: /var/log/syslog #   loginuser, journal; ชื่ออื่น = other)  path = ไฟล์เดียวหรือ wildcard /dir/*.log
 #         type: application     # หมวดหมู่ (ไว้บอกประเภท ไม่มีผลกับการดึง)
+#       - name: journal         # systemd journal (journalctl) แทนไฟล์
+#         path: journal         #   journal = ทั้งเครื่อง, journal:nginx.service,ssh.service = เฉพาะ unit
+#         type: system          #   user ปลายทางต้องอยู่กลุ่ม systemd-journal (หรือ adm)
 # ---------------------------------------------------------------------
 targets: []

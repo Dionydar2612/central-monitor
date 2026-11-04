@@ -71,6 +71,7 @@ def _flatten(raw):
 
     flat["services"] = raw.get("services", [])
     flat["processes"] = raw.get("processes", [])
+    flat["cpu_cores"] = raw.get("cpu_cores") or {}
     flat["system_events"] = raw.get("system_events", [])
     flat["system_timestamp"] = raw.get("timestamp")
 

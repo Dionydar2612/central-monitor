@@ -9,8 +9,13 @@ log_puller.py - ดึง log จากเครื่อง web มาวาง
          ขนาด = checkpoint  = ไม่มี log ใหม่   -> จบ
     3. SSH `tail -c +N | head -c M` -> ดึงเฉพาะส่วนที่โตขึ้น
     4. ตัดให้เหลือเฉพาะ "บรรทัดที่จบสมบูรณ์" (ไม่ส่งบรรทัดที่เขียนค้างอยู่)
-    5. เขียนไฟล์ใน data/buffer แบบ atomic (.tmp -> rename)
-    6. อัปเดต checkpoint (หลังเขียนไฟล์สำเร็จเท่านั้น -> ไม่มี log หาย)
+    5. ตัด log ระดับ INFO ทิ้ง (log_filter.drop_info) -> INFO ไม่ถูกเก็บ/ไม่เข้า OpenSearch
+       (ดู INFO ได้จากปุ่ม "Load INFO log" ที่หน้าเว็บ ซึ่งดึงสดเฉพาะตอนสั่ง -> ondemand.py)
+    6. เขียนไฟล์ใน data/buffer แบบ atomic (.tmp -> rename)  (ถ้าเหลือ 0 รายการ ไม่เขียนไฟล์)
+    7. อัปเดต checkpoint (หลังเขียนไฟล์สำเร็จเท่านั้น -> ไม่มี log หาย)
+
+journal (logs[].path = journal หรือ journal:<unit>)
+    ใช้ pull_journal แทน: จำตำแหน่งด้วย cursor ของ journal แทน byte offset (ดู journal.py)
 
 ชื่อไฟล์ใน buffer (otel เลือกอ่านตามชื่อนี้ ห้ามเปลี่ยนรูปแบบ)
     <site>__<เครื่อง>__<source>__<เวลา UTC>__<offsetเริ่ม>-<offsetจบ>__<pull_id>.log
@@ -36,8 +41,10 @@ import os
 import time
 from datetime import datetime, timezone
 
+import journal
 from checkpoint import save_state
-from config import BUFFER_DIR
+from config import BUFFER_DIR, parse_interval
+from log_filter import drop_info, store_info_enabled
 from metrics import (
     ssh_pull_bytes_total,
     ssh_pull_duration_seconds,
@@ -48,7 +55,7 @@ from metrics import (
     ssh_pull_sources_total,
     ssh_pull_success,
 )
-from ssh_client import list_remote_files, remote_stat, run_ssh_bytes
+from ssh_client import list_remote_files, remote_stat, run_ssh, run_ssh_bytes
 
 WILDCARD_CHARS = ("*", "?", "[")
 
@@ -71,6 +78,101 @@ def make_pull_id(source_id, start_offset, end_offset):
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
+def _write_buffer(config, target_name, source_name, source_id, start_offset, end_offset, data):
+    """เขียนก้อน log ลง data/buffer แบบ atomic คืน (path, pull_id)"""
+    site = config["site"]["name"]
+    pull_id = make_pull_id(source_id, start_offset, end_offset)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    filename = (
+        f"{site}__"
+        f"{target_name.replace('/', '_')}__"
+        f"{source_name.replace('/', '_')}__"
+        f"{timestamp}__"
+        f"{start_offset}-{end_offset}__"
+        f"{pull_id}.log"
+    )
+
+    output_file = os.path.join(BUFFER_DIR, filename)
+    tmp_file = output_file + ".tmp"
+
+    # เขียน .tmp -> fsync -> rename : otel จะไม่เห็นไฟล์ที่เขียนไม่เสร็จ
+    # (otel อ่านเฉพาะ *.log ไม่อ่าน *.tmp)
+    with open(tmp_file, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(tmp_file, output_file)
+    return output_file, pull_id
+
+
+# ---------------------------------------------------------------------------
+# ดึง journal (systemd) 1 รายการ
+# ---------------------------------------------------------------------------
+
+def pull_journal(config, target, log_source, state):
+    """ดึง journal ต่อจาก cursor เดิม -> data/buffer (ไม่เก็บ INFO ถ้าไม่ได้เปิด store_info_logs)"""
+    target_name = target["name"]
+    source_name = log_source["name"]
+    path = log_source["path"]
+    source_id = make_source_id(target, log_source)
+
+    previous = state.get(source_id, {})
+    cursor = previous.get("cursor")
+    store_info = store_info_enabled(config)
+
+    since = None
+    if not cursor:
+        interval = config.get("scheduler", {}).get("interval", "1h")
+        since = time.time() - parse_interval(interval)
+
+    print(f"[PULL] {target_name}/{source_name} journal cursor={'yes' if cursor else 'none'}")
+
+    command = journal.build_command(
+        path,
+        cursor=cursor,
+        since=since,
+        priority=None if store_info else journal.STORE_PRIORITY,
+        limit=journal.MAX_ENTRIES_PER_PULL,
+    )
+    entries = journal.parse_output(run_ssh(target, command))
+    entries = [e for e in entries if e.get("cursor")]
+
+    if not entries:
+        print(f"[NO CHANGE] {source_id}")
+        return
+
+    start_offset = int(previous.get("offset", 0))
+    end_offset = start_offset + len(entries)
+
+    lines = [e["line"] for e in entries if store_info or e["level"] != "INFO"]
+    data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
+
+    output_file, pull_id = None, previous.get("last_pull_id")
+    if data:
+        output_file, pull_id = _write_buffer(
+            config, target_name, source_name, source_id, start_offset, end_offset, data
+        )
+
+    state[source_id] = {
+        "target": target_name,
+        "source": source_name,
+        "path": path,
+        "cursor": entries[-1]["cursor"],
+        "offset": end_offset,
+        "last_pull_id": pull_id,
+        "last_file": output_file or previous.get("last_file"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_state(state)
+
+    ssh_pull_bytes_total.labels(target=target_name, source=source_name).inc(len(data))
+    ssh_pull_records_total.labels(target=target_name, source=source_name).inc(len(lines))
+
+    print(f"[OK] journal {target_name}/{source_name} entries={len(entries)} stored={len(lines)}")
+
+
 # ---------------------------------------------------------------------------
 # ดึง 1 ไฟล์
 # ---------------------------------------------------------------------------
@@ -85,7 +187,8 @@ def pull_log(config, target, log_source, state):
 
     raise Exception เมื่อ SSH ล้มเหลว/ดึงได้ไม่ครบ -> ตัวเรียก (pull_target) จะ retry
     """
-    site = config["site"]["name"]
+    if journal.is_journal(log_source["path"]):
+        return pull_journal(config, target, log_source, state)
 
     target_name = target["name"]
     source_name = log_source["name"]
@@ -141,29 +244,16 @@ def pull_log(config, target, log_source, state):
     data = data[: last_newline + 1]
     end_offset = start_offset + len(data)
 
-    pull_id = make_pull_id(source_id, start_offset, end_offset)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # ไม่เก็บ INFO (ตั้ง storage.store_info_logs: true ถ้าต้องการเก็บ)
+    dropped = 0
+    if not store_info_enabled(config):
+        data, _, dropped = drop_info(data)
 
-    filename = (
-        f"{site}__"
-        f"{target_name.replace('/', '_')}__"
-        f"{source_name.replace('/', '_')}__"
-        f"{timestamp}__"
-        f"{start_offset}-{end_offset}__"
-        f"{pull_id}.log"
-    )
-
-    output_file = os.path.join(BUFFER_DIR, filename)
-    tmp_file = output_file + ".tmp"
-
-    # เขียน .tmp -> fsync -> rename : otel จะไม่เห็นไฟล์ที่เขียนไม่เสร็จ
-    # (otel อ่านเฉพาะ *.log ไม่อ่าน *.tmp)
-    with open(tmp_file, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-
-    os.replace(tmp_file, output_file)
+    output_file, pull_id = None, state.get(source_id, {}).get("last_pull_id")
+    if data:
+        output_file, pull_id = _write_buffer(
+            config, target_name, source_name, source_id, start_offset, end_offset, data
+        )
 
     # อัปเดต checkpoint "หลัง" ไฟล์อยู่ใน buffer แล้วเท่านั้น
     # ถ้าดับก่อนบรรทัดนี้ จะดึงซ้ำรอบหน้า (ซ้ำดีกว่าหาย)
@@ -174,7 +264,7 @@ def pull_log(config, target, log_source, state):
         "offset": end_offset,
         "last_size": remote_size,
         "last_pull_id": pull_id,
-        "last_file": output_file,
+        "last_file": output_file or state.get(source_id, {}).get("last_file"),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     save_state(state)
@@ -184,7 +274,7 @@ def pull_log(config, target, log_source, state):
     ssh_pull_bytes_total.labels(target=target_name, source=source_name).inc(len(data))
     ssh_pull_records_total.labels(target=target_name, source=source_name).inc(lines)
 
-    print(f"[OK] {output_file} bytes={len(data)} lines={lines}")
+    print(f"[OK] {output_file or '(no file: all INFO)'} bytes={len(data)} lines={lines} info_dropped={dropped}")
     print(f"[CHECKPOINT] {source_id} = {end_offset}")
 
 
@@ -201,7 +291,7 @@ def _expand_sources(target, log_source):
     """
     path = log_source["path"]
 
-    if not any(ch in path for ch in WILDCARD_CHARS):
+    if journal.is_journal(path) or not any(ch in path for ch in WILDCARD_CHARS):
         return [log_source]
 
     remote_files = list_remote_files(target, path)

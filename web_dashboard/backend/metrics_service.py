@@ -23,7 +23,7 @@ metrics_service.py - ตัวชี้วัด CPU / Memory / Disk / Network �
     - ผู้เรียก: api.py, logs_service.py
 """
 
-from clients import prom_value, prometheus_query_range
+from clients import prom_value, prom_vector, prometheus_query_range
 from settings import (
     CENTRAL_NODE_INSTANCE,
     CENTRAL_NODE_JOB,
@@ -74,23 +74,37 @@ def _labels(config):
 #   หน่วย: CPU/Memory/Disk/io_util = เปอร์เซ็นต์, disk_*/net_*/io = MB/s
 # ---------------------------------------------------------------------------
 
-# "/" ที่เป็นดิสก์จริง (ตัด tmpfs และ overlay ของ container ออก)
-_ROOT_FS = 'mountpoint="/",fstype!~"tmpfs|overlay"'
+# mount point ที่เป็นดิสก์จริง (ตัด filesystem เสมือน/ชั่วคราว และ mount ของ container/snap ออก)
+_REAL_FS = (
+    'fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|nsfs|autofs|efivarfs|fuse.lxcfs",'
+    'mountpoint!~"/(run|snap|var/lib/docker|var/lib/kubelet|var/lib/containerd)(/.*)?"'
+)
+
+
+def _disk_used_pct(l):
+    return (
+        f"(1 - node_filesystem_avail_bytes{{{l},{_REAL_FS}}} / "
+        f"node_filesystem_size_bytes{{{l},{_REAL_FS}}}) * 100"
+    )
+
 
 PROMQL = {
-    # CPU % = 100 - เวลา idle เฉลี่ย
+    # CPU average 5m (%) = 100 - เวลา idle เฉลี่ยทุก core ย้อนหลัง 5 นาที
     "cpu": lambda l: (
         f'100 - (avg by(instance) (rate(node_cpu_seconds_total{{{l},mode="idle"}}[5m])) * 100)'
+    ),
+    # CPU % แยกทีละ core (เฉลี่ย 5 นาที) -> การ์ด "CPU process per CPU core"
+    "cpu_core": lambda l: (
+        f'100 - (avg by(cpu) (rate(node_cpu_seconds_total{{{l},mode="idle"}}[5m])) * 100)'
     ),
     # Memory % = 1 - available/total
     "memory": lambda l: (
         f"(1 - node_memory_MemAvailable_bytes{{{l}}} / node_memory_MemTotal_bytes{{{l}}}) * 100"
     ),
-    # Disk % ของ "/"
-    "disk": lambda l: (
-        f"(1 - node_filesystem_avail_bytes{{{l},{_ROOT_FS}}} / "
-        f"node_filesystem_size_bytes{{{l},{_ROOT_FS}}}) * 100"
-    ),
+    # Disk Usage % = mount point ที่เต็มที่สุด (ใช้กับตัวเลขใหญ่ / กราฟ / สถานะเครื่อง)
+    "disk": lambda l: f"max({_disk_used_pct(l)})",
+    # Disk Usage % แยกทีละ mount point
+    "disk_mount": _disk_used_pct,
     "disk_read": lambda l: (
         f"sum(rate(node_disk_read_bytes_total{{{l}}}[5m])) / 1024 / 1024"
     ),
@@ -150,6 +164,40 @@ def _round(value):
     return round(value, 2) if value is not None else None
 
 
+def _finite(value):
+    return value is not None and value == value and value not in (float("inf"), float("-inf"))
+
+
+def get_disk_mounts(labels):
+    """[{mountpoint, device, fstype, used}] เรียงจากเต็มมากไปน้อย (mount ซ้ำ -> เอาอันแรก)"""
+    seen, out = set(), []
+    for metric, value in prom_vector(PROMQL["disk_mount"](labels)):
+        mount = metric.get("mountpoint", "?")
+        if mount in seen or not _finite(value):
+            continue
+        seen.add(mount)
+        out.append({
+            "mountpoint": mount,
+            "device": metric.get("device"),
+            "fstype": metric.get("fstype"),
+            "used": round(value, 2),
+        })
+    return sorted(out, key=lambda m: m["used"], reverse=True)
+
+
+def get_cpu_per_core(labels):
+    """[{core, usage}] CPU % ต่อ core (เฉลี่ย 5 นาที จาก Prometheus) เรียงตามเลข core"""
+    out = []
+    for metric, value in prom_vector(PROMQL["cpu_core"](labels)):
+        try:
+            core = int(metric.get("cpu"))
+        except (TypeError, ValueError):
+            continue
+        if _finite(value):
+            out.append({"core": core, "usage": round(value, 2)})
+    return sorted(out, key=lambda c: c["core"])
+
+
 # ---------------------------------------------------------------------------
 # 1) ค่าตอนนี้
 # ---------------------------------------------------------------------------
@@ -188,6 +236,9 @@ def get_current_metrics(web):
                  "net_rx", "net_tx", "io_util"):
         metrics[name] = _round(prom_value(PROMQL[name](labels)))
 
+    metrics["disk_mounts"] = get_disk_mounts(labels)
+    metrics["cpu_per_core"] = get_cpu_per_core(labels)
+
     # io = อ่าน + เขียน (ถ้ามีฝั่งใดฝั่งหนึ่ง)
     if metrics["disk_read"] is not None or metrics["disk_write"] is not None:
         metrics["io"] = round(
@@ -203,6 +254,7 @@ def get_current_metrics(web):
 
     metrics["services"] = system.get("services", [])
     metrics["processes"] = system.get("processes", [])
+    metrics["cpu_cores"] = system.get("cpu_cores") or {}
     metrics["system_events"] = system.get("system_events", [])
     metrics["system_timestamp"] = system.get("system_timestamp")
 
