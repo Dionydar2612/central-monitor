@@ -310,7 +310,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:9090:9090"
+      # พอร์ตบน host ไว้เปิด Prometheus UI เอง (central-api ใช้ทาง network ภายใน ไม่ผ่านพอร์ตนี้)
+      # ถ้าเครื่องมี Prometheus ตัวอื่นใช้ 9090 อยู่แล้ว ตั้ง PROMETHEUS_HOST_PORT=9091 ใน docker/.env
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       - ../metrics/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../data/prometheus:/etc/prometheus/targets:ro
