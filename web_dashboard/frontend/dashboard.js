@@ -735,7 +735,6 @@ const S = {
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
-    withMetrics: loadWithMetrics(),        // ตาราง Logs: เฉพาะ log ที่มี Metrics at time (ค่าเริ่มต้น = แสดงทั้งหมด, จำใน browser)
     showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
     sel: new Map(), logRows: []            // log ที่ติ๊กเลือกไว้ (id -> แถว) + แถวที่แสดงอยู่
 };
@@ -875,9 +874,6 @@ function itemBucket(x, isCheck) {
 }
 const BUCKET_PILL = { dn: ["▼", "Down / Problem"], wr: ["W", "Warning"], ok: ["✓", "OK"], ps: ["II", "Paused"], na: ["?", "Unknown"] };
 
-function loadWithMetrics() {
-    try { return localStorage.getItem("cm.logsWithMetrics") === "1"; } catch (e) { return false; }
-}
 function loadShowAcked() {
     try { return localStorage.getItem("cm.logsShowAcked") === "1"; } catch (e) { return false; }
 }
@@ -1630,7 +1626,6 @@ function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ we
 
 function logUrl() {
     const p = logRange(new URLSearchParams({ web: S.web, size: "300" }));
-    if (S.withMetrics) p.set("with_metrics", "1");
     if (S.showAcked) p.set("acked", "1");
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
@@ -1992,7 +1987,6 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#infoBtn").addEventListener("click", loadInfo);
     q("#logSearch").addEventListener("submit", e => { e.preventDefault(); runSearch(false); });
     q("#logClear").addEventListener("click", clearSearch);
-    q("#withMetrics").checked = S.withMetrics;
     q("#showAcked").checked = S.showAcked;
     q("#showAcked").addEventListener("change", e => {
         S.showAcked = e.target.checked;
@@ -2007,11 +2001,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     q("#ackSel").addEventListener("click", () => ackLogs(true));
     q("#unackSel").addEventListener("click", () => ackLogs(false));
-    q("#withMetrics").addEventListener("change", e => {
-        S.withMetrics = e.target.checked;
-        try { localStorage.setItem("cm.logsWithMetrics", S.withMetrics ? "1" : "0"); } catch (err) { /* ignore */ }
-        reloadLogs();
-    });
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {

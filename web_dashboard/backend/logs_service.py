@@ -43,9 +43,9 @@ import time
 from datetime import datetime, timezone
 
 import log_ack_service
-from clients import opensearch_request, puller_info_logs
+from clients import opensearch_request, prometheus_query_range, puller_info_logs
 from log_levels import detect_log_level
-from metrics_service import get_metrics_at_time
+from metrics_service import _labels, get_metrics_at_time, get_web_prometheus_config
 from settings import resolve_web_name
 from system_state import load_system_snapshot_at
 from timeutil import to_unix
@@ -172,6 +172,62 @@ def _light_entry(web, marker, hit):
     }
 
 
+# ---------------------------------------------------------------------------
+# แสดงเฉพาะ log ที่มี metrics (Prometheus มีข้อมูลของเครื่อง ณ เวลานั้น)
+# log ที่ไม่มี metrics = เก่ากว่าที่ Prometheus เก็บ / เครื่องที่ Prometheus ไม่ได้เก็บ / ช่วงที่ exporter ล่ม
+#   -> ไม่แสดงและไม่นับเลย (ยังอยู่ใน OpenSearch จนหมดอายุตามปกติ)
+# ถามว่า "นาทีไหนมีข้อมูล" ด้วย range query ครั้งเดียวต่อเครื่อง แทนการถามทีละแถว
+# ---------------------------------------------------------------------------
+_MINUTES_CACHE = {}           # web -> (หมดอายุ, t0, t1, set ของนาทีที่มีข้อมูล)
+MINUTES_TTL = 60
+PRESENCE_QUERY = "count(node_memory_MemTotal_bytes{%s})"
+
+
+def _metric_minutes(web, t0, t1):
+    """set ของนาที (unix // 60) ในช่วง t0..t1 ที่ Prometheus มีข้อมูลของเครื่อง  None = ถาม Prometheus ไม่ได้"""
+    now = time.time()
+    hit = _MINUTES_CACHE.get(web)
+    if hit and hit[0] > now and hit[1] <= t0 and hit[2] >= min(t1, hit[0] - MINUTES_TTL):
+        return hit[3]
+    config = get_web_prometheus_config(web)
+    if not config:
+        return set()
+    t0 = int(t0 // 60 * 60)
+    t1 = int(min(t1, now) // 60 * 60 + 60)
+    minutes = set()
+    try:
+        start = t0
+        while start <= t1:                          # Prometheus รับไม่เกิน 11000 จุดต่อครั้ง
+            end = min(t1, start + 10000 * 60)
+            res = prometheus_query_range(PRESENCE_QUERY % _labels(config), start, end, 60)
+            for series in (res.get("data") or {}).get("result", []):
+                minutes.update(int(float(ts)) // 60 for ts, _ in series.get("values", []))
+            start = end + 60
+    except Exception as e:
+        print("[LOGS] metrics presence error:", repr(e))
+        return hit[3] if hit else None
+    _MINUTES_CACHE[web] = (now + MINUTES_TTL, t0, t1, minutes)
+    return minutes
+
+
+def _with_metrics(entries, web):
+    """เอาเฉพาะ log ที่มี metrics ณ เวลานั้น (Prometheus ล่ม/ถามไม่ได้ -> แสดงทั้งหมด ดีกว่าหายหมด)"""
+    stamps = [e["_ts"] for e in entries if e.get("_ts")]
+    if not stamps:
+        return []
+    minutes = _metric_minutes(web, min(stamps), max(stamps))
+    if minutes is None:
+        return entries
+    return [e for e in entries if e.get("_ts") and
+            (int(e["_ts"]) // 60 in minutes or int(e["_ts"]) // 60 + 1 in minutes)]
+
+
+def _visible(web, include_acked=False):
+    """log ที่แสดงได้: มี metrics + (ยังไม่ acknowledge)"""
+    entries = _with_metrics(_scan(web), web)
+    return entries if include_acked else _not_acked(entries)
+
+
 def _not_acked(entries):
     """ตัด log ที่ acknowledge แล้วออก (log_ack_service)"""
     acks = log_ack_service.load()
@@ -256,7 +312,6 @@ def _in_range(entry, start, end):
     return (start is None or entry["_ts"] >= start) and (end is None or entry["_ts"] <= end)
 
 
-MAX_METRIC_CHECKS = 1500       # with_metrics: ตรวจ metrics ได้สูงสุดกี่แถวต่อคำขอ (กันช้า)
 
 
 def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_metrics=False,
@@ -265,8 +320,7 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
 
     levels : เช่น "ERROR,WARN" หรือ ["ERROR"]  (ว่าง = ทุกระดับ)
     types  : เช่น "application,loginuser"      (ว่าง = ทุกชนิด)  = resource["log.source"]
-    with_metrics : True = เอาเฉพาะ log ที่มี "Metrics at time" (Prometheus มีข้อมูลของเครื่อง ณ เวลานั้น)
-                   log ที่ไม่มี metrics มักเป็น log เก่ากว่าที่ Prometheus เก็บไว้ หรือเครื่องที่ Prometheus ไม่ได้เก็บ
+    with_metrics : ไม่ใช้แล้ว (คงไว้ให้เรียกแบบเดิมได้) -> แสดงเฉพาะ log ที่มี metrics เสมอ (_visible)
     """
     wanted_levels = _clean_levels(levels)
 
@@ -275,9 +329,8 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
     wanted_types = {str(t).strip() for t in (types or []) if str(t).strip()} or None
 
     output = []
-    checked = 0
 
-    for entry in (_scan(web) if include_acked else _not_acked(_scan(web))):
+    for entry in _visible(web, include_acked):
         if not _in_range(entry, start, end):
             continue
 
@@ -286,13 +339,6 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
 
         if wanted_types and entry["type"] not in wanted_types:
             continue
-
-        if with_metrics:
-            checked += 1
-            if checked > MAX_METRIC_CHECKS:
-                break
-            if not _metrics_cached(entry["timestamp"], entry["web"]):
-                continue
 
         output.append(entry)
 
@@ -359,7 +405,7 @@ def get_log_detail(web, log_id):
 def get_log_markers(web, start, end, limit=500):
     """จุด ERROR/WARN บนเส้นเวลาของกราฟ (ไม่แนบ metrics -> เบา) ใหม่ -> เก่า ไม่เกิน limit"""
     out = []
-    for entry in _not_acked(_scan(web)):
+    for entry in _visible(web):
         if entry["level"] not in ("ERROR", "WARN") or not _in_range(entry, start, end):
             continue
         out.append({
@@ -384,7 +430,7 @@ def get_log_stats(web, start=None, end=None):
     levels = {name: 0 for name in LEVELS}
     types = {}
 
-    in_range = [e for e in _scan(web) if _in_range(e, start, end)]
+    in_range = [e for e in _visible(web, include_acked=True) if _in_range(e, start, end)]
     entries = _not_acked(in_range)
     acked = len(in_range) - len(entries)
 
@@ -493,7 +539,14 @@ def search_logs(query, web=None, levels=None, types=None, start=None, end=None, 
             "source_file": filename,
             "correlated_metrics": {},
             "ack": log_ack_service.load().get(hit.get("_id")),
+            "_ts": to_unix(timestamp) or 0.0,
         })
+
+    # เอาเฉพาะ log ที่มี metrics (แยกตามเครื่อง)
+    kept = []
+    for w in {e["web"] for e in out}:
+        kept += _with_metrics([e for e in out if e["web"] == w], w)
+    out = [{k: v for k, v in e.items() if k != "_ts"} for e in kept]
 
     out.sort(key=lambda e: to_unix(e["timestamp"]) or 0, reverse=True)
     return {"results": out[:size], "total": total, "matched": len(out),
@@ -535,10 +588,10 @@ def get_info_logs(web, lines=500, source=None, start=None, end=None):
 
 def get_problem_count(web):
     """จำนวน log ระดับ ERROR + WARN (ทั้งหมดที่สแกนได้)  -> ช่อง "Problem logs" """
-    return sum(1 for e in _not_acked(_scan(web)) if e["level"] in ("ERROR", "WARN"))
+    return sum(1 for e in _visible(web) if e["level"] in ("ERROR", "WARN"))
 
 
 def get_errors_15m(web):
     """จำนวน log ระดับ ERROR ที่เวลาของ log อยู่ใน 15 นาทีล่าสุด -> ช่อง "Errors 15m" """
     cutoff = time.time() - 15 * 60
-    return sum(1 for e in _not_acked(_scan(web)) if e["level"] == "ERROR" and e["_ts"] >= cutoff)
+    return sum(1 for e in _visible(web) if e["level"] == "ERROR" and e["_ts"] >= cutoff)
