@@ -735,7 +735,9 @@ const S = {
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
-    withMetrics: loadWithMetrics()         // ตาราง Logs: ซ่อน log ที่ไม่มี Metrics at time (ค่าเริ่มต้น = ซ่อน, จำใน browser)
+    withMetrics: loadWithMetrics(),        // ตาราง Logs: เฉพาะ log ที่มี Metrics at time (ค่าเริ่มต้น = แสดงทั้งหมด, จำใน browser)
+    showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
+    sel: new Map(), logRows: []            // log ที่ติ๊กเลือกไว้ (id -> แถว) + แถวที่แสดงอยู่
 };
 /* วัด process สดใหม่ทุกกี่ ms (ขณะเปิดหน้า) */
 const LIVE_EVERY = 60000;
@@ -874,7 +876,10 @@ function itemBucket(x, isCheck) {
 const BUCKET_PILL = { dn: ["▼", "Down / Problem"], wr: ["W", "Warning"], ok: ["✓", "OK"], ps: ["II", "Paused"], na: ["?", "Unknown"] };
 
 function loadWithMetrics() {
-    try { return localStorage.getItem("cm.logsWithMetrics") !== "0"; } catch (e) { return true; }
+    try { return localStorage.getItem("cm.logsWithMetrics") === "1"; } catch (e) { return false; }
+}
+function loadShowAcked() {
+    try { return localStorage.getItem("cm.logsShowAcked") === "1"; } catch (e) { return false; }
 }
 
 function loadClosedGroups() {
@@ -1552,11 +1557,37 @@ function setupServicePicker() {
 
 /* ตาราง Logs: 1 แถวต่อ log, คลิกแถว -> openLogDetail
    โหมด INFO (S.info): แสดงแถวที่โหลดสดจากปุ่ม Load INFO log (ไม่ได้มาจาก OpenSearch) */
+/* ตาราง Logs + Acknowledge
+   ติ๊กเลือกแถว (operator ขึ้นไป) -> "Acknowledge selected" = รับทราบแล้ว: log ถูกซ่อนจากตาราง/ตัวนับ/จุดบนกราฟ
+   (ยังอยู่ใน OpenSearch ตามอายุเดิม) ติ๊ก "Show acknowledged" เพื่อดูอีกครั้ง/ยกเลิก */
+function canAckLogs() { return canOperate() && !S.info; }
+function renderLogHead(selectable) {
+    q("#plogHead").innerHTML = `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th>Message</th><th>Metrics at time</th></tr>`;
+}
+function renderAckBar() {
+    const can = canAckLogs();
+    q("#ackBar").hidden = !can;
+    q("#showAckedWrap").hidden = !!S.info;
+    const sel = [...S.sel.values()], acked = sel.filter(p => p.ack).length;
+    q("#ackSel").disabled = sel.length - acked === 0;
+    q("#ackSel").textContent = sel.length - acked ? `Acknowledge selected (${sel.length - acked})` : "Acknowledge selected";
+    q("#unackSel").hidden = !acked;
+    q("#unackSel").textContent = `Unacknowledge (${acked})`;
+    const all = q("#selAll");
+    if (all) { all.checked = S.logRows.length > 0 && S.logRows.every(p => S.sel.has(p.id)); all.indeterminate = !all.checked && sel.length > 0; }
+}
+
 function renderProblems(list) {
     const tb = q("#plog");
     const filtered = S.lv !== "ALL" || S.lt !== "ALL";
+    const selectable = canAckLogs();
+    if (S.search && !S.showAcked && Array.isArray(list)) list = list.filter(p => !p.ack);
+    S.logRows = Array.isArray(list) ? list.filter(p => p.id) : [];
+    [...S.sel.keys()].forEach(id => { if (!S.logRows.some(p => p.id === id)) S.sel.delete(id); });
+    renderLogHead(selectable);
+    renderAckBar();
     if (!Array.isArray(list) || !list.length) {
-        tb.innerHTML = `<tr><td colspan="6" class="empty">${S.search ? "No logs match this search" : S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="${selectable ? 7 : 6}" class="empty">${S.search ? "No logs match this search" : S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
         setText("logCnt", "");
         renderLogStat(0);
         return;
@@ -1566,8 +1597,20 @@ function renderProblems(list) {
     renderLogStat(list.length);
     list.forEach(p => {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td><td>${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "-")}</td>`;
-        tr.addEventListener("click", () => openLogDetail(p));
+        if (p.ack) tr.className = "acked";
+        const ackTag = p.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${p.ack.by || "-"} · ${p.ack.at ? new Date(p.ack.at * 1000).toLocaleString("en-GB") : ""}${p.ack.note ? " · " + p.ack.note : ""}`)}">ACK</span>` : "";
+        const sel = selectable ? `<td class="sel">${p.id ? `<input type="checkbox" data-sel="${escapeHtml(p.id)}"${S.sel.has(p.id) ? " checked" : ""} aria-label="Select log">` : ""}</td>` : "";
+        tr.innerHTML = `${sel}<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}${ackTag}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td><td>${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "-")}</td>`;
+        tr.addEventListener("click", e => {
+            if (e.target.closest("td.sel")) {
+                const cb = tr.querySelector("input[data-sel]"); if (!cb) return;
+                if (e.target !== cb) cb.checked = !cb.checked;
+                cb.checked ? S.sel.set(p.id, p) : S.sel.delete(p.id);
+                renderAckBar();
+                return;
+            }
+            openLogDetail(p);
+        });
         tb.appendChild(tr);
     });
 }
@@ -1588,6 +1631,7 @@ function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ we
 function logUrl() {
     const p = logRange(new URLSearchParams({ web: S.web, size: "300" }));
     if (S.withMetrics) p.set("with_metrics", "1");
+    if (S.showAcked) p.set("acked", "1");
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
     return `/api/problems?${p}`;
@@ -1602,6 +1646,7 @@ function renderLogFilter(stats) {
         const k = b.dataset.lv, n = k === "ALL" ? total : lv[k];
         const label = { ALL: "All", ERROR: "Error", WARN: "Warn" }[k];
         b.innerHTML = hasValue(n) ? `${label}<i>${n}</i>` : label;
+        setText("ackedCnt", stats && stats.acknowledged ? `(${stats.acknowledged})` : "");
         b.setAttribute("aria-pressed", !S.info && k === S.lv);
     });
     const types = Object.keys((stats && stats.types) || {}).sort();
@@ -1682,6 +1727,26 @@ function showInfo() {
     if (S.info) renderProblems(S.info.rows);
 }
 function closeInfo() { S.info = null; showInfo(); reloadLogs(); }
+
+/* Acknowledge / ยกเลิก log ที่ติ๊กไว้ */
+async function ackLogs(on) {
+    const rows = [...S.sel.values()].filter(p => on ? !p.ack : p.ack);
+    if (!rows.length) return;
+    let note = "";
+    if (on) {
+        note = prompt(`Acknowledge ${rows.length} log(s)?\nThey will be hidden from the table and counters (still kept in storage).\nNote (optional):`, "");
+        if (note === null) return;
+    }
+    try {
+        const r = await fetch(`/api/logs/${on ? "ack" : "unack"}`, {
+            method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: rows.map(p => p.id), note, web: S.web }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+        S.sel.clear();
+        await reloadLogs();            /* ค้นอยู่ -> reloadLogs ค้นซ้ำให้ */
+        loadHist();
+    } catch (err) { alert("Acknowledge failed: " + err.message); }
+}
 
 /* ---------- ค้นหาข้อความใน log ----------
    ค้นทั้งหมดที่เก็บใน OpenSearch (ไม่ใช่แค่ 300 รายการล่าสุด) ด้วยตัวกรอง Level / Type / ช่วงเวลาเดียวกับตาราง
@@ -1928,6 +1993,20 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#logSearch").addEventListener("submit", e => { e.preventDefault(); runSearch(false); });
     q("#logClear").addEventListener("click", clearSearch);
     q("#withMetrics").checked = S.withMetrics;
+    q("#showAcked").checked = S.showAcked;
+    q("#showAcked").addEventListener("change", e => {
+        S.showAcked = e.target.checked;
+        try { localStorage.setItem("cm.logsShowAcked", S.showAcked ? "1" : "0"); } catch (err) { /* ignore */ }
+        if (S.search) renderProblems(S.search.rows); else reloadLogs();
+    });
+    q("#plogHead").addEventListener("change", e => {
+        if (e.target.id !== "selAll") return;
+        S.logRows.forEach(p => e.target.checked ? S.sel.set(p.id, p) : S.sel.delete(p.id));
+        q("#plog").querySelectorAll("input[data-sel]").forEach(cb => { cb.checked = e.target.checked; });
+        renderAckBar();
+    });
+    q("#ackSel").addEventListener("click", () => ackLogs(true));
+    q("#unackSel").addEventListener("click", () => ackLogs(false));
     q("#withMetrics").addEventListener("change", e => {
         S.withMetrics = e.target.checked;
         try { localStorage.setItem("cm.logsWithMetrics", S.withMetrics ? "1" : "0"); } catch (err) { /* ignore */ }

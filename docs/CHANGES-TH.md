@@ -1,3 +1,9 @@
+# เพิ่มเติม: Acknowledge log
+- ตาราง Logs: ติ๊กเลือกแถว (หรือเลือกทั้งหมด) -> **Acknowledge selected** + โน้ต (operator ขึ้นไป)
+  log ที่รับทราบแล้วถูกซ่อนจากตาราง, ตัวเลข All/Error/Warn, Problem logs, Errors 15m และจุดบนกราฟ (ยังอยู่ใน OpenSearch ตามอายุเดิม)
+- **Show acknowledged** = แสดงอีกครั้ง (ป้าย ACK + ใคร/เมื่อไหร่/โน้ต) และ **Unacknowledge** ได้ · บันทึกใน Activity log
+- `data/state/log_acks.json` เก็บไม่เกิน 40 วัน · "Only logs with metrics" เปลี่ยนเป็นปิดเป็นค่าเริ่มต้น (แสดงทุก log)
+
 # สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 ค่ำ): เติมส่วนที่ขาด (ยกเว้นแจ้งเตือนออกนอกเว็บ)
 
 | เรื่อง | เปลี่ยน |

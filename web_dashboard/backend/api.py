@@ -32,6 +32,8 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/problems/detail     log 1 รายการ + สถานะเครื่อง ณ เวลานั้น (web, id)
     GET  /api/logs/search?q=&web=&level=&type=&start=&end=   ค้นข้อความใน log ทั้ง index (web ว่าง = ทุกเครื่อง)
     PUT  /api/targets/<name>/pause   {"paused": true|false}  (operator ขึ้นไป)
+    POST /api/logs/ack {"ids","note","web"}  /api/logs/unack {"ids"}   รับทราบ log -> ซ่อน (operator ขึ้นไป)
+         /api/problems?acked=1 = รวม log ที่รับทราบแล้ว
     GET  /api/checks              web / SSL checks + ผลล่าสุด   POST/PUT/DELETE /api/checks[/<name>] (admin)
     PUT  /api/checks/<name>/pause    (operator ขึ้นไป)
     GET/POST /api/users  PUT/DELETE /api/users/<name>   จัดการผู้ใช้ (admin)
@@ -69,6 +71,7 @@ from flask import Flask, g, jsonify, redirect, request, send_from_directory, ses
 import settings
 from auth import AUTH_USERNAME, check_credentials, session_role
 import audit_service
+import log_ack_service
 import checks_service
 import sensors_service
 import users_service
@@ -150,7 +153,7 @@ def require_authentication():
     return None
 
 
-_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/sensors/(un)?ack$")
+_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 
 
@@ -190,6 +193,8 @@ _AUDIT_RULES = [
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
     ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
     ("POST", re.compile(r"^/api/sensors/unack$"), "sensor.unack", ("id",)),
+    ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note")),
+    ("POST", re.compile(r"^/api/logs/unack$"), "log.unack", ("web",)),
     ("POST", re.compile(r"^/api/users$"), "user.add", ("username", "role")),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
@@ -222,6 +227,8 @@ def audit_changes(response):
         details = {k: body.get(k) for k in fields if isinstance(body, dict) and k in body}
         if action == "target.services" and isinstance(body, dict):
             details["count"] = len(body.get("services") or [])
+        if action in ("log.ack", "log.unack") and isinstance(body, dict):
+            details["count"] = len(body.get("ids") or [])
         if action == "user.update" and isinstance(body, dict) and body.get("password"):
             details["password_changed"] = True
         target = m.groupdict().get("t") or (body.get("name") or body.get("username") or body.get("host") or body.get("id")
@@ -518,7 +525,30 @@ def problems():
         start=start,
         end=end,
         with_metrics=request.args.get("with_metrics") == "1",
+        include_acked=request.args.get("acked") == "1",
     ))
+
+
+@app.post("/api/logs/ack")
+def logs_ack():
+    """รับทราบ log (ซ่อนจากตาราง/ตัวนับ)  body: {"ids": [...], "note": "...", "web": "..."}"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        n = log_ack_service.acknowledge(body.get("ids"), session.get("username", ""),
+                                        body.get("note"), body.get("web"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"acknowledged": n})
+
+
+@app.post("/api/logs/unack")
+def logs_unack():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    return jsonify({"removed": log_ack_service.unacknowledge(body.get("ids"))})
 
 
 @app.get("/api/log-stats")

@@ -42,6 +42,7 @@ import re
 import time
 from datetime import datetime, timezone
 
+import log_ack_service
 from clients import opensearch_request, puller_info_logs
 from log_levels import detect_log_level
 from metrics_service import get_metrics_at_time
@@ -171,9 +172,18 @@ def _light_entry(web, marker, hit):
     }
 
 
+def _not_acked(entries):
+    """ตัด log ที่ acknowledge แล้วออก (log_ack_service)"""
+    acks = log_ack_service.load()
+    return [e for e in entries if e.get("id") not in acks] if acks else entries
+
+
 def _public(entry):
-    """แถวที่ส่งให้หน้าเว็บ: ตัดคีย์ภายใน + แนบ metrics ตอนเกิด log"""
+    """แถวที่ส่งให้หน้าเว็บ: ตัดคีย์ภายใน + แนบ metrics ตอนเกิด log (+ ข้อมูล acknowledge ถ้ามี)"""
     out = {k: v for k, v in entry.items() if not k.startswith("_")}
+    ack = log_ack_service.load().get(entry.get("id"))
+    if ack:
+        out["ack"] = ack
     out["correlated_metrics"] = _metrics_cached(entry["timestamp"], entry["web"])
     return out
 
@@ -249,7 +259,8 @@ def _in_range(entry, start, end):
 MAX_METRIC_CHECKS = 1500       # with_metrics: ตรวจ metrics ได้สูงสุดกี่แถวต่อคำขอ (กันช้า)
 
 
-def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_metrics=False):
+def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_metrics=False,
+             include_acked=False):
     """log ล่าสุดของเครื่อง เรียงใหม่ -> เก่า ไม่เกิน size รายการ
 
     levels : เช่น "ERROR,WARN" หรือ ["ERROR"]  (ว่าง = ทุกระดับ)
@@ -266,7 +277,7 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
     output = []
     checked = 0
 
-    for entry in _scan(web):
+    for entry in (_scan(web) if include_acked else _not_acked(_scan(web))):
         if not _in_range(entry, start, end):
             continue
 
@@ -348,7 +359,7 @@ def get_log_detail(web, log_id):
 def get_log_markers(web, start, end, limit=500):
     """จุด ERROR/WARN บนเส้นเวลาของกราฟ (ไม่แนบ metrics -> เบา) ใหม่ -> เก่า ไม่เกิน limit"""
     out = []
-    for entry in _scan(web):
+    for entry in _not_acked(_scan(web)):
         if entry["level"] not in ("ERROR", "WARN") or not _in_range(entry, start, end):
             continue
         out.append({
@@ -373,13 +384,15 @@ def get_log_stats(web, start=None, end=None):
     levels = {name: 0 for name in LEVELS}
     types = {}
 
-    entries = [e for e in _scan(web) if _in_range(e, start, end)]
+    in_range = [e for e in _scan(web) if _in_range(e, start, end)]
+    entries = _not_acked(in_range)
+    acked = len(in_range) - len(entries)
 
     for entry in entries:
         levels[entry["level"]] += 1
         types[entry["type"]] = types.get(entry["type"], 0) + 1
 
-    return {"levels": levels, "types": types, "total": len(entries)}
+    return {"levels": levels, "types": types, "total": len(entries), "acknowledged": acked}
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +492,7 @@ def search_logs(query, web=None, levels=None, types=None, start=None, end=None, 
             "highlight": marked,
             "source_file": filename,
             "correlated_metrics": {},
+            "ack": log_ack_service.load().get(hit.get("_id")),
         })
 
     out.sort(key=lambda e: to_unix(e["timestamp"]) or 0, reverse=True)
@@ -521,10 +535,10 @@ def get_info_logs(web, lines=500, source=None, start=None, end=None):
 
 def get_problem_count(web):
     """จำนวน log ระดับ ERROR + WARN (ทั้งหมดที่สแกนได้)  -> ช่อง "Problem logs" """
-    return sum(1 for e in _scan(web) if e["level"] in ("ERROR", "WARN"))
+    return sum(1 for e in _not_acked(_scan(web)) if e["level"] in ("ERROR", "WARN"))
 
 
 def get_errors_15m(web):
     """จำนวน log ระดับ ERROR ที่เวลาของ log อยู่ใน 15 นาทีล่าสุด -> ช่อง "Errors 15m" """
     cutoff = time.time() - 15 * 60
-    return sum(1 for e in _scan(web) if e["level"] == "ERROR" and e["_ts"] >= cutoff)
+    return sum(1 for e in _not_acked(_scan(web)) if e["level"] == "ERROR" and e["_ts"] >= cutoff)

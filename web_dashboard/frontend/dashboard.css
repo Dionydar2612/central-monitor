@@ -1103,3 +1103,12 @@ td.bad{color:#e5484d}
 .gloose{margin:4px 10px 10px}
 
 .lvtype.wm{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+
+/* ---- Acknowledge log ---- */
+.ackbar{display:inline-flex;gap:6px;align-items:center}
+.ackbar .svbtn:disabled{opacity:.5;cursor:default}
+.pl th.sel,.pl td.sel{width:28px;text-align:center;cursor:pointer}
+.pl td.sel input,.pl th.sel input{cursor:pointer}
+.pl tr.acked td{color:var(--mut)}
+.logack{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:4px;background:#b7791f;color:#fff;vertical-align:1px}
+#ackedCnt{font-style:normal;color:var(--mut)}
