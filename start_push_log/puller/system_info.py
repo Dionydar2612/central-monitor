@@ -247,6 +247,7 @@ CPU_CORE_COMMAND = (
 )
 
 TOP_PER_CORE = 8
+TOP_PROCESSES = 15
 
 
 def _parse_core_sample(lines):
@@ -330,6 +331,20 @@ def parse_cpu_cores(output):
         item["cpu"] += cpu
         item["threads"] += 1
 
+    # รวมต่อ process (ทุก core): ใช้กับตาราง "CPU process" + รายละเอียดว่ารันบน core ไหนเท่าไหร่
+    by_pid = {}
+    for core, entry in per_core.items():
+        for pid, p in entry["processes"].items():
+            item = by_pid.setdefault(pid, {"pid": pid, "name": p["name"], "cpu": 0.0, "threads": 0, "cores": []})
+            item["cpu"] += p["cpu"]
+            item["threads"] += p["threads"]
+            item["cores"].append({"core": core, "cpu": round(min(p["cpu"], 100.0), 1)})
+
+    top = sorted(by_pid.values(), key=lambda p: p["cpu"], reverse=True)[:TOP_PROCESSES]
+    for p in top:
+        p["cpu"] = round(p["cpu"], 1)                     # % ของ 1 core (หลาย thread อาจเกิน 100)
+        p["cores"].sort(key=lambda c: c["cpu"], reverse=True)
+
     result = []
     for core in sorted(per_core):
         entry = per_core[core]
@@ -340,7 +355,7 @@ def parse_cpu_cores(output):
         entry["processes"] = procs[:TOP_PER_CORE]
         result.append(entry)
 
-    return {"count": len(result), "interval": round(interval, 2), "per_core": result}
+    return {"count": len(result), "interval": round(interval, 2), "per_core": result, "processes": top}
 
 
 def _collect_cpu_cores(target):
