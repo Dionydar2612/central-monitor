@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from clients import prom_value
 from metrics_service import PROMQL, _labels, _round, classify_state, get_web_prometheus_config
 from settings import load_web_targets
-from system_state import last_pull_time
+from system_state import last_pull_time, pull_interval_seconds
 
 CACHE_TTL = 5
 _CACHE = {"until": 0, "data": None}
@@ -67,6 +67,7 @@ def get_overview():
 
     data = {
         "time": datetime.now(timezone.utc).isoformat(),
+        "pull_interval": pull_interval_seconds(),
         "total": len(servers),
         "up": sum(1 for s in servers if s["status"] == "online"),
         "down": sum(1 for s in servers if s["status"] != "online"),

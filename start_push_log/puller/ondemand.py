@@ -19,6 +19,12 @@ ondemand.py - ดึง log ระดับ INFO "สด" จากเครื�
 
     GET /info-logs?target=web-01&lines=500[&source=system][&start=<unix>][&end=<unix>]
         -> {"entries":[{timestamp, ts, level, type, message, source_file}], "errors":[...]}
+
+    GET /processes?target=web-01
+        -> {"time", "cpu_cores": {count, per_core:[{core, usage, active, processes:[...]}]},
+            "memory_top": [{pid, name, memory, rss_mb}]}
+        วัดสด ณ ตอนที่ขอ (CPU ต่อ core 1 วินาที + 10 process ที่ใช้ RAM สูงสุด) แสดงแล้วไม่เก็บ
+        หน้าเว็บเรียกทุก ~60 วินาทีขณะเปิดหน้า (central-api cache ไว้ 20 วินาที)
 """
 
 import hmac
@@ -33,6 +39,7 @@ from urllib.parse import parse_qs, urlparse
 import journal
 from config import load_config
 from log_filter import only_info
+from system_info import CPU_CORE_COMMAND, parse_cpu_cores
 from ssh_client import list_remote_files, run_ssh, run_ssh_bytes
 
 PORT = int(os.environ.get("CENTRAL_ONDEMAND_PORT", "8001"))
@@ -119,6 +126,39 @@ def fetch_info_logs(target, lines=DEFAULT_LINES, source=None, start=None, end=No
     return {"entries": entries[:MAX_ENTRIES], "errors": errors, "lines": lines}
 
 
+MEMORY_COMMAND = "ps -eo pid,pmem,rss,comm --sort=-rss --no-headers | head -n 10"
+
+
+def parse_memory_top(output):
+    """ผล MEMORY_COMMAND -> [{pid, name, memory(%), rss_mb}]"""
+    out = []
+    for line in output.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 4:
+            continue
+        try:
+            out.append({
+                "pid": int(parts[0]),
+                "memory": float(parts[1]),
+                "rss_mb": round(int(parts[2]) / 1024, 1),
+                "name": parts[3].strip(),
+            })
+        except ValueError:
+            continue
+    return out
+
+
+def fetch_processes(target):
+    """CPU ต่อ core + process บนแต่ละ core + top memory  (SSH ครั้งเดียว)"""
+    output = run_ssh(target, f"{CPU_CORE_COMMAND}; echo @@MEM; {MEMORY_COMMAND}")
+    cpu_part, _, mem_part = output.partition("@@MEM")
+    return {
+        "time": datetime.now().astimezone().isoformat(),
+        "cpu_cores": parse_cpu_cores(cpu_part),
+        "memory_top": parse_memory_top(mem_part),
+    }
+
+
 def _num(params, key):
     try:
         value = params.get(key, [""])[0]
@@ -140,7 +180,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
 
-        if url.path != "/info-logs":
+        if url.path not in ("/info-logs", "/processes"):
             return self._send(404, {"error": "not found"})
 
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
@@ -153,6 +193,13 @@ class _Handler(BaseHTTPRequestHandler):
         )
         if not target:
             return self._send(404, {"error": "unknown target"})
+
+        if url.path == "/processes":
+            try:
+                return self._send(200, fetch_processes(target))
+            except Exception as e:     # SSH ไม่ได้ -> ส่งสาเหตุให้หน้าเว็บแสดง
+                print(f"[ONDEMAND] processes target={name} error={e}")
+                return self._send(502, {"error": f"SSH {name}: {e}"})
 
         try:
             lines = int(params.get("lines", [DEFAULT_LINES])[0])

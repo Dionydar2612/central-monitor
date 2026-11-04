@@ -21,6 +21,7 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     POST /api/login | /api/logout | GET /api/me
     GET  /api/web-status          รายชื่อเครื่อง + online/offline (จาก Prometheus `up`)
     GET  /api/overview            ภาพรวมทุกเครื่อง: Total/Up/Down + CPU/Memory/Disk/สถานะ ต่อเครื่อง
+    GET  /api/live-processes?web= process ต่อ CPU core + top memory วัดสดผ่าน puller (cache 20 วินาที)
     GET  /api/summary?web=        สรุปเครื่อง: สถานะ, Last pull, จำนวน problem, metrics
     GET  /api/metrics?web=        metrics ตอนนี้ + service/process/event
     GET  /api/metrics/history     กราฟย้อนหลัง (web, start, end เป็น unix วินาที)
@@ -50,7 +51,8 @@ from flask import Flask, jsonify, redirect, request, send_from_directory, sessio
 
 import settings
 from auth import check_credentials
-from clients import prom_value
+from clients import prom_value, puller_get
+from settings import resolve_web_name
 from logs_service import (
     get_errors_15m,
     get_info_logs,
@@ -198,6 +200,31 @@ def web_status():
 def overview():
     """ตาราง Server Status ด้านบนของ dashboard (ดู overview_service.py)"""
     return jsonify(get_overview())
+
+
+_LIVE_CACHE = {}        # web -> (หมดอายุเมื่อ, status, data)
+LIVE_TTL = 20
+
+
+@app.get("/api/live-processes")
+def live_processes():
+    """CPU ต่อ core + process ที่รันบนแต่ละ core + top memory ของเครื่อง ณ ตอนนี้ (ไม่เก็บ)"""
+    web = request.args.get("web", "")
+    if not web:
+        return jsonify({"error": "web required"}), 400
+
+    now = time.time()
+    cached = _LIVE_CACHE.get(web)
+    if cached and cached[0] > now:
+        return jsonify(cached[2]), cached[1]
+
+    try:
+        status, data = puller_get("/processes", {"target": resolve_web_name(web)})
+    except Exception as e:
+        status, data = 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
+
+    _LIVE_CACHE[web] = (now + LIVE_TTL, status, data)
+    return jsonify(data), status
 
 
 @app.get("/api/metrics")

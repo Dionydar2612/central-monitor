@@ -18,6 +18,7 @@ clients.py - ตัวเรียก HTTP ไปยัง OpenSearch และ 
 import base64
 import json
 import ssl
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -81,6 +82,23 @@ def puller_info_logs(params):
 
     with urllib.request.urlopen(req, timeout=55) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def puller_get(path, params, timeout=30):
+    """GET ไป HTTP ภายในของ puller (ondemand.py) คืน (status, dict)  ติดต่อไม่ได้ -> raise"""
+    from settings import PULLER_TOKEN, PULLER_URL
+
+    url = PULLER_URL + path + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"X-Central-Token": PULLER_TOKEN})
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except ValueError:
+            return e.code, {"error": f"HTTP {e.code}"}
 
 
 def prom_vector(query, timestamp=None):

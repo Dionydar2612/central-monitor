@@ -729,8 +729,23 @@ const S = {
     chart: "main", cmp: false, ext: null,  // กราฟ System Load: แท็บ, เทียบเมื่อวาน, ข้อมูลของแท็บ (main = S.hist)
     marks: [], markGroups: [], view: null, // จุด ERROR/WARN log + ข้อมูลที่วาดอยู่ (ใช้ตอนชี้เมาส์)
     hoverX: null, drag: null, tipPos: null, zoomPrev: null, logKey: null,
-    info: null, infoBusy: false            // INFO ที่กดโหลดสด {rows, errors, lines} (null = แสดง ERROR/WARN ปกติ) ไม่เก็บที่ไหน
+    info: null, infoBusy: false,           // INFO ที่กดโหลดสด {rows, errors, lines} (null = แสดง ERROR/WARN ปกติ) ไม่เก็บที่ไหน
+    live: null, liveAt: 0, liveBusy: false, liveErr: null,   // process ต่อ core + top memory วัดสด (/api/live-processes)
+    pullInterval: 3600                     // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
 };
+/* วัด process สดใหม่ทุกกี่ ms (ขณะเปิดหน้า) */
+const LIVE_EVERY = 60000;
+
+/* Last pull เก่ากว่า 2 รอบดึง = puller ติดต่อเครื่องไม่ได้ (เช่น SSH ล้มเหลว) */
+function isStale(iso) {
+    const t = Date.parse(iso || "");
+    return Number.isFinite(t) && (Date.now() - t) / 1000 > 2 * (S.pullInterval || 3600) + 300;
+}
+function pullHtml(iso) {
+    if (!iso) return "-";
+    const txt = escapeHtml(formatTimestamp(iso));
+    return isStale(iso) ? `<span class="stale" title="puller has not reached this machine for more than 2 pull cycles - check: docker logs central-puller">${txt} ⚠</span>` : txt;
+}
 
 /* เกณฑ์สีของการ์ด KPI (%) : ถึง warn = เหลือง, ถึง crit = แดง  (แก้ตัวเลขที่นี่ที่เดียว) */
 const TH = {
@@ -833,6 +848,7 @@ const STATE_LABEL = { HEALTHY: ["OK", "ok"], WARNING: ["Warning", "wr"], PROBLEM
 function renderMachines(ov) {
     const webs = (ov && Array.isArray(ov.servers)) ? ov.servers : [];
     S.webs = webs;
+    if (ov && ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
     const cur = webs.some(w => w.web === S.web) ? S.web : (webs[0] && webs[0].web) || null;
     S.web = cur;
     setText("cur", cur || "-");
@@ -844,7 +860,7 @@ function renderMachines(ov) {
     };
     q("#mach").innerHTML = webs.length ? webs.map(w => {
         const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
-        return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}">${escapeHtml(label)}</span></td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.last_pull ? escapeHtml(formatTimestamp(w.last_pull)) : "-"}</td></tr>`;
+        return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}">${escapeHtml(label)}</span></td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${pullHtml(w.last_pull)}</td></tr>`;
     }).join("") : `<tr><td colspan="7" class="empty">No WEB configured - open Settings and add a target</td></tr>`;
 }
 
@@ -854,7 +870,7 @@ function renderMeta() {
     const add = (k, v, cls) => { if (hasValue(v)) out.push(`<span>${k}<b class="${cls || ""}">${escapeHtml(String(v))}</b></span>`); };
     const st = String(s.current_state || "");
     add("State", st, st === "PROBLEM" ? "bad" : st === "WARNING" ? "wr" : "ok");
-    add("Last pull", s.last_pull ? formatTimestamp(s.last_pull) : null);
+    add("Last pull", s.last_pull ? formatTimestamp(s.last_pull) + (isStale(s.last_pull) ? " ⚠ stale" : "") : null, s.last_pull && isStale(s.last_pull) ? "bad" : "");
     add("Problem logs", s.problem_count);
     add("Errors 15m", s.errors_15m);
     add("Load", hasValue(m.load_1m) ? [m.load_1m, m.load_5m, m.load_15m].map(v => formatNumber(v)).join(" / ") : (hasValue(m.load) ? formatNumber(m.load) : null));
@@ -887,7 +903,7 @@ function renderKPIs() {
     const K = [["CPU average 5m", "cpu"], ["Memory Usage %", "memory"], ["Disk Usage % (Per Mount Point)", "disk"], ["Disk I/O utilization (%)", "io_util"]];
     q("#kpis").innerHTML = K.map(([label, key]) => {
         const v = m[key], pts = ser[key] || [], dl = delta(pts);
-        const ok = hasValue(v) && Number.isFinite(Number(v)), val = ok ? Math.round(Number(v)) + "%" : "–";
+        const ok = hasValue(v) && Number.isFinite(Number(v)), val = ok ? Number(v).toFixed(1) + "%" : "–";
         const lv = level(key, v), t = TH[key];
         /* ลูกศร: ค่าพวกนี้ "ยิ่งสูงยิ่งแย่" -> เพิ่มขึ้น = สีเตือน, ลดลง = เขียว, เปลี่ยนไม่ถึง 1% = เทา */
         let d = "";
@@ -1136,7 +1152,9 @@ function setupChart() {
         const b = e.target.closest("button[data-ch]"); if (!b || b.dataset.ch === S.chart) return;
         S.chart = b.dataset.ch; S.ext = null; renderLoad(); loadHist();
     });
-    q("#cmp").addEventListener("change", e => { S.cmp = e.target.checked; loadHist(); });
+    /* ช่อง "vs yesterday" ถูกนำออกจากหน้าแล้ว (S.cmp = false เสมอ) */
+    const cmpBox = q("#cmp");
+    if (cmpBox) cmpBox.addEventListener("change", e => { S.cmp = e.target.checked; loadHist(); });
     q("#zoomReset").addEventListener("click", () => {
         const p = S.zoomPrev; if (!p) return;
         S.dur = p.dur; S.start = p.start; S.end = p.end; S.zoomPrev = null;
@@ -1201,16 +1219,22 @@ function bar(v, max, text) {
      แถวหัวกลุ่ม = core (Prometheus เฉลี่ย 5 นาที; ไม่มี -> ค่าจาก snapshot) + จำนวน process ที่รันบน core
      แถวย่อย     = process ที่รันบน core นั้น + กิน CPU ของ core นั้นกี่ % (snapshot ของ puller วัด 1 วินาที)
    process เดียวอาจโผล่หลาย core ได้ (thread ของมันกระจายอยู่หลาย core) */
+/* ข้อมูลที่ใช้วาด: วัดสด (S.live ของเครื่องที่เลือก) ก่อน ไม่มี -> snapshot ของรอบดึงล่าสุด */
+function liveData() { return S.live && S.live.web === S.web ? S.live.data : null; }
+
 function renderCores() {
-    const m = S.metrics || {}, snap = m.cpu_cores || {};
+    const m = S.metrics || {}, ld = liveData();
+    const snap = (ld && ld.cpu_cores && ld.cpu_cores.per_core) ? ld.cpu_cores : (m.cpu_cores || {});
+    const sampleAt = ld && ld.cpu_cores && ld.cpu_cores.per_core ? ld.time : m.system_timestamp;
     const live = new Map((Array.isArray(m.cpu_per_core) ? m.cpu_per_core : []).map(c => [Number(c.core), c.usage]));
     const per = new Map((Array.isArray(snap.per_core) ? snap.per_core : []).map(c => [Number(c.core), c]));
     const ids = [...new Set([...live.keys(), ...per.keys()])].sort((a, b) => a - b);
     setText("coreCnt", ids.length ? `${ids.length} CPU cores` : "");
     const busy = [...per.values()].filter(c => (c.active || 0) > 0).length;
     setText("coreMeta", per.size
-        ? `Core % = average 5m (Prometheus) · processes = 1-second sample at ${formatTimestamp(m.system_timestamp)} · ${busy} of ${per.size} cores were running processes`
-        : (ids.length ? "Core % = average 5m (Prometheus) · no per-core process sample yet (waits for the next pull cycle)" : ""));
+        ? `Core % = average 5m · processes = 1-second sample at ${formatTimestamp(sampleAt)} · ${busy} of ${per.size} cores busy`
+        : S.liveErr ? `Cannot measure processes: ${S.liveErr}`
+        : (ids.length ? (S.liveBusy ? "Measuring processes..." : "Core % = average 5m · process sample not available") : ""));
     if (!ids.length) { q("#cores").innerHTML = `<tr><td colspan="3" class="empty">No per-core data collected</td></tr>`; return; }
     q("#cores").innerHTML = ids.map(id => {
         const c = per.get(id) || {}, u = live.has(id) ? live.get(id) : c.usage;
@@ -1229,16 +1253,50 @@ function renderLists() {
     const m = S.metrics || {}, svcs = Array.isArray(m.services) ? m.services : [], procs = Array.isArray(m.processes) ? m.processes : [];
     renderServices(svcs);
     renderCores();
-    const top = key => [...procs].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0)).slice(0, 8);
-    const rows = key => {
-        const l = top(key), mx = Math.max(100, ...l.map(p => Number(p[key] || 0)));
-        return l.length ? l.map(p => `<tr><td>${escapeHtml(p.name || "-")}</td><td>${escapeHtml(p.pid ?? "-")}</td><td>${bar(p[key], mx, formatPercent(p[key]))}</td></tr>`).join("") : `<tr><td colspan="3" class="empty">No process data collected</td></tr>`;
-    };
-    q("#mem").innerHTML = rows("memory");
+    renderMem(procs);
     const ev = Array.isArray(m.system_events) ? m.system_events.filter(e => hasValue(e.message) || hasValue(e.type)) : [];
     q("#evCard").hidden = !ev.length;
     setText("evCnt", ev.length ? `${ev.length} events` : "");
     q("#ev").innerHTML = ev.map(e => `<div class="row"><span>${escapeHtml(formatTimestamp(e.timestamp))}</span><span>${escapeHtml(e.type || "")}</span><span>${escapeHtml(e.message || "")}</span></div>`).join("");
+}
+
+/* การ์ด Memory Usage by Process: 10 process ที่ใช้ RAM สูงสุด (วัดสด; ไม่มี -> snapshot)
+   แท่ง = % ของ RAM ทั้งเครื่อง, ข้อความ = % · MB */
+function renderMem(snapProcs) {
+    const ld = liveData();
+    const list = ld && Array.isArray(ld.memory_top) && ld.memory_top.length
+        ? ld.memory_top
+        : [...(snapProcs || [])].sort((a, b) => Number(b.memory || 0) - Number(a.memory || 0)).slice(0, 10);
+    setText("memCnt", list.length ? `top ${list.length}` : "");
+    setText("memMeta", ld && ld.memory_top && ld.memory_top.length ? `Live sample at ${formatTimestamp(ld.time)} · % of total RAM`
+        : list.length ? `From last pull ${formatTimestamp((S.metrics || {}).system_timestamp)}` : "");
+    const mx = Math.max(10, ...list.map(p => Number(p.memory || 0)));
+    q("#mem").innerHTML = list.length ? list.map(p => {
+        const text = formatPercent(p.memory) + (hasValue(p.rss_mb) ? ` · ${Number(p.rss_mb) >= 1024 ? (p.rss_mb / 1024).toFixed(1) + " GB" : Math.round(p.rss_mb) + " MB"}` : "");
+        return `<tr><td>${escapeHtml(p.name || "-")}</td><td>${escapeHtml(p.pid ?? "-")}</td><td>${bar(p.memory, mx, text)}</td></tr>`;
+    }).join("") : `<tr><td colspan="3" class="empty">No process data collected</td></tr>`;
+}
+
+/* วัด process สด (CPU ต่อ core + top memory) ผ่าน puller  force = กดปุ่ม Refresh */
+async function loadLive(force) {
+    if (!S.web || S.liveBusy) return;
+    if (!force && S.live && S.live.web === S.web && Date.now() - S.liveAt < LIVE_EVERY) return;
+    const web = S.web, btn = q("#liveBtn");
+    S.liveBusy = true; btn.disabled = true; btn.textContent = "Measuring...";
+    try {
+        const r = await fetch(`/api/live-processes?web=${encodeURIComponent(web)}`, { cache: "no-store", credentials: "same-origin" });
+        if (r.status === 401) { window.location.href = "/login"; return; }
+        const d = await r.json().catch(() => ({}));
+        if (web !== S.web) return;
+        if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+        S.live = { web, data: d }; S.liveErr = null;
+    } catch (err) {
+        console.error("Live processes error:", err);
+        S.liveErr = err.message; S.live = null;
+    } finally {
+        S.liveAt = Date.now(); S.liveBusy = false; btn.disabled = false; btn.textContent = "Refresh";
+        if (web === S.web) { renderCores(); renderMem((S.metrics || {}).processes); }
+    }
 }
 
 /* ---------- การ์ด Service: แสดงเฉพาะ service ที่เลือก ----------
@@ -1539,6 +1597,7 @@ async function loadAll() {
         renderLists();
         renderLogFilter(stats);
         if (S.info) renderProblems(S.info.rows); else renderProblems(problems);
+        loadLive(false);
         await loadHist();
         const st = String(summary.status || "").toLowerCase(), cs = summary.current_state;
         if (st === "offline") setSystemStatus(`${S.web} is DOWN`, "red");
@@ -1661,7 +1720,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#mach").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.target.click(); } });
     q("#mach").addEventListener("click", e => {
         const b = e.target.closest("[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; }
+        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; S.live = null; S.liveErr = null; }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {
@@ -1670,6 +1729,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     q("#ltSel").addEventListener("change", e => { S.lt = e.target.value; S.info = null; showInfo(); reloadLogs(); });
     q("#infoBtn").addEventListener("click", loadInfo);
+    q("#liveBtn").addEventListener("click", () => loadLive(true));
     q("#infoClear").addEventListener("click", closeInfo);
     $("logoutButton").addEventListener("click", logout);
     loadCurrentUser();
