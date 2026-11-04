@@ -1101,3 +1101,5 @@ td.bad{color:#e5484d}
 [hidden]{display:none!important}
 
 .gloose{margin:4px 10px 10px}
+
+.lvtype.wm{display:inline-flex;align-items:center;gap:6px;cursor:pointer}

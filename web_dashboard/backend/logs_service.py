@@ -246,11 +246,16 @@ def _in_range(entry, start, end):
     return (start is None or entry["_ts"] >= start) and (end is None or entry["_ts"] <= end)
 
 
-def get_logs(web, size=200, levels=None, types=None, start=None, end=None):
+MAX_METRIC_CHECKS = 1500       # with_metrics: ตรวจ metrics ได้สูงสุดกี่แถวต่อคำขอ (กันช้า)
+
+
+def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_metrics=False):
     """log ล่าสุดของเครื่อง เรียงใหม่ -> เก่า ไม่เกิน size รายการ
 
     levels : เช่น "ERROR,WARN" หรือ ["ERROR"]  (ว่าง = ทุกระดับ)
     types  : เช่น "application,loginuser"      (ว่าง = ทุกชนิด)  = resource["log.source"]
+    with_metrics : True = เอาเฉพาะ log ที่มี "Metrics at time" (Prometheus มีข้อมูลของเครื่อง ณ เวลานั้น)
+                   log ที่ไม่มี metrics มักเป็น log เก่ากว่าที่ Prometheus เก็บไว้ หรือเครื่องที่ Prometheus ไม่ได้เก็บ
     """
     wanted_levels = _clean_levels(levels)
 
@@ -259,6 +264,7 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None):
     wanted_types = {str(t).strip() for t in (types or []) if str(t).strip()} or None
 
     output = []
+    checked = 0
 
     for entry in _scan(web):
         if not _in_range(entry, start, end):
@@ -269,6 +275,13 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None):
 
         if wanted_types and entry["type"] not in wanted_types:
             continue
+
+        if with_metrics:
+            checked += 1
+            if checked > MAX_METRIC_CHECKS:
+                break
+            if not _metrics_cached(entry["timestamp"], entry["web"]):
+                continue
 
         output.append(entry)
 

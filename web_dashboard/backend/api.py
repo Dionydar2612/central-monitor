@@ -517,6 +517,7 @@ def problems():
         types=request.args.get("type", ""),
         start=start,
         end=end,
+        with_metrics=request.args.get("with_metrics") == "1",
     ))
 
 

@@ -734,7 +734,8 @@ const S = {
     pullInterval: 3600,                    // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
-    search: null, searchBusy: false        // ผลค้นหา log {q, scope, rows, total, matched, truncated}
+    search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
+    withMetrics: loadWithMetrics()         // ตาราง Logs: ซ่อน log ที่ไม่มี Metrics at time (ค่าเริ่มต้น = ซ่อน, จำใน browser)
 };
 /* วัด process สดใหม่ทุกกี่ ms (ขณะเปิดหน้า) */
 const LIVE_EVERY = 60000;
@@ -871,6 +872,10 @@ function itemBucket(x, isCheck) {
     return { HEALTHY: "ok", WARNING: "wr", PROBLEM: "dn", DOWN: "dn", PAUSED: "ps" }[x.state] || "na";
 }
 const BUCKET_PILL = { dn: ["▼", "Down / Problem"], wr: ["W", "Warning"], ok: ["✓", "OK"], ps: ["II", "Paused"], na: ["?", "Unknown"] };
+
+function loadWithMetrics() {
+    try { return localStorage.getItem("cm.logsWithMetrics") !== "0"; } catch (e) { return true; }
+}
 
 function loadClosedGroups() {
     try { return new Set(JSON.parse(localStorage.getItem("cm.closedGroups") || "[]")); } catch (e) { return new Set(); }
@@ -1582,6 +1587,7 @@ function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ we
 
 function logUrl() {
     const p = logRange(new URLSearchParams({ web: S.web, size: "300" }));
+    if (S.withMetrics) p.set("with_metrics", "1");
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
     return `/api/problems?${p}`;
@@ -1921,6 +1927,12 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#infoBtn").addEventListener("click", loadInfo);
     q("#logSearch").addEventListener("submit", e => { e.preventDefault(); runSearch(false); });
     q("#logClear").addEventListener("click", clearSearch);
+    q("#withMetrics").checked = S.withMetrics;
+    q("#withMetrics").addEventListener("change", e => {
+        S.withMetrics = e.target.checked;
+        try { localStorage.setItem("cm.logsWithMetrics", S.withMetrics ? "1" : "0"); } catch (err) { /* ignore */ }
+        reloadLogs();
+    });
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {
