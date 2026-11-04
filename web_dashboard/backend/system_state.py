@@ -186,21 +186,35 @@ def load_system_snapshot_at(web, timestamp=None):
 # ---------------------------------------------------------------------------
 
 def last_pull_time(web):
-    """เวลา (ISO) ที่ puller เขียน log ของเครื่องนี้ลง buffer ล่าสุด ไม่มี -> None
+    """เวลา (ISO) ที่ puller ติดต่อเครื่องนี้สำเร็จล่าสุด ไม่มี -> None  (โชว์เป็น "Last pull")
 
-    ดูจาก checkpoints.json: ค่า updated_at ล่าสุดของทุกไฟล์ log ของเครื่องนั้น
-    (โชว์เป็น "Last pull" บน dashboard)
+    = ค่าที่ใหม่กว่าระหว่าง
+        - updated_at ล่าสุดใน checkpoints.json (ได้ log ใหม่)
+        - timestamp ของ snapshot สถานะเครื่อง (เก็บ service/process สำเร็จ)
+    เดิมดูแค่ checkpoint: เครื่องที่ log ไม่โตเลย Last pull จะค้างเป็นเวลาเก่าทั้งที่ puller ยังเข้าได้ปกติ
     """
+    times = []
+
     try:
         state = _load_json(CHECKPOINT_FILE)
-
-        times = [
+        times += [
             item["updated_at"]
             for item in state.values()
             if item.get("target") == web and item.get("updated_at")
         ]
-
-        return max(times) if times else None
-
     except Exception:
-        return None
+        pass
+
+    snapshot = _load_json(os.path.join(SYSTEM_DIR, f"{web}.json")) if web else {}
+    if snapshot.get("timestamp"):
+        times.append(snapshot["timestamp"])
+
+    parsed = [(parse_iso(t), t) for t in times]
+    parsed = [(dt, t) for dt, t in parsed if dt is not None]
+
+    return max(parsed)[1] if parsed else None
+
+
+def pull_interval_seconds():
+    """scheduler.interval เป็นวินาที (อ่านไม่ได้ -> 3600)  หน้าเว็บใช้ตัดสินว่า Last pull เก่าผิดปกติไหม"""
+    return _interval_seconds() or 3600

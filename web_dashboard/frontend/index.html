@@ -57,7 +57,7 @@
 <!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) และรายการ Service (#sv: จาก snapshot ของ puller) -->
 <div class="grid main">
 <section class="card">
-<div class="top"><h2>System Load</h2><div class="chopt"><button type="button" class="svbtn" id="zoomReset" hidden>Reset zoom</button><label class="cmp"><input type="checkbox" id="cmp"> vs yesterday</label></div></div>
+<div class="top"><h2>System Load</h2><div class="chopt"><button type="button" class="svbtn" id="zoomReset" hidden>Reset zoom</button></div></div>
 <div class="chbar"><div class="tabs" id="chTabs" role="group" aria-label="Chart metric"></div><div class="lgd" id="lgd"></div></div>
 <div class="chw" id="chw">
 <svg id="load" viewBox="0 0 900 312" role="img" aria-label="System load over time"></svg>
@@ -86,8 +86,8 @@
        แถวย่อย     = process ที่รันบน core นั้นและกิน CPU ของ core เท่าไหร่ (snapshot ของ puller วัด 1 วินาที)
      และตาราง Memory (#mem) จาก snapshot ของ puller -->
 <div class="grid two">
-<section class="card"><div class="top"><h2>CPU process per CPU core</h2><span class="cnt" id="coreCnt"></span></div><div class="coremeta" id="coreMeta"></div><div class="tblw scroll procscroll coresc"><table class="coretbl"><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="cores"></tbody></table></div></section>
-<section class="card"><h2>Memory Usage by Process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
+<section class="card proccard"><div class="top"><h2>CPU process per CPU core</h2><div class="svh"><span class="cnt" id="coreCnt"></span><button type="button" class="svbtn" id="liveBtn" title="Measure again now">Refresh</button></div></div><div class="coremeta" id="coreMeta"></div><div class="tblw scroll procbody"><table class="coretbl"><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="cores"></tbody></table></div></section>
+<section class="card proccard"><div class="top"><h2>Memory Usage by Process</h2><span class="cnt" id="memCnt"></span></div><div class="coremeta" id="memMeta"></div><div class="tblw scroll procbody"><table class="memtbl"><thead><tr><th>Process</th><th>PID</th><th style="width:48%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
 </div>
 
 <!-- System events จาก journalctl (#ev) ซ่อนไว้เมื่อไม่มีเหตุการณ์ -->
