@@ -262,7 +262,9 @@ services:
     networks:
       - central-net
     ports:
-      - "127.0.0.1:8090:8000"
+      # ปริยายเปิดเฉพาะในเครื่อง (127.0.0.1) แล้ววาง nginx/HTTPS หรือใช้ SSH tunnel
+      # ถ้าต้องการเปิดจากเครื่องอื่นในเครือข่ายตรง ๆ: docker/.env -> CENTRAL_WEB_BIND=0.0.0.0
+      - "${CENTRAL_WEB_BIND:-127.0.0.1}:${CENTRAL_WEB_PORT:-8090}:8000"
     restart: unless-stopped
     logging: *default-logging
     volumes:
