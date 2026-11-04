@@ -5,7 +5,7 @@
    ภาพรวมการทำงาน
      1) เปิดหน้า -> DOMContentLoaded (ท้ายไฟล์) ตั้งปุ่มต่าง ๆ แล้วเรียก loadAll()
      2) loadAll() เรียก API ของ web_dashboard/backend/api.py:
-          /api/web-status      รายชื่อเครื่อง + online/offline     -> renderMachines
+          /api/overview        ทุกเครื่อง: Total/Up/Down + CPU/Mem/Disk -> renderMachines (ตาราง Server Status)
           /api/summary         สรุปเครื่อง (State, Last pull, ...)  -> renderMeta
           /api/metrics         ตัวเลข + service/process/event       -> renderLists
           /api/problems        รายการ log (ERROR / WARN เท่านั้น)   -> renderProblems
@@ -827,18 +827,25 @@ function setLbl() {
 /* ---------- renderers ---------- */
 
 /* ---------- F. ตัววาดส่วนต่าง ๆ ----------
-   วาดปุ่มเลือกเครื่อง (UP/DOWN) จาก /api/web-status ; ถ้าเครื่องที่เลือกอยู่หายไป
-   จะเลือกเครื่องแรกให้ */
-function renderMachines(webs) {
+   การ์ด WEB status (จาก /api/overview): ช่อง Total / Up / Down / Not OK + ตาราง Server Status
+   1 แถวต่อเครื่อง คลิกแถวเพื่อเลือกเครื่อง ; ถ้าเครื่องที่เลือกอยู่หายไป จะเลือกเครื่องแรกให้ */
+const STATE_LABEL = { HEALTHY: ["OK", "ok"], WARNING: ["Warning", "wr"], PROBLEM: ["Problem", "cr"], DOWN: ["Down", "cr"] };
+function renderMachines(ov) {
+    const webs = (ov && Array.isArray(ov.servers)) ? ov.servers : [];
     S.webs = webs;
     const cur = webs.some(w => w.web === S.web) ? S.web : (webs[0] && webs[0].web) || null;
     S.web = cur;
     setText("cur", cur || "-");
+    const tile = (label, n, cls) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b></div>`;
+    q("#ovTiles").innerHTML = tile("Total", ov && ov.total, "tot") + tile("Up", ov && ov.up, "up") + tile("Down", ov && ov.down, "dn") + tile("Not OK", ov && ov.not_ok, "nok");
+    const cell = (key, v) => {
+        const ok = hasValue(v) && Number.isFinite(Number(v));
+        return `<td class="ovv ${ok ? level(key, v) || "ok" : ""}">${ok ? Number(v).toFixed(1) : "-"}</td>`;
+    };
     q("#mach").innerHTML = webs.length ? webs.map(w => {
-        const st = String(w.status || "unknown").toLowerCase();
-        const label = st === "online" ? "UP" : st === "offline" ? "DOWN" : st.toUpperCase();
-        return `<button class="chip${st === "offline" ? " dn" : st === "online" ? "" : " wn"}" aria-pressed="${w.web === cur}" data-web="${escapeHtml(w.web)}">${escapeHtml(w.web)}<b>${escapeHtml(label)}</b></button>`;
-    }).join("") : `<div class="empty">No WEB configured - open Settings and add a target</div>`;
+        const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
+        return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}">${escapeHtml(label)}</span></td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.last_pull ? escapeHtml(formatTimestamp(w.last_pull)) : "-"}</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="empty">No WEB configured - open Settings and add a target</td></tr>`;
 }
 
 /* แถบสรุปใต้ปุ่มเครื่อง: State, Last pull, Problem logs, Errors 15m, Load, Uptime, Net, ... (ช่องไม่มีค่าจะไม่แสดง) */
@@ -860,15 +867,15 @@ function renderMeta() {
     q("#meta").innerHTML = out.join("");
 }
 
-/* รายการ mount point ในการ์ด Disk (เต็มมากสุดขึ้นก่อน แสดง 5 อันแรก ที่เหลือดูได้จาก tooltip) */
+/* รายการ mount point ในการ์ด Disk (เต็มมากสุดขึ้นก่อน แสดง 3 อันแรก ที่เหลือดูได้จาก tooltip) */
 function mountsHtml(mounts) {
     if (!Array.isArray(mounts) || !mounts.length) return "";
-    const show = mounts.slice(0, 5), more = mounts.length - show.length;
+    const show = mounts.slice(0, 3), more = mounts.length - show.length;
     const rows = show.map(x => {
         const lv = level("disk", x.used), w = Math.max(0, Math.min(100, Number(x.used) || 0));
         return `<div class="${lv}" title="${escapeHtml(`${x.mountpoint} · ${x.device || ""} ${x.fstype || ""}`)}"><code>${escapeHtml(x.mountpoint)}</code><u><i style="width:${w}%"></i></u><b>${Math.round(Number(x.used))}%</b></div>`;
     }).join("");
-    const rest = more > 0 ? `<div title="${escapeHtml(mounts.slice(5).map(x => `${x.mountpoint} ${Math.round(x.used)}%`).join("\n"))}"><code>+${more} more</code></div>` : "";
+    const rest = more > 0 ? `<div title="${escapeHtml(mounts.slice(3).map(x => `${x.mountpoint} ${Math.round(x.used)}%`).join("\n"))}"><code>+${more} more</code></div>` : "";
     return `<div class="mnts">${rows}${rest}</div>`;
 }
 
@@ -891,7 +898,7 @@ function renderKPIs() {
         const tip = t ? ` title="warning ≥ ${t.warn}% · critical ≥ ${t.crit}%"` : "";
         const badge = lv === "cr" ? `<em class="kb cr">Critical</em>` : lv === "wr" ? `<em class="kb wr">Warning</em>` : "";
         const extra = key === "disk" ? mountsHtml(m.disk_mounts) : "";
-        return `<div class="card k ${lv}${extra ? " dk" : ""}"${tip}><div><small>${label}</small><div class="v">${val}${badge}</div><div class="d">${d}</div></div>${sparkSvg(pts)}${extra}</div>`;
+        return `<div class="card k ${lv}${extra ? " dk" : ""}"${tip}><div><small>${label}</small><div class="v">${val}${badge}</div><div class="d">${d}</div></div>${extra}${sparkSvg(pts)}</div>`;
     }).join("");
 }
 
@@ -911,13 +918,8 @@ const CH = {
     io: { label: "Disk I/O", unit: "MB/s",
         lines: [["disk_read", "Read", "#1f7bff", true], ["disk_write", "Write", "#10c27a"]] },
     net: { label: "Network", unit: "MB/s",
-        lines: [["net_rx", "Receive ↓", "#1f7bff", true], ["net_tx", "Send ↑", "#10c27a"]] },
-    load: { label: "Load", unit: "", ref: "cores",
-        lines: [["load1", "1 min", "#1f7bff", true], ["load5", "5 min", "#8b5cf6"], ["load15", "15 min", "#94a3b8"]],
-        note: "<b>Load average</b> = จำนวนงานที่ \"กำลังใช้ CPU + รอคิว CPU\" (รวมงานที่รอดิสก์ด้วย) เฉลี่ย 1 / 5 / 15 นาที " +
-              "ต่างจาก CPU % ตรงที่บอกได้ว่า <b>มีงานต่อคิวรอ</b> หรือไม่ · เทียบกับเส้นประ <b>จำนวน CPU core</b>: " +
-              "ต่ำกว่าเส้น = CPU ยังรับไหว, เกินเส้นนาน ๆ = งานรอคิว เครื่องเริ่มช้า (ถ้า CPU % ไม่สูงแต่ load สูง มักเป็นเพราะรอดิสก์ ดูแท็บ CPU breakdown → I/O wait) · " +
-              "เส้น 1 min ขึ้นก่อน = เพิ่งเริ่มหนัก, 15 min สูงด้วย = หนักต่อเนื่อง" }
+        lines: [["net_rx", "Receive ↓", "#1f7bff", true], ["net_tx", "Send ↑", "#10c27a"]] }
+    /* แท็บ Load ถูกนำออก (ค่า Load ยังดูได้ที่แถบสรุปด้านบน) */
 };
 /* เรขาคณิตของกราฟ (หน่วย viewBox) */
 const GW = 900, GH = 312, PL = 52, PR = 12, PT = 10, PH = 230, PW = GW - PL - PR, MY = 262;
@@ -1195,9 +1197,9 @@ function bar(v, max, text) {
     return `<div class="bar"><u><i style="width:${w}%"></i></u><b style="width:auto;min-width:64px">${escapeHtml(text)}</b></div>`;
 }
 
-/* การ์ด "CPU process per CPU core": 1 กล่องต่อ core
-     หัวกล่อง  = % การใช้งานของ core (Prometheus เฉลี่ย 5 นาที; ไม่มี -> ค่าจาก snapshot)
-     รายการ   = process ที่รันบน core นั้น + กิน CPU ของ core นั้นกี่ % (snapshot ของ puller วัด 1 วินาที)
+/* การ์ด "CPU process per CPU core": ตาราง Process | PID | CPU แบ่งกลุ่มทีละ core
+     แถวหัวกลุ่ม = core (Prometheus เฉลี่ย 5 นาที; ไม่มี -> ค่าจาก snapshot) + จำนวน process ที่รันบน core
+     แถวย่อย     = process ที่รันบน core นั้น + กิน CPU ของ core นั้นกี่ % (snapshot ของ puller วัด 1 วินาที)
    process เดียวอาจโผล่หลาย core ได้ (thread ของมันกระจายอยู่หลาย core) */
 function renderCores() {
     const m = S.metrics || {}, snap = m.cpu_cores || {};
@@ -1209,16 +1211,15 @@ function renderCores() {
     setText("coreMeta", per.size
         ? `Core % = average 5m (Prometheus) · processes = 1-second sample at ${formatTimestamp(m.system_timestamp)} · ${busy} of ${per.size} cores were running processes`
         : (ids.length ? "Core % = average 5m (Prometheus) · no per-core process sample yet (waits for the next pull cycle)" : ""));
-    if (!ids.length) { q("#cores").innerHTML = `<div class="empty">No per-core data collected</div>`; return; }
+    if (!ids.length) { q("#cores").innerHTML = `<tr><td colspan="3" class="empty">No per-core data collected</td></tr>`; return; }
     q("#cores").innerHTML = ids.map(id => {
         const c = per.get(id) || {}, u = live.has(id) ? live.get(id) : c.usage;
         const lv = level("cpu", u), procs = Array.isArray(c.processes) ? c.processes : [];
-        const sub = per.has(id)
-            ? `<div class="sub">at sample: ${hasValue(c.usage) ? formatPercent(c.usage) : "-"} busy · ${c.active || 0} process${(c.active || 0) === 1 ? "" : "es"} running</div>` : "";
-        const list = procs.length
-            ? `<ul>${procs.map(p => `<li><span>${escapeHtml(p.name || "-")} <em>PID ${escapeHtml(p.pid ?? "-")}${p.threads > 1 ? ` · ${escapeHtml(p.threads)} threads` : ""}</em></span>${bar(p.cpu, 100, formatPercent(p.cpu))}</li>`).join("")}</ul>`
-            : (per.has(id) ? `<div class="idle">idle (no process used this core)</div>` : "");
-        return `<div class="core ${lv}"><h3>CPU ${escapeHtml(id)}<span>avg 5m</span></h3>${bar(u, 100, hasValue(u) ? formatPercent(u) : "-")}${sub}${list}</div>`;
+        const count = per.has(id) ? `${c.active || 0} process${(c.active || 0) === 1 ? "" : "es"}` : "";
+        const head = `<tr class="corehd ${lv}"><td><b>CPU ${escapeHtml(id)}</b></td><td>${escapeHtml(count)}</td><td>${bar(u, 100, hasValue(u) ? formatPercent(u) : "-")}</td></tr>`;
+        const rows = procs.map(p => `<tr class="corep"><td>${escapeHtml(p.name || "-")}${p.threads > 1 ? ` <em>${escapeHtml(p.threads)} threads</em>` : ""}</td><td>${escapeHtml(p.pid ?? "-")}</td><td>${bar(p.cpu, 100, formatPercent(p.cpu))}</td></tr>`).join("");
+        const idle = per.has(id) && !procs.length ? `<tr class="corep"><td colspan="3" class="idle">idle - no process used this core during the sample</td></tr>` : "";
+        return head + rows + idle;
     }).join("");
 }
 
@@ -1520,8 +1521,8 @@ async function loadAll() {
     S.busy = true;
     try {
         setSystemStatus("Loading...", "yellow");
-        const webs = await apiGet("/api/web-status");
-        renderMachines(webs);
+        const ov = await apiGet("/api/overview");
+        renderMachines(ov);
         if (!S.web) { setSystemStatus("No WEB configured", "red"); return; }
         const w = encodeURIComponent(S.web);
         const [summary, metrics, problems, stats] = await Promise.all([
@@ -1657,8 +1658,9 @@ document.addEventListener("DOMContentLoaded", () => {
     setupServicePicker();
     setupChart();
     setLbl();
+    q("#mach").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.target.click(); } });
     q("#mach").addEventListener("click", e => {
-        const b = e.target.closest("button[data-web]"); if (!b) return;
+        const b = e.target.closest("[data-web]"); if (!b) return;
         if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });

@@ -453,7 +453,15 @@ docker compose logs -f --tail=100 otel
 
 **เปลี่ยนรหัสผ่าน OpenSearch** — แก้ใน `.env` อย่างเดียวไม่พอ เพราะรหัสผ่านถูกเก็บใน volume ต้องเปลี่ยนผ่าน OpenSearch security API หรือถ้ายอมเสียข้อมูล log: `docker compose down && docker volume rm central-monitor_opensearch-data` แล้วสร้างใหม่ (ทำ ISM policy ข้อ 8.4 ซ้ำ)
 
-**อัปเดตโค้ด** — แทนที่ไฟล์ใน `start_push_log/` (ฝั่งดึง log) หรือ `web_dashboard/` (ฝั่งเว็บ) แล้วสั่งในโฟลเดอร์ `docker/`: `docker compose up -d --build`
+**อัปเดตโค้ด** — พิมพ์ `cm-update` จากที่ไหนก็ได้ (ไม่ต้อง cd) ระบบจะ git pull, คืน `config/puller.yaml` ของเครื่อง, แล้ว `install.sh --keep` ให้เอง
+(`cm-update --check` = ดูว่ามีอะไรใหม่, `cm-update --rebuild` = build ใหม่แม้ไม่มีโค้ดใหม่, `cm-update --where` = บอกว่าติดตั้งอยู่ที่ไหน, ค่าเดิมสำรองไว้ที่ `data/state/update-backup/`)
+
+เครื่องที่ติดตั้งก่อนมี `cm-update` (ครั้งแรกครั้งเดียว ไม่ต้องรู้ path ก็ได้ ระบบหาจาก container ที่รันอยู่):
+
+```bash
+cd "$(docker inspect central-api -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')/.." \
+  && git fetch origin && git show origin/main:scripts/update.sh | bash
+```
 
 **สำรองข้อมูล** — ที่ต้องเก็บจริง ๆ คือ `docker/.env`, `keys/`, `config/` และ `data/state/checkpoints.json` (ตำแหน่งที่อ่าน log ถึงแล้ว) ส่วน log ใน OpenSearch เป็นข้อมูลชั่วคราวตามนโยบาย retention
 

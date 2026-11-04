@@ -910,23 +910,48 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .k.dk{flex-wrap:wrap}.k.dk>div:first-child{flex:1;min-width:0}.k.dk .mnts{flex-basis:100%;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
 .mnts code{max-width:160px}
 
-/* ---- CPU process per CPU core ---- */
-.cpuw{grid-template-columns:2fr 1fr}
-.coremeta{font-size:12px;color:var(--mut);margin:4px 0 10px}
-.cores{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;max-height:460px;overflow:auto}
-.core{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
-.core h3{margin:0 0 6px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
-.core h3 span{color:var(--mut);font-weight:400}
-.core.wr{border-color:#f5a524}.core.cr{border-color:#e5484d}
-.core .sub{color:var(--mut);font-size:12px;margin:4px 0 6px}
-.core ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
-.core li{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center}
-.core li em{font-style:normal;color:var(--mut);font-size:11px}
-.core li .bar{grid-column:1/-1}.core li .bar u{min-width:40px}
-.core .idle{color:var(--mut);font-size:12px}
+/* ---- CPU process per CPU core: ตารางแบ่งกลุ่มทีละ core ---- */
+.coremeta{font-size:12px;color:var(--mut);margin:4px 0 6px}
+.coresc{max-height:420px}
+.coretbl tr.corehd td{background:var(--chip);border-top:2px solid var(--card);font-size:13px}
+.coretbl tr.corehd td:nth-child(2){color:var(--mut);font-size:12px}
+.coretbl tr.corehd.wr td:first-child b{color:#c27c00}.coretbl tr.corehd.cr td:first-child b{color:#e5484d}
+.coretbl tr.corehd .bar u{background:var(--card)}
+.coretbl tr.corehd.wr .bar u i{background:#f5a524}.coretbl tr.corehd.cr .bar u i{background:#e5484d}
+.coretbl tr.corep td:first-child{padding-left:22px}
+.coretbl tr.corep em{font-style:normal;color:var(--mut);font-size:11px;margin-left:4px}
+.coretbl td.idle{color:var(--mut);font-size:12px}
+
+/* ---- WEB status: ภาพรวมทุกเครื่อง (Total/Up/Down/Not OK + ตาราง Server Status) ---- */
+.ov{display:grid;grid-template-columns:minmax(260px,320px) 1fr;gap:16px;margin-top:12px;align-items:start}
+.ovtiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ovtile{border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;min-height:84px;background:var(--chip)}
+.ovtile small{font-size:13px;color:var(--mut);font-weight:500}
+.ovtile b{font-size:36px;line-height:1.1;font-weight:700}
+.ovtile.up{background:rgba(16,194,122,.14)}.ovtile.up b{color:#0a9a60}
+.ovtile.dn{background:rgba(229,72,77,.12)}.ovtile.dn b{color:#e5484d}
+.ovtile.nok{background:rgba(245,165,36,.16)}.ovtile.nok b{color:#c27c00}
+.ovscroll{max-height:260px}
+.ovtbl{font-size:13px}.ovtbl th,.ovtbl td{white-space:nowrap}
+.ovtbl tbody tr{cursor:pointer}.ovtbl tbody tr:hover{background:var(--chip)}
+.ovtbl tbody tr[aria-selected="true"]{background:var(--fill)}
+.ovtbl tbody tr[aria-selected="true"] td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
+.ovtbl tbody tr:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.ovv{font-weight:600;font-variant-numeric:tabular-nums}
+.ovv.ok{color:#0a9a60}.ovv.wr{color:#c27c00;background:rgba(245,165,36,.12)}.ovv.cr{color:#e5484d;background:rgba(229,72,77,.12)}
+.ovst{display:inline-block;font-size:12px;font-weight:600;padding:2px 10px;border-radius:999px}
+.ovst.ok{background:rgba(16,194,122,.14);color:#0a9a60}.ovst.wr{background:rgba(245,165,36,.18);color:#c27c00}.ovst.cr{background:rgba(229,72,77,.14);color:#e5484d}
+@media(max-width:900px){.ov{grid-template-columns:1fr}.ovtiles{grid-template-columns:repeat(4,1fr)}.ovtile b{font-size:26px}}
+
+/* ---- การ์ด KPI: จัดทุกใบเหมือนกัน หัว/ค่า/ลูกศร ชิดบน, กราฟเล็กชิดล่างเต็มกว้าง ---- */
+.kpis{align-items:stretch}
+.k{flex-direction:column;justify-content:flex-start;align-items:stretch;gap:0}
+.k>div:first-child{min-width:0}
+.k .v{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.k svg{width:100%;height:46px;margin-top:auto;padding-top:8px}
+.k.dk{flex-wrap:nowrap}.k .mnts div{line-height:1.25}.k.dk .mnts{flex-basis:auto;margin:10px 0 0;padding-top:8px}
 
 /* ---- ปุ่ม Load INFO log ---- */
-.infold{display:inline-flex;gap:6px;align-items:center}
+.infold{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 .infold select{font:inherit;font-size:13px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 6px}
 .lv.info{color:var(--mut)}
-@media(max-width:900px){.cpuw{grid-template-columns:1fr}}

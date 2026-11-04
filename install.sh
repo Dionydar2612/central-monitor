@@ -19,6 +19,10 @@
 #   6) docker compose up -d --build   (container รันด้วย uid/gid ของ user จริง ไม่ใช่ root)
 #   7) รอจน OpenSearch พร้อม แล้วตั้ง/อัปเดต ISM policy ลบ log อัตโนมัติ
 #        อายุ log ตั้งที่ OPENSEARCH_LOG_RETENTION ใน docker/.env (ปริยาย 7d) รันซ้ำเพื่อเปลี่ยนค่าได้
+#   + สร้างคำสั่ง cm-update (/usr/local/bin/cm-update -> scripts/update.sh)
+#        อัปเดตโค้ดจาก GitHub ได้จากที่ไหนก็ได้โดยไม่ต้องจำ path: cm-update
+#
+# config/puller.yaml ไม่อยู่ใน git (เป็นค่าเฉพาะเครื่อง) ถ้ายังไม่มีจะสร้างจาก config/puller.example.yaml
 #
 # ที่ต้องทำต่อหลังเปิดเว็บได้: หน้า Settings -> + Add target แล้วกรอก Admin user/Password ของเครื่องปลายทาง
 #   ระบบจะวาง public key ให้เอง (ไม่เก็บรหัสผ่าน) — ขั้นวาง key ไม่ได้ทำใน install.sh
@@ -99,6 +103,10 @@ echo "vm.max_map_count=$(sysctl -n vm.max_map_count)"
 # --- 3) สิทธิ์ไฟล์ -----------------------------------------------------
 say "3/7 ปรับเจ้าของไฟล์เป็น $OWNER:$OWNER_GRP (กัน permission denied)"
 run_o mkdir -p keys config data/buffer data/state/system data/prometheus
+if [ ! -f config/puller.yaml ] && [ -f config/puller.example.yaml ]; then
+  run_o cp config/puller.example.yaml config/puller.yaml
+  echo "สร้าง config/puller.yaml จาก config/puller.example.yaml"
+fi
 [ -d keys/known_hosts ] && rm -rf keys/known_hosts       # Docker เคยสร้างเป็นโฟลเดอร์ (ลบหลัง fix_owner ด้านล่างถ้าเป็นของ root)
 fix_owner
 [ -d keys/known_hosts ] && $SUDO rm -rf keys/known_hosts
@@ -180,6 +188,14 @@ for i in $(seq 1 36); do
 done
 [ "$DONE" -eq 1 ] || { echo "[WARN] ตั้ง ISM policy ยังไม่สำเร็จ - ทำซ้ำเองได้ตาม docs/INSTALL-TH.md ข้อ 8.4"; echo "$OUT" | tail -3; }
 
+# --- คำสั่ง cm-update (อัปเดตโค้ดจากที่ไหนก็ได้ ไม่ต้องจำ path) -------------------
+chmod +x scripts/update.sh 2>/dev/null || true
+if $SUDO ln -sfn "$(pwd)/scripts/update.sh" /usr/local/bin/cm-update 2>/dev/null; then
+  echo "คำสั่งอัปเดต: cm-update   (ชี้ไปที่ $(pwd))"
+else
+  echo "[WARN] สร้าง /usr/local/bin/cm-update ไม่ได้ - อัปเดตด้วย: bash $(pwd)/scripts/update.sh"
+fi
+
 fix_owner
 
 # --- สรุป ------------------------------------------------------------
@@ -199,6 +215,7 @@ cat <<MSG
       public key ให้อัตโนมัติ ไม่เก็บรหัสผ่าน) แล้ว Save
       เครื่องที่เพิ่มไว้ก่อนหน้านี้: กดปุ่ม Deploy key ที่แถวของเครื่อง (key ถูกสร้างใหม่ทุกครั้งที่รัน install.sh)
    2) ./scripts/preflight.sh --ssh   เช็คว่า SSH เข้าทุกเครื่องได้
+   3) อัปเดตโค้ดจาก GitHub ภายหลัง: พิมพ์ cm-update จากที่ไหนก็ได้ (cm-update --check = ดูอย่างเดียว)
  หมายเหตุ: ทุกครั้งที่รัน install.sh จะสร้าง .env และ SSH key ใหม่ (รหัสเว็บกลับเป็นค่าเริ่มต้น)
 ======================================================================
 MSG

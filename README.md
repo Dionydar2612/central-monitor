@@ -70,6 +70,7 @@ bash install.sh
 | `bash install.sh` | ติดตั้งครั้งแรก (สร้าง `.env` และ SSH key ใหม่) |
 | `bash install.sh --keep` | อัปเกรดโค้ดโดยคง `.env` และ SSH key เดิมไว้ ไม่ต้อง deploy key ใหม่ |
 | `bash install.sh --no-start` | เตรียมทุกอย่าง แต่ยังไม่สตาร์ท container |
+| `cm-update` | อัปเดตโค้ดจาก GitHub + build + restart พิมพ์จากที่ไหนก็ได้ ไม่ต้องจำ path (คง `puller.yaml`, `.env`, SSH key) · `cm-update --check` ดูอย่างเดียว · `cm-update --where` บอกที่ติดตั้ง |
 
 ถ้าจะเข้าใช้จากเครื่องอื่น ให้ใช้ SSH tunnel (`ssh -L 8090:127.0.0.1:8090 <user>@<server>`) หรือตั้ง nginx + HTTPS ไว้ด้านหน้า ตามข้อ 9 ของ [`docs/INSTALL-TH.md`](docs/INSTALL-TH.md)
 
@@ -77,7 +78,7 @@ bash install.sh
 
 | ไฟล์ | ตั้งค่าอะไร |
 |---|---|
-| `config/puller.yaml` | รายชื่อเครื่อง, path ของ log, รอบการดึง, อายุไฟล์พัก |
+| `config/puller.yaml` | รายชื่อเครื่อง, path ของ log, รอบการดึง, อายุไฟล์พัก (ไม่อยู่ใน git — ต้นแบบคือ `config/puller.example.yaml`) |
 | `docker/.env` | login เว็บ, รหัสผ่าน OpenSearch, secret, โหมด Prometheus (`COMPOSE_PROFILES`), อายุ log (`OPENSEARCH_LOG_RETENTION`) |
 | `start_push_log/otel/otelcol.yaml` | วิธีแยก (parse) log แต่ละประเภท |
 | `metrics/prometheus/prometheus.yml` | การ scrape ของ Prometheus (โหมด bundled) |

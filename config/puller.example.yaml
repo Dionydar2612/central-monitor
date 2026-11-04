@@ -1,0 +1,71 @@
+# =====================================================================
+# puller.yaml - ไฟล์ตั้งค่ากลางของ central-monitor (ไฟล์ที่แก้บ่อยที่สุด)
+#
+# ไฟล์นี้ (puller.example.yaml) = ต้นแบบที่อยู่ใน git
+#   install.sh คัดลอกเป็น config/puller.yaml ให้ครั้งแรก แล้วระบบใช้/แก้ config/puller.yaml
+#   config/puller.yaml ไม่อยู่ใน git -> cm-update ไม่ทับรายชื่อเครื่องของคุณ
+# =====================================================================
+#
+# ใครอ่านไฟล์นี้บ้าง (ทุกส่วนอ่านไฟล์เดียวกัน = แหล่งความจริงเดียว)
+#   - start_push_log/puller/            ดึง log + เก็บสถานะเครื่อง ตามรายการ targets
+#   - start_push_log/cleanup/           ใช้ storage.buffer_retention / cleanup_interval
+#   - web_dashboard/backend/            อ่านรายชื่อเครื่องและ label ของ Prometheus
+#   - start_push_log/puller/prometheus_targets.py
+#                                       สร้าง data/prometheus/web-nodes.json จากไฟล์นี้
+#
+# แก้ไขแล้วต้องทำอะไร
+#   - ส่วนที่ puller/cleaner อ่าน มีผลรอบถัดไปเองโดยไม่ต้อง restart
+#     (puller อ่านใหม่ทุกรอบการดึง, cleaner อ่านใหม่ทุกรอบการลบ)
+#   - ถ้าอยากให้เริ่มรอบดึงทันที:  cd docker && docker compose restart central-puller
+#   - เพิ่ม/เปลี่ยนชื่อเครื่อง: restart central-puller เพื่อสร้าง web-nodes.json ใหม่
+# =====================================================================
+
+# ข้อมูลของ site นี้
+site:
+  name: production            # ใช้เป็นส่วนหน้าของชื่อไฟล์ใน data/buffer
+  environment: production     # ติดเป็น label "environment" ใน Prometheus
+
+# ตั้งเวลาการดึง
+scheduler:
+  interval: 1h                # ดึงทุกกี่เวลา (รูปแบบ 30s / 5m / 1h / 1d)
+  target_stagger: 5m          # เว้นระหว่างเครื่อง เพื่อไม่ให้ SSH ไปทุกเครื่องพร้อมกัน
+
+# ถ้าดึงไฟล์ใดไม่สำเร็จ
+retry:
+  max_attempts: 3             # ลองสูงสุดกี่ครั้งต่อไฟล์
+  delay_seconds: 10           # พักกี่วินาทีระหว่างครั้ง
+
+# การเก็บข้อมูลบน server กลาง
+storage:
+  buffer_retention: 2h        # ไฟล์ใน data/buffer เก่ากว่านี้ถูกลบ (cleanup-buffer.py)
+                              #   ต้องมากกว่าเวลาที่ otel ใช้ส่งเข้า OpenSearch แบบมีเผื่อ
+                              #   ถ้าอยากกันเหนียวตอน otel/OpenSearch ล่ม ให้เพิ่มค่านี้
+  cleanup_interval: 10m       # cleaner ตรวจ/ลบทุกกี่เวลา
+  system_history_retention: 7d  # เก็บสถานะเครื่องย้อนหลัง (data/state/system/history/)
+                                #   ใช้ตอนคลิกดู log เก่าแล้วอยากเห็น service/process ณ เวลานั้น
+  store_info_logs: false        # false = ไม่เก็บ log ระดับ INFO (puller ตัดทิ้งก่อนส่งเข้า OpenSearch)
+                                #   ดู INFO ได้จากปุ่ม "Load INFO log" ในหน้า dashboard (ดึงสดตอนกด ไม่เก็บ)
+
+# ---------------------------------------------------------------------
+# targets = เครื่องที่ต้องการดึงข้อมูล
+#   เริ่มต้นว่าง: เพิ่มเครื่องที่หน้าเว็บ Settings -> + Add target (ระบบเขียนไฟล์นี้ให้เอง)
+#   หรือเขียนเองตามตัวอย่างนี้ (copy ไปใต้ targets: แล้วเอา # ออก ลบ [] ออกจาก targets: [])
+#
+#   - name: web-01              # ชื่อที่แสดงใน UI และอยู่ในชื่อไฟล์ buffer (ใช้ได้เฉพาะ a-z 0-9 -)
+#     aliases: [SERVER-HOSTNAME]  # (ไม่บังคับ) hostname จริงของเครื่องที่ปรากฏใน log ถ้าต่างจากชื่อ target
+#     host: 10.0.10.11          # IP/DNS ของเครื่อง ต้องตรงกับใน keys/known_hosts ทุกตัวอักษร
+#     prometheus:               # วิธีที่ dashboard หา metrics ของเครื่องนี้ใน Prometheus
+#       job: web-01-node        # ค่า label job ใน Prometheus
+#       instance: 10.0.10.11:9100   # host:port ของ node_exporter
+#     ssh:
+#       port: 22
+#       user: central-pull      # user (read-only) ที่ปลายทาง
+#     logs:                     # ไฟล์ log ที่ต้องการดึง
+#       - name: system          # ชนิด log -> เลือก parser ใน otel (application, system, auth, kernel, logapp,
+#         path: /var/log/syslog #   loginuser, journal; ชื่ออื่น = other)  path = ไฟล์เดียวหรือ wildcard /dir/*.log
+#         type: application     # หมวดหมู่ (ไว้บอกประเภท ไม่มีผลกับการดึง)
+#       - name: journal         # systemd journal (journalctl) แทนไฟล์
+#         path: journal         #   journal = ทั้งเครื่อง, journal:nginx.service,ssh.service = เฉพาะ unit
+#         type: system          #   user ปลายทางต้องอยู่กลุ่ม systemd-journal (หรือ adm)
+# ---------------------------------------------------------------------
+targets: []

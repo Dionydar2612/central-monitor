@@ -37,11 +37,16 @@
 <div class="user"><span><span id="systemDot" class="dot green"></span><span id="systemStatus">Loading...</span></span><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings">Settings</a><button id="logoutButton">Logout</button></div>
 </header>
 
-<!-- การ์ด WEB status: ปุ่มเลือกเครื่อง (#mach จาก /api/web-status),
-     แถบข้อมูลสรุป (#meta: State, Last pull, Load, Uptime, ... จาก /api/summary + /api/metrics) -->
+<!-- การ์ด WEB status: ภาพรวมทุกเครื่องจาก /api/overview
+       #ovTiles = Total / Up / Down / Not OK
+       #mach    = ตาราง Server Status 1 แถวต่อเครื่อง (คลิกแถว = เลือกเครื่องที่จะดูรายละเอียดด้านล่าง)
+     แถบข้อมูลสรุปของเครื่องที่เลือก (#meta: State, Last pull, Load, Uptime, ... จาก /api/summary + /api/metrics) -->
 <section class="card mach">
-<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px">Showing <b id="cur" style="color:var(--ink)">-</b> · auto refresh 10 seconds</span></div>
-<div class="chips" id="mach"></div>
+<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px">Showing <b id="cur" style="color:var(--ink)">-</b> · click a row to select · auto refresh 10 seconds</span></div>
+<div class="ov">
+<div class="ovtiles" id="ovTiles"></div>
+<div class="tblw scroll ovscroll"><table class="ovtbl"><thead><tr><th>Name</th><th>IP</th><th>Status</th><th>CPU avg 5m</th><th>Memory %</th><th>Disk %</th><th>Last pull</th></tr></thead><tbody id="mach"></tbody></table></div>
+</div>
 <div class="mm" id="meta"></div>
 </section>
 
@@ -76,11 +81,12 @@
 </section>
 </div>
 
-<!-- CPU process per CPU core (#cores): 1 กล่องต่อ core = % การใช้งาน (Prometheus เฉลี่ย 5 นาที)
-     + process ที่รันบน core นั้นและกิน CPU ของ core เท่าไหร่ (snapshot ของ puller: วัด 1 วินาที)
+<!-- CPU process per CPU core (#cores): ตารางแบบเดียวกับ CPU process แบ่งเป็นกลุ่มทีละ core
+       แถวหัวกลุ่ม = core นั้นใช้งานกี่ % (Prometheus เฉลี่ย 5 นาที) + มีกี่ process
+       แถวย่อย     = process ที่รันบน core นั้นและกิน CPU ของ core เท่าไหร่ (snapshot ของ puller วัด 1 วินาที)
      และตาราง Memory (#mem) จาก snapshot ของ puller -->
-<div class="grid two cpuw">
-<section class="card"><div class="top"><h2>CPU process per CPU core</h2><span class="cnt" id="coreCnt"></span></div><div class="coremeta" id="coreMeta"></div><div class="cores scroll" id="cores"></div></section>
+<div class="grid two">
+<section class="card"><div class="top"><h2>CPU process per CPU core</h2><span class="cnt" id="coreCnt"></span></div><div class="coremeta" id="coreMeta"></div><div class="tblw scroll procscroll coresc"><table class="coretbl"><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="cores"></tbody></table></div></section>
 <section class="card"><h2>Memory Usage by Process</h2><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
 </div>
 
