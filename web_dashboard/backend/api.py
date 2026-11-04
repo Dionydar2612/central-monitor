@@ -20,6 +20,7 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /login, /                หน้า login / หน้า dashboard
     POST /api/login | /api/logout | GET /api/me
     GET  /api/web-status          รายชื่อเครื่อง + online/offline (จาก Prometheus `up`)
+    GET  /api/overview            ภาพรวมทุกเครื่อง: Total/Up/Down + CPU/Memory/Disk/สถานะ ต่อเครื่อง
     GET  /api/summary?web=        สรุปเครื่อง: สถานะ, Last pull, จำนวน problem, metrics
     GET  /api/metrics?web=        metrics ตอนนี้ + service/process/event
     GET  /api/metrics/history     กราฟย้อนหลัง (web, start, end เป็น unix วินาที)
@@ -67,6 +68,7 @@ from metrics_service import (
     get_metrics_history,
     get_web_prometheus_config,
 )
+from overview_service import get_overview
 from settings import STATIC_DIR, load_web_targets
 from system_state import last_pull_time
 import targets_service
@@ -190,6 +192,12 @@ def web_status():
         result.append({"web": web, "status": "online" if value == 1 else "offline"})
 
     return jsonify(result)
+
+
+@app.get("/api/overview")
+def overview():
+    """ตาราง Server Status ด้านบนของ dashboard (ดู overview_service.py)"""
+    return jsonify(get_overview())
 
 
 @app.get("/api/metrics")
