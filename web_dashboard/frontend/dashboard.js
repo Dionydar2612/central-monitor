@@ -884,8 +884,8 @@ function canOperate() { return S.role === "operator" || S.role === "admin"; }
 function buildTree(servers, checks) {
     const root = { name: "", path: "", kids: new Map(), servers: [], checks: [], counts: {} };
     const node = path => {
-        let n = root;
-        String(path || UNGROUPED).split("/").filter(Boolean).forEach((part, i, all) => {
+        let n = root;                       /* ไม่มีกลุ่ม -> อยู่ชั้นบนสุด ไม่มีหัวกลุ่ม */
+        String(path || "").split("/").filter(Boolean).forEach((part, i, all) => {
             if (!n.kids.has(part)) n.kids.set(part, { name: part, path: all.slice(0, i + 1).join("/"), kids: new Map(), servers: [], checks: [], counts: {} });
             n = n.kids.get(part);
         });
@@ -984,10 +984,13 @@ function renderMachines(ov) {
 
     const f = (S.ovq || "").trim().toLowerCase();
     const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
-    const tops = [...tree.kids.values()].sort((a, b) => (a.name === UNGROUPED) - (b.name === UNGROUPED) || a.name.localeCompare(b.name));
+    const tops = [...tree.kids.values()].sort((a, b) => a.name.localeCompare(b.name));
+    /* เครื่อง/check ที่ไม่ได้ตั้งกลุ่ม: แสดงตารางตรง ๆ ไม่มีหัวกลุ่ม (กลุ่มแสดงเฉพาะที่ตั้งชื่อไว้) */
+    const loose = (tree.servers.length ? `<div class="tblw gloose">${serverRows(tree.servers, cur)}</div>` : "") +
+        (tree.checks.length ? `<div class="tblw gloose">${checkRows(tree.checks)}</div>` : "");
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
-        : tops.length ? tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
+        : (tops.length || loose) ? loose + tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
 }
 
 async function togglePause(btn) {
@@ -1867,12 +1870,6 @@ async function loadCurrentUser() {
         S.role = d.role || "viewer";
         document.querySelectorAll(".st-nav[href='/settings']").forEach(a => { a.hidden = S.role !== "admin"; });
         const info = q(".infold"); if (info) info.hidden = !canOperate();
-        if (d.default_password && !q("#pwWarn")) {
-            const b = document.createElement("div");
-            b.id = "pwWarn"; b.className = "pwwarn";
-            b.innerHTML = `<b>Default password in use.</b> The admin account still uses <code>admin / admin</code>. Change <code>CENTRAL_AUTH_PASSWORD</code> in <code>docker/.env</code>, then run <code>cd docker && docker compose up -d --force-recreate central-api</code> (see docs/CONFIG-TH.md section 2).`;
-            q(".wrap").insertBefore(b, q(".wrap").children[1]);
-        }
         if (S.ov) renderMachines();
     } catch (err) { console.error("Failed to load current user:", err); }
 }
@@ -1928,7 +1925,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {
         const all = [...(S.ov && S.ov.servers || []), ...(SHOW_CHECKS && S.ov && S.ov.checks || [])];
-        all.forEach(x => { const parts = String(x.group || UNGROUPED).split("/").filter(Boolean); parts.forEach((_, i) => S.closed.add(parts.slice(0, i + 1).join("/"))); });
+        all.forEach(x => { const parts = String(x.group || "").split("/").filter(Boolean); parts.forEach((_, i) => S.closed.add(parts.slice(0, i + 1).join("/"))); });
         saveClosedGroups(); renderMachines();
     });
     q("#infoClear").addEventListener("click", closeInfo);

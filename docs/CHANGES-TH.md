@@ -7,7 +7,7 @@
 | เกณฑ์ต่อเครื่อง | Settings -> ฟอร์มเครื่อง: CPU / Memory / Disk warning-error เฉพาะเครื่อง (`targets[].thresholds`) · ใช้ทั้ง sensor, สถานะในต้นไม้กลุ่ม และสีการ์ด KPI |
 | กราฟย้อนหลัง sensor | คลิกกราฟในการ์ด sensor -> 1h / 6h / 24h / 7d / 30d พร้อมเส้น warning/error และ min/avg/max |
 | HTTPS ในตัว | `./scripts/make-cert.sh` สร้าง self-signed (หรือวางใบรับรองจริงใน `keys/tls/`) -> gunicorn เปิด https เอง (`gunicorn.conf.py`), cookie secure อัตโนมัติ |
-| เตือนรหัสเริ่มต้น | admin ยังใช้ `admin/admin` -> แถบแดงบน Dashboard |
+| เตือนรหัสเริ่มต้น | (นำออกแล้วตามที่ขอ) |
 | การ์ด CPU process | แสดงเวลาของข้อมูล เก่าเกิน 2 รอบเป็นสีแดง "outdated" |
 | เทสต์อัตโนมัติ | `tests/` + `./scripts/test.sh` (หรือ `./scripts/test.sh docker`) 13 เทสต์ |
 | แก้ bug | `[hidden]` ถูก CSS class ทับ (ปุ่ม INFO ของ viewer ไม่ซ่อน) |

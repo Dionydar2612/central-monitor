@@ -1096,8 +1096,8 @@ td.bad{color:#e5484d}
 
 .asof{font-size:12px;color:var(--mut);margin:2px 0 6px}
 .ovack{display:inline-block;margin-left:6px;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;background:#b7791f;color:#fff}
-.pwwarn{margin:-6px 0 16px;padding:10px 14px;border-radius:8px;border:1px solid rgba(229,72,77,.4);background:rgba(229,72,77,.07);font-size:13px;line-height:1.5}
-.pwwarn b{color:#e5484d}.pwwarn code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 
 /* hidden attribute ต้องชนะ display ของ class เสมอ (modal, ปุ่ม INFO ของ viewer ฯลฯ) */
 [hidden]{display:none!important}
+
+.gloose{margin:4px 10px 10px}

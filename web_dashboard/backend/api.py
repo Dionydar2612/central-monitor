@@ -290,10 +290,7 @@ def current_user():
         return jsonify({"authenticated": False}), 401
 
     role = getattr(g, "role", None) or session.get("role") or "viewer"
-    from auth import AUTH_PASSWORD
-    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role,
-                    # บัญชีหลักยังใช้รหัส admin -> หน้าเว็บเตือน admin ให้เปลี่ยน
-                    "default_password": role == "admin" and AUTH_PASSWORD == "admin"})
+    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role})
 
 
 # ============================================================
