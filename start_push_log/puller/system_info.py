@@ -194,30 +194,62 @@ def _collect_resource(target):
     return resource
 
 
+# คำสั่งของเราเองไปโผล่ในรายการ process ได้ (observer effect):
+#   - `ps` ที่เรารัน: %CPU ของ ps = เวลา CPU ÷ เวลาตั้งแต่เริ่ม ps เพิ่งเริ่มไม่กี่ ms และกำลังอ่าน /proc
+#     ของทุก process อยู่ -> ขึ้น ~100% เสมอ ทั้งที่ไม่ใช่ภาระจริงของเครื่อง
+#   - sshd ของ session ที่ puller ใช้ SSH เข้ามา
+# จึงพิมพ์ "@@SELF <pid ของ shell> <pid ของ sshd session>" ก่อน แล้วตัดลูกของ shell (ps, head) ทิ้ง
+# และติดป้าย self=True ให้ sshd session (หน้าเว็บอธิบายว่าเป็นของระบบ monitor เอง)
+PROCESS_COMMAND = "echo @@SELF $$ $PPID; ps -eo pid,ppid,psr,pcpu,pmem,comm --sort=-pcpu | head -n 14"
+
+
+def _parse_self(output):
+    """บรรทัด "@@SELF <shell> <sshd>" -> (shell_pid, sshd_pid) หาไม่เจอ -> (None, None)"""
+    for line in output.splitlines():
+        if line.startswith("@@SELF"):
+            parts = line.split()
+            try:
+                return int(parts[1]), int(parts[2])
+            except (ValueError, IndexError):
+                break
+    return None, None
+
+
+def parse_processes(output, limit=10):
+    """ผล PROCESS_COMMAND -> [{pid, core, name, cpu, memory, self?}] (ไม่รวมคำสั่งของเราเอง)"""
+    shell, sshd = _parse_self(output)
+    processes = []
+
+    for line in output.splitlines():
+        parts = line.split(None, 5)       # comm ไว้ท้ายสุด (ชื่อ process อาจมีช่องว่าง)
+        if len(parts) < 6 or not parts[0].isdigit():
+            continue                       # หัวตาราง / @@SELF
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+            item = {
+                "pid": pid,
+                "core": int(parts[2]),
+                "name": parts[5].strip(),
+                "cpu": float(parts[3]),
+                "memory": float(parts[4]),
+            }
+        except ValueError:
+            continue
+        if shell is not None and (ppid == shell or pid == shell):
+            continue                       # ps / head / shell ของเราเอง
+        if pid == sshd:
+            item["self"] = True
+        processes.append(item)
+
+    return processes[:limit]
+
+
 def _collect_processes(target):
-    """10 process ที่กิน CPU สูงสุด -> [{pid, name, cpu, memory}]"""
+    """10 process ที่กิน CPU สูงสุด -> [{pid, core, name, cpu, memory}]"""
     processes = []
 
     try:
-        # comm ไว้ท้ายสุด (ชื่อ process อาจมีช่องว่าง)
-        output = run_ssh(target, "ps -eo pid,psr,pcpu,pmem,comm --sort=-pcpu | head -11")
-
-        for line in output.splitlines()[1:]:      # ข้ามบรรทัดหัวตาราง
-            parts = line.split(None, 4)
-
-            if len(parts) < 5:
-                continue
-
-            try:
-                processes.append({
-                    "pid": int(parts[0]),
-                    "core": int(parts[1]),
-                    "name": parts[4].strip(),
-                    "cpu": float(parts[2]),
-                    "memory": float(parts[3]),
-                })
-            except ValueError:
-                continue
+        processes = parse_processes(run_ssh(target, PROCESS_COMMAND))
 
     except Exception as e:
         print(f"[SYSTEM] processes failed target={target['name']} error={e}")
@@ -242,7 +274,7 @@ _SAMPLE = (
     "grep -H '' [0-9]*/task/[0-9]*/stat 2>/dev/null | " + _THREAD_AWK
 )
 CPU_CORE_COMMAND = (
-    "getconf CLK_TCK; cd /proc || exit 1; "
+    "getconf CLK_TCK; echo @@SELF $$ $PPID; cd /proc || exit 1; "
     f"echo @@S1; {_SAMPLE}; sleep 1; echo @@S2; {_SAMPLE}; true"
 )
 
@@ -298,6 +330,9 @@ def parse_cpu_cores(output):
     except (ValueError, IndexError):
         clk = 100
 
+    # shell ที่รันคำสั่งวัดนี้ (และลูก ๆ ของมัน) ไม่นับ ; sshd session ของเราติดป้าย self
+    shell, sshd = _parse_self(text[0])
+
     first, second = text[1].split("@@S2", 1)
     up1, cores1, th1 = _parse_core_sample([l for l in first.splitlines() if l.strip()])
     up2, cores2, th2 = _parse_core_sample([l for l in second.splitlines() if l.strip()])
@@ -323,7 +358,7 @@ def parse_cpu_cores(output):
 
     for (pid, tid), (ticks2, core, name) in th2.items():
         ticks1 = th1.get((pid, tid), (None,))[0]
-        if ticks1 is None or ticks2 <= ticks1 or core not in per_core:
+        if ticks1 is None or ticks2 <= ticks1 or core not in per_core or pid == shell:
             continue
         cpu = (ticks2 - ticks1) / ticks * 100
         procs = per_core[core]["processes"]
@@ -344,6 +379,8 @@ def parse_cpu_cores(output):
     for p in top:
         p["cpu"] = round(p["cpu"], 1)                     # % ของ 1 core (หลาย thread อาจเกิน 100)
         p["cores"].sort(key=lambda c: c["cpu"], reverse=True)
+        if p["pid"] == sshd:
+            p["self"] = True
 
     result = []
     for core in sorted(per_core):
