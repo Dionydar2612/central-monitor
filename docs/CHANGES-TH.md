@@ -28,6 +28,11 @@
 - `puller/system_info.py`: อ่าน `/proc/stat` และ `/proc/<pid>/task/<tid>/stat` 2 ครั้งห่างกัน 1 วินาที → `cpu_cores` ใน snapshot: จำนวน core, % ของแต่ละ core, process ที่รันบน core นั้นและกิน CPU ของ core กี่ % (นับทีละ thread จึงเห็น process เดียวกระจายหลาย core ได้)
 - หน้าเว็บ: การ์ด 1 กล่องต่อ core · % หัวกล่องเป็นค่าเฉลี่ย 5 นาทีจาก Prometheus · รายการ process มาจาก snapshot รอบดึงล่าสุด
 
+## 5) อัปเดตด้วยคำสั่งเดียว `cm-update`
+- `scripts/update.sh` (ใหม่) + `install.sh` สร้างลิงก์ `/usr/local/bin/cm-update` → พิมพ์ `cm-update` จากที่ไหนก็ได้
+- `config/puller.yaml` ออกจาก git (ต้นแบบ = `config/puller.example.yaml`, install.sh คัดลอกให้ถ้ายังไม่มี) → pull แล้วไม่ทับรายชื่อเครื่อง
+- update.sh สำรอง `puller.yaml` + `.env` ไว้ที่ `data/state/update-backup/` (เก็บ 10 ชุดล่าสุด) ทุกครั้ง
+
 ---
 
 # สรุปการเปลี่ยนแปลง (รอบตรวจ 20 ต.ค. 2026)

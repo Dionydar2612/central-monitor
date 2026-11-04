@@ -17,3 +17,9 @@ data/**
 *.bak
 *.bak-*
 *.bak.*
+
+# ค่าเฉพาะเครื่อง (ไฟล์ตั้งต้นอยู่ที่ config/puller.example.yaml)
+config/puller.yaml
+
+# Python cache
+__pycache__/
