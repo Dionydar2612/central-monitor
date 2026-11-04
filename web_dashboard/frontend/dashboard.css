@@ -985,3 +985,10 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .infold{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 .infold select{font:inherit;font-size:13px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 6px}
 .lv.info{color:var(--mut)}
+
+/* ---- การ์ด CPU process: วัดสดไม่ได้ ---- */
+.liveerr{display:grid;gap:8px;padding:18px 16px;margin:8px 0;border:1px solid rgba(229,72,77,.35);background:rgba(229,72,77,.06);border-radius:8px;font-size:13px;white-space:normal;line-height:1.5}
+.liveerr b{color:#e5484d}
+.liveerr code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+.liveerr>code{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.liveerr span{color:var(--mut)}
