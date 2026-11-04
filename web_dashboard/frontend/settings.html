@@ -78,7 +78,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 </section>
 
 <!-- Web / SSL checks: puller.yaml -> checks: (ตัวเช็คจริง = start_push_log/puller/web_checks.py) -->
-<section class="card svc">
+<section class="card svc" id="checksCard" hidden>
 <div class="top"><h2>Web checks (uptime / SSL)</h2><button class="st-btn primary" id="addCheckBtn">+ Add check</button></div>
 <div style="color:var(--mut);font-size:13px">เช็ค URL ทุก ๆ interval วินาที: status code, keyword ในหน้าเว็บ, เวลาตอบสนอง และวันหมดอายุใบรับรอง SSL · ผลแสดงในกลุ่มเดียวกับเครื่องที่หน้า Dashboard</div>
 <div class="tblw"><table>

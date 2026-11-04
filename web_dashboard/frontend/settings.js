@@ -449,5 +449,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $("checkCancel").onclick = () => { $("checkForm").hidden = true; };
     $("checkSave").onclick = saveCheck;
     $("userAdd").onclick = addUser;
-    loadUser(); loadTargets(); loadChecks(); loadUsers();
+    /* Web checks ซ่อนไว้ก่อน: เปลี่ยน SHOW_CHECKS เป็น true แล้วการ์ดจะกลับมา (คู่กับ dashboard.js) */
+    const SHOW_CHECKS = false;
+    $("checksCard").hidden = !SHOW_CHECKS;
+    loadUser(); loadTargets(); loadUsers();
+    if (SHOW_CHECKS) loadChecks();
 });

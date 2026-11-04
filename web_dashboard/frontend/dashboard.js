@@ -854,6 +854,8 @@ function setLbl() {
 const STATE_LABEL = { HEALTHY: ["OK", "ok"], WARNING: ["Warning", "wr"], PROBLEM: ["Problem", "cr"], DOWN: ["Down", "cr"], PAUSED: ["Paused", "ps"] };
 const CHECK_LABEL = { up: ["Up", "ok"], warning: ["Warning", "wr"], down: ["Down", "cr"], paused: ["Paused", "ps"], pending: ["Pending", ""] };
 const UNGROUPED = "Ungrouped";
+/* Web checks (uptime / SSL) ซ่อนไว้ก่อน: เปลี่ยนเป็น true เพื่อแสดงในต้นไม้กลุ่ม + ช่องสรุป (ต้องเปิดที่ settings.js ด้วย) */
+const SHOW_CHECKS = false;
 
 /* สถานะรวม 4 แบบ (ใช้นับป้ายของกลุ่ม) */
 function itemBucket(x, isCheck) {
@@ -950,7 +952,7 @@ function renderMachines(ov) {
     S.ov = ov || S.ov;
     ov = S.ov || {};
     const webs = Array.isArray(ov.servers) ? ov.servers : [];
-    const checks = Array.isArray(ov.checks) ? ov.checks : [];
+    const checks = SHOW_CHECKS && Array.isArray(ov.checks) ? ov.checks : [];
     S.webs = webs;
     if (ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
     const cur = webs.some(w => w.web === S.web) ? S.web : ((webs.find(w => !w.paused) || webs[0] || {}).web || null);
@@ -966,7 +968,8 @@ function renderMachines(ov) {
         tile("Warning", (ov.warning || 0), "nok", "≥ warning threshold") +
         tile("Down / Problem", (ov.down || 0) + (ov.problem || 0), "dn", `${ov.down || 0} down · ${ov.problem || 0} problem`) +
         tile("Paused", ov.paused || 0, "ps", "") +
-        tile("Web checks", checks.length, "chk", checks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none");
+        (SHOW_CHECKS ? tile("Web checks", checks.length, "chk", checks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "");
+    q("#ovTiles").classList.toggle("five", !SHOW_CHECKS);
 
     const f = (S.ovq || "").trim().toLowerCase();
     const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
@@ -1899,7 +1902,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {
-        const all = [...(S.ov && S.ov.servers || []), ...(S.ov && S.ov.checks || [])];
+        const all = [...(S.ov && S.ov.servers || []), ...(SHOW_CHECKS && S.ov && S.ov.checks || [])];
         all.forEach(x => { const parts = String(x.group || UNGROUPED).split("/").filter(Boolean); parts.forEach((_, i) => S.closed.add(parts.slice(0, i + 1).join("/"))); });
         saveClosedGroups(); renderMachines();
     });
