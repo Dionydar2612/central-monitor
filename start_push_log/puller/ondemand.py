@@ -148,13 +148,51 @@ def parse_memory_top(output):
     return out
 
 
+def parse_details(output):
+    """ผล `ps -o pid=,user:32=,pmem=,rss=,nlwp=,etime=,stat=,args=` -> {pid: {...}}"""
+    out = {}
+    for line in output.splitlines():
+        parts = line.split(None, 7)
+        if len(parts) < 7:
+            continue
+        try:
+            out[int(parts[0])] = {
+                "user": parts[1],
+                "memory": float(parts[2]),
+                "rss_mb": round(int(parts[3]) / 1024, 1),
+                "threads_total": int(parts[4]),
+                "elapsed": parts[5],          # [[dd-]hh:]mm:ss ตั้งแต่ process เริ่ม
+                "state": parts[6],
+                "command": parts[7].strip() if len(parts) > 7 else "",
+            }
+        except ValueError:
+            continue
+    return out
+
+
 def fetch_processes(target):
-    """CPU ต่อ core + process บนแต่ละ core + top memory  (SSH ครั้งเดียว)"""
+    """CPU ต่อ core + process บนแต่ละ core + top memory (SSH ครั้งแรก)
+    แล้วขอรายละเอียดของ process ที่กิน CPU สูงสุด: user, RAM, thread, เวลาทำงาน, คำสั่งเต็ม (SSH ครั้งที่ 2)"""
     output = run_ssh(target, f"{CPU_CORE_COMMAND}; echo @@MEM; {MEMORY_COMMAND}")
     cpu_part, _, mem_part = output.partition("@@MEM")
+    cores = parse_cpu_cores(cpu_part)
+
+    pids = [p["pid"] for p in cores.get("processes", [])]
+    if pids:
+        try:
+            details = parse_details(run_ssh(
+                target,
+                "ps -o pid=,user:32=,pmem=,rss=,nlwp=,etime=,stat=,args= -p "
+                + ",".join(str(int(p)) for p in pids) + " 2>/dev/null; true",
+            ))
+            for p in cores["processes"]:
+                p.update(details.get(p["pid"], {}))
+        except Exception as e:
+            print(f"[ONDEMAND] process details failed target={target.get('name')} error={e}")
+
     return {
         "time": datetime.now().astimezone().isoformat(),
-        "cpu_cores": parse_cpu_cores(cpu_part),
+        "cpu_cores": cores,
         "memory_top": parse_memory_top(mem_part),
     }
 

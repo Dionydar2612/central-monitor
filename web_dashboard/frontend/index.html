@@ -81,12 +81,13 @@
 </section>
 </div>
 
-<!-- CPU process per CPU core (#cores): ตารางแบบเดียวกับ CPU process แบ่งเป็นกลุ่มทีละ core
+<!-- CPU process (#cores) 2 มุมมอง: Processes = ตาราง process ที่กิน CPU สูงสุด (คลิกแถวดูว่ารันบน core ไหน กี่ %, user, RAM, คำสั่ง)
+     Per core = ตารางแบ่งกลุ่มทีละ core
        แถวหัวกลุ่ม = core นั้นใช้งานกี่ % (Prometheus เฉลี่ย 5 นาที) + มีกี่ process
        แถวย่อย     = process ที่รันบน core นั้นและกิน CPU ของ core เท่าไหร่ (snapshot ของ puller วัด 1 วินาที)
      และตาราง Memory (#mem) จาก snapshot ของ puller -->
 <div class="grid two">
-<section class="card proccard"><div class="top"><h2>CPU process per CPU core</h2><div class="svh"><span class="cnt" id="coreCnt"></span><button type="button" class="svbtn" id="liveBtn" title="Measure again now">Refresh</button></div></div><div class="coremeta" id="coreMeta"></div><div class="tblw scroll procbody"><table class="coretbl"><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="cores"></tbody></table></div></section>
+<section class="card proccard"><div class="top"><h2>CPU process</h2><div class="svh"><span class="cnt" id="coreCnt"></span><div class="tabs cvtabs" id="coreTabs" role="group" aria-label="View"><button type="button" data-cv="proc" aria-pressed="true">Processes</button><button type="button" data-cv="core" aria-pressed="false">Per core</button></div><button type="button" class="svbtn" id="liveBtn" title="Measure again now">Refresh</button></div></div><div class="coremeta" id="coreMeta"></div><div class="tblw scroll procbody"><table class="coretbl"><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="cores"></tbody></table></div></section>
 <section class="card proccard"><div class="top"><h2>Memory Usage by Process</h2><span class="cnt" id="memCnt"></span></div><div class="coremeta" id="memMeta"></div><div class="tblw scroll procbody"><table class="memtbl"><thead><tr><th>Process</th><th>PID</th><th style="width:48%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
 </div>
 

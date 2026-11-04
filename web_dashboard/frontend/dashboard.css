@@ -920,6 +920,24 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .memtbl td:first-child{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .memtbl .bar b{min-width:120px!important}
 .stale{color:#e5484d;font-weight:600}
+
+/* ---- การ์ด CPU process: แถวคลิกเปิดรายละเอียด ---- */
+.cvtabs button{padding:5px 10px}
+.coretbl tr.prow{cursor:pointer}.coretbl tr.prow:hover{background:var(--chip)}
+.coretbl tr.prow.open{background:var(--fill)}
+.coretbl tr.prow:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.coretbl tr.prow em{font-style:normal;color:var(--mut);font-size:11px;margin-left:6px}
+.coretbl .caret{font-style:normal;color:var(--mut);display:inline-block;width:14px;font-size:11px}
+.coretbl td.wr .bar u i{background:#f5a524}.coretbl td.cr .bar u i{background:#e5484d}
+.coretbl tr.pdet>td{background:var(--bg);padding:12px 14px 14px 28px}
+.pd{display:grid;gap:12px;font-size:13px;white-space:normal}
+.pd small{display:block;color:var(--mut);font-size:11px;margin-bottom:4px}
+.pdcores>div{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 16px}
+.pcore{display:grid;grid-template-columns:52px 1fr;align-items:center;gap:6px}.pcore b{font-weight:600}
+.pcore .bar b{min-width:52px!important}.pcore em{color:var(--mut);font-size:12px;font-style:normal}
+.pdkv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px 16px}
+.pdkv span{font-weight:600;word-break:break-word}
+.pdcmd code{display:block;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-all;max-height:90px;overflow:auto}
 .coretbl tr.corehd td{background:var(--chip);border-top:2px solid var(--card);font-size:13px}
 .coretbl tr.corehd td:nth-child(2){color:var(--mut);font-size:12px}
 .coretbl tr.corehd.wr td:first-child b{color:#c27c00}.coretbl tr.corehd.cr td:first-child b{color:#e5484d}

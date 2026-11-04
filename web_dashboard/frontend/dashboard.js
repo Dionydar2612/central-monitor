@@ -731,6 +731,7 @@ const S = {
     hoverX: null, drag: null, tipPos: null, zoomPrev: null, logKey: null,
     info: null, infoBusy: false,           // INFO ที่กดโหลดสด {rows, errors, lines} (null = แสดง ERROR/WARN ปกติ) ไม่เก็บที่ไหน
     live: null, liveAt: 0, liveBusy: false, liveErr: null,   // process ต่อ core + top memory วัดสด (/api/live-processes)
+    coreView: "proc", openPid: new Set(),  // การ์ด CPU process: มุมมอง (proc = ตาราง process, core = แยกทีละ core) + แถวที่เปิดรายละเอียด
     pullInterval: 3600                     // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
 };
 /* วัด process สดใหม่ทุกกี่ ms (ขณะเปิดหน้า) */
@@ -1222,7 +1223,49 @@ function bar(v, max, text) {
 /* ข้อมูลที่ใช้วาด: วัดสด (S.live ของเครื่องที่เลือก) ก่อน ไม่มี -> snapshot ของรอบดึงล่าสุด */
 function liveData() { return S.live && S.live.web === S.web ? S.live.data : null; }
 
+/* สถานะ process จาก ps (ตัวอักษรแรกของ STAT) */
+const PROC_STATE = { R: "running", S: "sleeping (waiting for an event)", D: "waiting on disk / I/O", Z: "zombie (finished, not cleaned up)", T: "stopped", I: "idle kernel thread" };
+
+/* รายละเอียดของ process 1 ตัว (แถวที่กดเปิด): รันบน core ไหนกี่ %, user, สถานะ, thread, RAM, เวลาทำงาน, คำสั่งเต็ม */
+function procDetail(p) {
+    const kv = (k, v) => hasValue(v) && v !== "" ? `<div><small>${k}</small><span>${escapeHtml(String(v))}</span></div>` : "";
+    const cores = Array.isArray(p.cores) && p.cores.length
+        ? p.cores.map(c => `<span class="pcore"><b>CPU ${escapeHtml(c.core)}</b>${bar(c.cpu, 100, formatPercent(c.cpu))}</span>`).join("")
+        : (hasValue(p.core) ? `<span class="pcore"><b>CPU ${escapeHtml(p.core)}</b><em>last core it ran on</em></span>` : `<em>-</em>`);
+    const st = String(p.state || "");
+    const mem = hasValue(p.memory) ? formatPercent(p.memory) + (hasValue(p.rss_mb) ? ` · ${Number(p.rss_mb) >= 1024 ? (p.rss_mb / 1024).toFixed(1) + " GB" : Math.round(p.rss_mb) + " MB"}` : "") : null;
+    const thr = hasValue(p.threads_total) ? (hasValue(p.threads) && p.cores ? `${p.threads} busy / ${p.threads_total} total` : p.threads_total) : (p.threads > 1 ? p.threads : null);
+    return `<div class="pd">
+        <div class="pdcores"><small>Running on (share of each core during the 1-second sample)</small><div>${cores}</div></div>
+        <div class="pdkv">${kv("CPU total", hasValue(p.cpu) ? `${formatPercent(p.cpu)} of one core` : null)}${kv("State", st ? `${st} · ${PROC_STATE[st[0]] || "-"}` : null)}${kv("User", p.user)}${kv("Threads", thr)}${kv("Memory", mem)}${kv("Running for", p.elapsed ? String(p.elapsed).replace(/^(\d+)-/, "$1d ") : null)}</div>
+        ${p.command ? `<div class="pdcmd"><small>Command</small><code>${escapeHtml(p.command)}</code></div>` : ""}
+    </div>`;
+}
+
+/* มุมมอง Processes (ค่าเริ่มต้น): ตาราง Process | PID | CPU เรียงจากกิน CPU มากสุด คลิกแถวเพื่อดูรายละเอียด */
+function renderProcView() {
+    const m = S.metrics || {}, ld = liveData();
+    const liveList = ld && ld.cpu_cores && Array.isArray(ld.cpu_cores.processes) ? ld.cpu_cores.processes : null;
+    const list = liveList || [...(Array.isArray(m.processes) ? m.processes : [])].sort((a, b) => Number(b.cpu || 0) - Number(a.cpu || 0)).slice(0, 15);
+    const err = S.liveErr ? `Cannot measure live (${S.liveErr}) · showing last pull ${formatTimestamp(m.system_timestamp)} · ` : "";
+    setText("coreMeta", liveList
+        ? `Live 1-second sample at ${formatTimestamp(ld.time)} · CPU % = share of one core (100% = 1 full core) · click a process for details`
+        : list.length ? `${err}CPU % from ps (average since process start) · click a process for details`
+        : (S.liveErr ? `Cannot measure processes: ${S.liveErr}` : S.liveBusy ? "Measuring processes..." : ""));
+    if (!list.length) { q("#cores").innerHTML = `<tr><td colspan="3" class="empty">No process data collected</td></tr>`; return; }
+    const mx = Math.max(100, ...list.map(p => Number(p.cpu || 0)));
+    q("#cores").innerHTML = list.map(p => {
+        const open = S.openPid.has(Number(p.pid)), lv = level("cpu", p.cpu);
+        const where = Array.isArray(p.cores) && p.cores.length ? `<em>${p.cores.length === 1 ? `CPU ${escapeHtml(p.cores[0].core)}` : `${p.cores.length} cores`}</em>` : "";
+        return `<tr class="prow${open ? " open" : ""}" data-pid="${escapeHtml(p.pid)}" tabindex="0" aria-expanded="${open}"><td><i class="caret">${open ? "▾" : "▸"}</i>${escapeHtml(p.name || "-")}${where}</td><td>${escapeHtml(p.pid ?? "-")}</td><td class="${lv}">${bar(p.cpu, mx, formatPercent(p.cpu))}</td></tr>` +
+            (open ? `<tr class="pdet"><td colspan="3">${procDetail(p)}</td></tr>` : "");
+    }).join("");
+}
+
 function renderCores() {
+    [...q("#coreTabs").children].forEach(b => b.setAttribute("aria-pressed", b.dataset.cv === S.coreView));
+    const m0 = S.metrics || {}, nCores = (Array.isArray(m0.cpu_per_core) && m0.cpu_per_core.length) || (m0.cpu_cores && m0.cpu_cores.count) || 0;
+    if (S.coreView === "proc") { setText("coreCnt", nCores ? `${nCores} CPU cores` : ""); renderProcView(); return; }
     const m = S.metrics || {}, ld = liveData();
     const snap = (ld && ld.cpu_cores && ld.cpu_cores.per_core) ? ld.cpu_cores : (m.cpu_cores || {});
     const sampleAt = ld && ld.cpu_cores && ld.cpu_cores.per_core ? ld.time : m.system_timestamp;
@@ -1720,7 +1763,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#mach").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.target.click(); } });
     q("#mach").addEventListener("click", e => {
         const b = e.target.closest("[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; S.live = null; S.liveErr = null; }
+        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; S.live = null; S.liveErr = null; S.openPid.clear(); }
         S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
     });
     q("#lvTabs").addEventListener("click", e => {
@@ -1730,6 +1773,20 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ltSel").addEventListener("change", e => { S.lt = e.target.value; S.info = null; showInfo(); reloadLogs(); });
     q("#infoBtn").addEventListener("click", loadInfo);
     q("#liveBtn").addEventListener("click", () => loadLive(true));
+    q("#coreTabs").addEventListener("click", e => {
+        const b = e.target.closest("button[data-cv]"); if (!b) return;
+        S.coreView = b.dataset.cv; renderCores();
+    });
+    const toggleProc = tr => {
+        const pid = Number(tr.dataset.pid);
+        S.openPid.has(pid) ? S.openPid.delete(pid) : S.openPid.add(pid);
+        renderCores();
+    };
+    q("#cores").addEventListener("click", e => { const tr = e.target.closest("tr.prow"); if (tr) toggleProc(tr); });
+    q("#cores").addEventListener("keydown", e => {
+        const tr = e.target.closest("tr.prow");
+        if (tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggleProc(tr); }
+    });
     q("#infoClear").addEventListener("click", closeInfo);
     $("logoutButton").addEventListener("click", logout);
     loadCurrentUser();
