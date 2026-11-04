@@ -43,6 +43,7 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/events/summary?since_system=&since_activity=   ตัวเลขบนป้ายหัวหน้าเว็บ
     POST /api/sensors/ack {"id","note"}  /api/sensors/unack {"id"}   รับทราบปัญหา (operator ขึ้นไป)
     GET  /api/sensors/history?id=&range=1h|6h|24h|7d|30d               กราฟย้อนหลังของ sensor
+    GET  /api/incidents?hours=24&web=   ปัญหาที่เกิดแล้ว (เริ่ม/จบ/นานเท่าไหร่/ค่าสูงสุด) + ที่ยังเป็นอยู่
     ทุก POST/PUT/DELETE + ล็อกอิน/ออก ถูกบันทึกใน Activity log (audit_service.py) โดยอัตโนมัติ
 
 สิทธิ์ (role) ตรวจที่ require_authentication -> _required_role
@@ -611,6 +612,18 @@ def sensors_unack():
     if not sensors_service.unacknowledge(str(body.get("id", ""))):
         return jsonify({"error": "not acknowledged"}), 404
     return jsonify({"status": "ok"})
+
+
+@app.get("/api/incidents")
+def incidents():
+    """ปัญหาที่เกิดแล้ว (หายแล้ว + ยังเป็นอยู่)  hours = ย้อนหลังกี่ชั่วโมง (ปริยาย 24, สูงสุด 90 วัน)"""
+    try:
+        hours = max(1.0, min(float(request.args.get("hours", "24")), 90 * 24))
+    except ValueError:
+        hours = 24
+    return jsonify({"hours": hours, "incidents": sensors_service.get_incidents(
+        hours, web=request.args.get("web") or None,
+        include_ongoing=request.args.get("ongoing", "1") == "1")})
 
 
 @app.get("/api/sensors/history")

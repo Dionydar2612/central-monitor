@@ -35,10 +35,34 @@ async function getJson(url) {
 
 const ST = {
     down: ["D", "Down", "dn"], error: ["E", "Error", "dn"], warning: ["W", "Warning", "wr"],
-    ok: ["✓", "OK", "ok"], paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"]
+    ok: ["✓", "OK", "ok"], paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"],
+    recovered: ["↺", "Recovered", "ok"]
 };
 const TAB_TITLE = { "down,error": "Sensors With Status Down / Error", warning: "Sensors With Status Warning",
-    ok: "Sensors With Status OK", paused: "Paused Sensors", acknowledged: "Acknowledged Sensors", all: "All Sensors", system: "System log", activity: "Activity log" };
+    ok: "Sensors With Status OK", paused: "Paused Sensors", acknowledged: "Acknowledged Sensors", all: "All Sensors", system: "System log", activity: "Activity log",
+    recovered: "Recovered in the last 24 hours", incidents: "Incident history" };
+
+function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${s}s`;
+}
+
+/* ปัญหาที่เกิดแล้ว: เริ่ม / จบ / นานเท่าไหร่ / สถานะแย่สุด / ค่าสูงสุด  (recovered = เฉพาะที่หายแล้ว 24 ชม.) */
+async function showIncidents(recoveredOnly) {
+    const hours = recoveredOnly ? 24 : $("evHours").value;
+    const d = await getJson(`/api/incidents?hours=${hours}&ongoing=${recoveredOnly ? 0 : 1}`);
+    const rows = (d.incidents || []).filter(i => (!recoveredOnly || i.state === "recovered") && matches(`${i.web} ${i.group} ${i.name}`));
+    const ongoing = rows.filter(i => i.state === "ongoing").length;
+    $("evMeta").textContent = recoveredOnly
+        ? `${rows.length} problem${rows.length === 1 ? "" : "s"} started and recovered by themselves in the last 24 hours`
+        : `${rows.length} incident${rows.length === 1 ? "" : "s"}${ongoing ? ` (${ongoing} still ongoing)` : ""} · an incident starts when a sensor leaves OK and ends when it is OK again`;
+    const peak = i => i.peak == null ? "-" : `${Number(i.peak).toFixed(1)}${i.unit === "%" ? " %" : i.unit === "h" ? " h" : ""}`;
+    const stateCell = i => i.state === "ongoing" ? `<b class="evst dn">ongoing</b>` : i.state === "paused" ? `<span class="evst ps">ended (paused)</span>` : `<span class="evst ok">↺ recovered</span>`;
+    $("evBody").innerHTML = rows.length ? `<div class="tblw"><table class="evtbl"><thead><tr><th>Worst status</th><th>Machine</th><th>Sensor</th><th>Started</th><th>Ended</th><th>Duration</th><th>Peak</th><th>State</th></tr></thead><tbody>${
+        rows.map(i => `<tr><td>${levelCell({ level: i.worst })}</td><td><a href="/?web=${encodeURIComponent(i.web)}">${esc(i.web)}</a>${i.group ? `<div class="evpath">${esc(i.group.split("/").join(" » "))}</div>` : ""}</td><td>${esc(i.name)}</td><td>${esc(fmtTime(i.start))}</td><td>${i.end ? esc(fmtTime(i.end)) : "-"}</td><td><b>${fmtDur(i.duration)}</b></td><td>${peak(i)}</td><td>${stateCell(i)}</td></tr>`).join("")
+    }</tbody></table></div>` : `<div class="empty">${recoveredOnly ? "No problems recovered in the last 24 hours" : "No incidents in this period"}</div>`;
+}
 const canOperate = () => E.role === "operator" || E.role === "admin";
 
 function spark(pts) {
@@ -87,7 +111,8 @@ async function showSensors() {
     const d = await getJson(`/api/sensors?status=${encodeURIComponent(statuses)}&history=${withGraph}`);
     const rows = (d.sensors || []).filter(s => matches(`${s.web} ${s.host} ${s.group} ${s.name} ${s.message} ${s.ack ? s.ack.note : ""}`));
     E.rows = rows;
-    $("evMeta").textContent = `${rows.length} sensor${rows.length === 1 ? "" : "s"} · updated ${fmtTime(d.updated_at)} · checked every 30 seconds by the puller`
+    const o = d.options || {};
+    $("evMeta").textContent = `${rows.length} sensor${rows.length === 1 ? "" : "s"} · updated ${fmtTime(d.updated_at)} · checked every ${o.interval || 30} s, status changes after ${o.confirm_checks || 2} checks in a row, recovers ${o.hysteresis ?? 2} points below the limit`
         + (d.thresholds ? ` · limits: CPU ${d.thresholds.cpu.warning}/${d.thresholds.cpu.error}% · Memory ${d.thresholds.memory.warning}/${d.thresholds.memory.error}% · Disk ${d.thresholds.disk.warning}/${d.thresholds.disk.error}% (warning/error)` : "");
     $("evBody").innerHTML = rows.length ? `<div class="evcards">${rows.map((s, i) => sensorCard(s, i)).join("")}</div>`
         : `<div class="empty">${d.updated_at ? "No sensors with this status" : "No sensor data yet - the puller checks every 30 seconds (needs the updated central-puller)"}</div>`;
@@ -186,7 +211,10 @@ async function render() {
     [...$("evTabs").querySelectorAll("button[data-tab]")].forEach(b => b.setAttribute("aria-pressed", b.dataset.tab === E.tab));
     $("evTitle").textContent = TAB_TITLE[E.tab] || "Sensors";
     try {
-        if (E.tab === "system") await showSystem();
+        $("evHours").hidden = E.tab !== "incidents";
+        if (E.tab === "recovered") await showIncidents(true);
+        else if (E.tab === "incidents") await showIncidents(false);
+        else if (E.tab === "system") await showSystem();
         else if (E.tab === "activity") await showActivity();
         else await showSensors();
     } catch (err) {
@@ -209,10 +237,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("evTabs").addEventListener("click", e => {
         const b = e.target.closest("button[data-tab]"); if (!b) return;
         E.tab = b.dataset.tab;
-        history.replaceState(null, "", `/events?${["system", "activity"].includes(E.tab) ? "tab" : "status"}=${E.tab}`);
+        history.replaceState(null, "", `/events?${["system", "activity", "recovered", "incidents"].includes(E.tab) ? "tab" : "status"}=${E.tab}`);
         render();
     });
     $("evFind").addEventListener("input", e => { E.find = e.target.value.trim().toLowerCase(); render(); });
+    $("evHours").addEventListener("change", render);
     $("evBody").addEventListener("click", e => {
         const a = e.target.closest("[data-ack]"), u = e.target.closest("[data-unack]"), h = e.target.closest("[data-hist]");
         if (a) ack(E.rows[+a.dataset.ack]);

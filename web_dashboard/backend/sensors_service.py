@@ -23,6 +23,7 @@ from metrics_service import PROMQL, _REAL_FS, _labels, get_web_prometheus_config
 from settings import STATE_DIR
 
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
+INCIDENTS_FILE = os.path.join(STATE_DIR, "incidents.json")      # <- puller/sensor_monitor.py
 ACKS_FILE = os.path.join(STATE_DIR, "acks.json")
 ACK_LOCK = os.path.join(STATE_DIR, ".acks.lock")
 STATUSES = ("down", "error", "warning", "unknown", "paused", "ok")
@@ -114,16 +115,49 @@ def unacknowledge(sensor_id):
 # อ่าน / สรุป
 # ------------------------------------------------------------------
 
+def _load_incidents():
+    try:
+        with open(INCIDENTS_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def get_incidents(hours=24, web=None, include_ongoing=True, limit=1000):
+    """ปัญหาที่เกิดในช่วง hours ชั่วโมงล่าสุด: ที่จบแล้ว (incidents.json) + ที่ยังเป็นอยู่ (sensors.json) ใหม่สุดก่อน"""
+    now = time.time()
+    since = now - float(hours) * 3600
+    rows = [dict(i, state="recovered" if i.get("ended_by") != "paused" else "paused")
+            for i in _load_incidents() if (i.get("end") or 0) >= since and (not web or i.get("web") == web)]
+    if include_ongoing:
+        for s in load_sensors().get("sensors", []):
+            inc = s.get("incident")
+            if inc and (not web or s.get("web") == web):
+                rows.append({"id": s["id"], "web": s["web"], "host": s.get("host"), "group": s.get("group"),
+                             "kind": s.get("kind"), "name": s.get("name"), "start": inc.get("start"),
+                             "end": None, "duration": now - (inc.get("start") or now), "worst": inc.get("worst"),
+                             "peak": inc.get("peak"), "unit": inc.get("unit"), "state": "ongoing",
+                             "status": s.get("status")})
+    rows.sort(key=lambda r: (r["state"] != "ongoing", -(r.get("end") or r.get("start") or 0)))
+    return rows[:limit]
+
+
 def summary():
     data = load_sensors()
     counts = {s: 0 for s in STATUSES}
     counts["acknowledged"] = 0
+    since = time.time() - 86400
+    counts["recovered_24h"] = sum(1 for i in _load_incidents()
+                                  if i.get("ended_by") == "recovered" and (i.get("end") or 0) >= since)
     for s in _attach_acks(data.get("sensors", [])):
         if s.get("ack"):
             counts["acknowledged"] += 1
         else:
             counts[s.get("status", "unknown")] = counts.get(s.get("status", "unknown"), 0) + 1
-    return {"counts": counts, "total": sum(counts.values()), "updated_at": data.get("updated_at")}
+    total = sum(v for k, v in counts.items() if k != "recovered_24h")
+    return {"counts": counts, "total": total, "updated_at": data.get("updated_at"),
+            "options": data.get("options")}
 
 
 def target_states():
@@ -196,7 +230,7 @@ def get_sensors(statuses=None, web=None, history=False, limit=500):
         for s in rows[:60]:                     # กราฟเล็ก 1 ชม. ล่าสุด (เฉพาะ 60 รายการแรก)
             s["history"] = _series(s, 3600, 60)
 
-    return {"updated_at": data.get("updated_at"), "thresholds": data.get("thresholds"),
+    return {"updated_at": data.get("updated_at"), "thresholds": data.get("thresholds"), "options": data.get("options"),
             "sensors": rows, "summary": summary()}
 
 

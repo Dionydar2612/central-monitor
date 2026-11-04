@@ -30,9 +30,13 @@
 <button type="button" data-tab="acknowledged">Acknowledged</button>
 <button type="button" data-tab="all">All sensors</button>
 <span class="evsep"></span>
+<button type="button" data-tab="recovered">↺ Recovered (24h)</button>
+<button type="button" data-tab="incidents">Incident history</button>
+<span class="evsep"></span>
 <button type="button" data-tab="system">System log</button>
 <button type="button" data-tab="activity" id="tabActivity" hidden>Activity log</button>
 </div>
+<select id="evHours" aria-label="Time range" hidden><option value="24">Last 24 hours</option><option value="168">Last 7 days</option><option value="720" selected>Last 30 days</option><option value="2160">Last 90 days</option></select>
 <input type="search" id="evFind" placeholder="Filter..." aria-label="Filter" autocomplete="off">
 </div>
 <h2 id="evTitle" class="evtitle">Sensors</h2>

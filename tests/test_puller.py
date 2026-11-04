@@ -19,10 +19,27 @@ os.environ.setdefault("CENTRAL_BUFFER_DIR", os.path.join(_TMP, "buffer"))
 os.environ.setdefault("CENTRAL_CONFIG_FILE", os.path.join(_TMP, "puller.yaml"))
 
 import journal            # noqa: E402
+import sensor_monitor     # noqa: E402
 import log_filter         # noqa: E402
 import log_levels         # noqa: E402
 import system_info        # noqa: E402
 import web_checks         # noqa: E402
+
+
+class SensorGrade(unittest.TestCase):
+    TH = {"warning": 80, "error": 90}
+
+    def test_hysteresis(self):
+        g = sensor_monitor._grade
+        self.assertEqual(g(81, self.TH), "warning")
+        self.assertEqual(g(79, self.TH, prev="warning", hyst=2), "warning")   # ยังไม่ต่ำกว่า 78
+        self.assertEqual(g(77.9, self.TH, prev="warning", hyst=2), "ok")
+        self.assertEqual(g(89, self.TH, prev="error", hyst=2), "error")
+        self.assertEqual(g(87, self.TH, prev="error", hyst=2), "warning")
+        self.assertEqual(g(None, self.TH), "unknown")
+
+    def test_duration_text(self):
+        self.assertTrue(sensor_monitor._fmt_duration(125))
 
 
 class LogLevels(unittest.TestCase):

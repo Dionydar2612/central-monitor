@@ -33,6 +33,16 @@
 
 # สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 บ่าย)
 
+
+## ปัญหาที่เกิดแล้วหายเอง (incident) + กันเด้ง
+
+- **บอกว่าเป็นอยู่นานเท่าไหร่**: ตอนกลับเป็น OK, System log จะขึ้น `↺ Recovered → OK after 12m (Error · peak 95.0%)`
+- **ประวัติปัญหา**: หน้า Events มีแท็บ `↺ Recovered (24h)` และ `Incident history` (เริ่ม / จบ / นาน / สถานะแย่สุด / ค่าสูงสุด / ยังเป็นอยู่ไหม)
+  เก็บที่ `data/state/incidents.json` ตาม `storage.incident_retention` (ปริยาย 30d, สูงสุด 20000 รายการ) · API `GET /api/incidents?hours=24`
+- **จับ spike สั้นๆ**: memory/disk ใช้ค่าสูงสุดใน 1 นาทีล่าสุดจาก Prometheus (`max_over_time[1m:15s]`) ไม่ใช่แค่ค่า ณ ตอนตรวจ
+- **กันเด้งไปมา**: `sensors.confirm_checks` (ปริยาย 2 รอบติด ≈ 1 นาที) และ `sensors.hysteresis` (ปริยาย 2 จุด: Warning 80% กลับ OK เมื่อ < 78%)
+- ป้ายหัวเว็บมี `↺ N` = จำนวนปัญหาที่หายเองใน 24 ชม.
+
 ## กลุ่ม + Pause
 - `targets[].group` (เช่น `TQ/IT`, ลึกได้ 5 ชั้น) และ `targets[].paused` ใน puller.yaml · ตั้งที่หน้า Settings ได้
 - puller ข้ามเครื่องที่ pause (ไม่ SSH ไม่ดึง log) · Resume แล้วดึงทันที

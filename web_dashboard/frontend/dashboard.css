@@ -1112,3 +1112,4 @@ td.bad{color:#e5484d}
 .pl tr.acked td{color:var(--mut)}
 .logack{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:4px;background:#b7791f;color:#fff;vertical-align:1px}
 #ackedCnt{font-style:normal;color:var(--mut)}
+.sbadge.rec{background:#0f766e}
