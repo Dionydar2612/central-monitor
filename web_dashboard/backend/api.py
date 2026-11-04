@@ -35,6 +35,11 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/checks              web / SSL checks + ผลล่าสุด   POST/PUT/DELETE /api/checks[/<name>] (admin)
     PUT  /api/checks/<name>/pause    (operator ขึ้นไป)
     GET/POST /api/users  PUT/DELETE /api/users/<name>   จัดการผู้ใช้ (admin)
+    GET  /events                  หน้า Status & Logs (sensor ตามสถานะ + System log + Activity log)
+    GET  /api/sensors?status=warning,error&web=&history=1   sensor ต่อเครื่อง (puller/sensor_monitor.py)
+    GET  /api/events?kind=system|activity&limit=&since=&q=   System log / Activity log (activity = admin)
+    GET  /api/events/summary?since_system=&since_activity=   ตัวเลขบนป้ายหัวหน้าเว็บ
+    ทุก POST/PUT/DELETE + ล็อกอิน/ออก ถูกบันทึกใน Activity log (audit_service.py) โดยอัตโนมัติ
 
 สิทธิ์ (role) ตรวจที่ require_authentication -> _required_role
     viewer   ดูอย่างเดียว      operator  + pause/resume, Load INFO log, เลือก service ที่แสดง
@@ -61,7 +66,9 @@ from flask import Flask, g, jsonify, redirect, request, send_from_directory, ses
 
 import settings
 from auth import AUTH_USERNAME, check_credentials, session_role
+import audit_service
 import checks_service
+import sensors_service
 import users_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
@@ -157,7 +164,67 @@ def _required_role(method, path):
         return "viewer" if method == "GET" else "admin"
     if path == "/api/info-logs":
         return "operator"
+    if path == "/api/events" and request.args.get("kind") == "activity":
+        return "admin"
     return "viewer"
+
+
+# ============================================================
+# Activity log: บันทึกทุกการเปลี่ยนแปลงอัตโนมัติ (ไม่เก็บรหัสผ่าน)
+# ============================================================
+
+_AUDIT_RULES = [
+    # (method, regex ของ path, ชื่อการกระทำ, ฟิลด์ที่เก็บจาก body)
+    ("POST", re.compile(r"^/api/targets$"), "target.add", ("name", "host", "group", "paused")),
+    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/pause$"), "target.pause", ("paused",)),
+    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
+    ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
+    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused")),
+    ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
+    ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
+    ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)/pause$"), "check.pause", ("paused",)),
+    ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
+    ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
+    ("POST", re.compile(r"^/api/users$"), "user.add", ("username", "role")),
+    ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
+    ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
+]
+
+
+def _client_ip():
+    fwd = request.headers.get("X-Forwarded-For", "")
+    return (fwd.split(",")[0].strip() if fwd else "") or request.remote_addr or ""
+
+
+def audit(action, target=None, ok=True, status=None, details=None, user=None, role=None):
+    audit_service.append_audit({
+        "user": user if user is not None else session.get("username", ""),
+        "role": role if role is not None else (getattr(g, "role", None) or session.get("role")),
+        "ip": _client_ip(), "action": action, "target": target, "ok": ok,
+        "status": status, "details": details or {},
+    })
+
+
+@app.after_request
+def audit_changes(response):
+    if request.method not in ("POST", "PUT", "DELETE") or not request.path.startswith("/api/"):
+        return response
+    for method, rx, action, fields in _AUDIT_RULES:
+        m = rx.match(request.path)
+        if method != request.method or not m:
+            continue
+        body = request.get_json(silent=True) or {}
+        details = {k: body.get(k) for k in fields if isinstance(body, dict) and k in body}
+        if action == "target.services" and isinstance(body, dict):
+            details["count"] = len(body.get("services") or [])
+        if action == "user.update" and isinstance(body, dict) and body.get("password"):
+            details["password_changed"] = True
+        target = m.groupdict().get("t") or (body.get("name") or body.get("username") or body.get("host")
+                                           if isinstance(body, dict) else None)
+        audit(action, target, ok=response.status_code < 400, status=response.status_code, details=details)
+        break
+    return response
 
 
 # ============================================================
@@ -192,18 +259,22 @@ def login():
 
     role = check_credentials(data.get("username", ""), data.get("password", ""))
     if not role:
+        audit("login", data.get("username", ""), ok=False, status=401, user=str(data.get("username", ""))[:64], role="")
         return jsonify({"error": "invalid_credentials"}), 401
 
     session.clear()
     session["authenticated"] = True
     session["username"] = data.get("username", "")
     session["role"] = role
+    audit("login", session["username"], ok=True, status=200, role=role)
 
     return jsonify({"status": "ok"})
 
 
 @app.post("/api/logout")
 def logout():
+    if session.get("authenticated"):
+        audit("logout", session.get("username", ""), ok=True, status=200)
     session.clear()
     return jsonify({"status": "ok"})
 
@@ -474,6 +545,54 @@ def info_logs():
     except Exception as e:
         print(f"[INFO LOGS ERROR] web={web} error={e!r}")
         return jsonify({"error": f"ดึง INFO log จาก puller ไม่ได้: {e}"}), 502
+
+
+# ============================================================
+# Sensor + System log + Activity log (หน้า /events และป้ายบนหัวหน้าเว็บ)
+# ============================================================
+
+@app.get("/events")
+def events_page():
+    return send_from_directory(STATIC_DIR, "events.html")
+
+
+@app.get("/api/sensors")
+def sensors():
+    statuses = [s.strip() for s in request.args.get("status", "").split(",") if s.strip()]
+    return jsonify(sensors_service.get_sensors(
+        statuses, web=request.args.get("web") or None, history=request.args.get("history") == "1"))
+
+
+def _float_arg(key):
+    try:
+        v = request.args.get(key)
+        return float(v) if v not in (None, "") else None
+    except ValueError:
+        return None
+
+
+@app.get("/api/events")
+def events():
+    kind = request.args.get("kind", "system")
+    if kind not in ("system", "activity"):
+        return jsonify({"error": "kind must be system or activity"}), 400
+    try:
+        limit = max(1, min(int(request.args.get("limit", "300")), 2000))
+    except ValueError:
+        limit = 300
+    return jsonify({"kind": kind, "entries": audit_service.read_entries(
+        kind, limit=limit, since=_float_arg("since"), query=request.args.get("q"),
+        level=request.args.get("level") or None)})
+
+
+@app.get("/api/events/summary")
+def events_summary():
+    """ตัวเลขบนป้าย: sensor แต่ละสถานะ + จำนวน log ใหม่กว่าเวลาที่ผู้ใช้เปิดดูล่าสุด (browser ส่งมา)"""
+    out = {"sensors": sensors_service.summary(),
+           "new_system": audit_service.count_since("system", _float_arg("since_system") or 0)}
+    if role_at_least(getattr(g, "role", None), "admin"):
+        out["new_activity"] = audit_service.count_since("activity", _float_arg("since_activity") or 0)
+    return jsonify(out)
 
 
 @app.get("/api/logs/search")
