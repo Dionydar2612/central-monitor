@@ -1,3 +1,14 @@
+# สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 เย็น): Sensor status + System log + Activity log
+
+- `puller/sensor_monitor.py` (thread ทุก 30 วินาที): sensor ต่อเครื่อง Availability / CPU average 5m / Memory / Disk ต่อ mount / Log pull (SSH)
+  สถานะ OK / Warning / Error / Down / Paused ตามเกณฑ์ (`thresholds:` ใน puller.yaml, ปริยาย CPU 75/90 · Memory 80/90 · Disk 80/90)
+  -> `data/state/sensors.json` และทุกครั้งที่สถานะเปลี่ยนเขียน System log (`data/state/events.log`)
+- Activity log (`data/state/audit.log`): ล็อกอิน (สำเร็จ/ไม่สำเร็จ), ออกจากระบบ, เพิ่ม/แก้/ลบ/Pause เครื่อง, Deploy key, ผู้ใช้ ฯลฯ พร้อมผู้ใช้ + IP (ไม่เก็บรหัสผ่าน) ดูได้เฉพาะ admin
+- ป้ายบนหัวทุกหน้า: New Log Entries · ▼ Down/Error · W Warning · ✓ OK · II Paused -> หน้าใหม่ `/events` (การ์ด sensor ตามสถานะ + กราฟ 1 ชม., System log, Activity log)
+- docker-compose: central-puller ได้ `PROMETHEUS_URL` + `host.docker.internal`
+
+---
+
 # สรุปการเปลี่ยนแปลง (รอบ 4 พ.ย. 2026 บ่าย)
 
 ## กลุ่ม + Pause

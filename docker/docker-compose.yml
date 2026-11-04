@@ -88,6 +88,10 @@ services:
       # ปุ่ม "Load INFO log" ของหน้าเว็บเรียก puller ที่พอร์ต 8001 (ภายใน network เท่านั้น)
       # token ต้องตรงกับฝั่ง central-api (ใช้ CENTRAL_SECRET_KEY ใน docker/.env)
       CENTRAL_PULLER_TOKEN: ${CENTRAL_SECRET_KEY:-}
+      # sensor_monitor.py ถาม Prometheus เพื่อตัดสินสถานะ sensor (ค่าเดียวกับ central-api)
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # ใช้ Prometheus บน host ได้ (โหมด external)
     # puller เปิด /metrics ที่พอร์ต 8000 -> ใช้เช็คว่าโปรเซสยังทำงาน
     healthcheck:
       test:

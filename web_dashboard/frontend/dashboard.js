@@ -1870,6 +1870,9 @@ async function logout() {
 /* ---------- start ---------- */
 
 document.addEventListener("DOMContentLoaded", () => {
+    /* /?web=<ชื่อ> (ลิงก์จากหน้า Status & Logs) -> เลือกเครื่องนั้นตั้งแต่แรก */
+    const qsWeb = new URLSearchParams(location.search).get("web");
+    if (qsWeb) S.web = qsWeb;
     setupPicker();
     setupServicePicker();
     setupChart();

@@ -1044,3 +1044,37 @@ td.bad{color:#e5484d}
 .mach .ovtiles.five{grid-template-columns:repeat(5,minmax(0,1fr))}
 @media(max-width:1100px){.mach .ovtiles.five{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:600px){.mach .ovtiles.five{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* ---- ป้ายสถานะบนหัวหน้าเว็บ (badges.js) ---- */
+.sbadges{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sbadge{display:inline-flex;align-items:center;gap:6px;font:600 13px inherit;font-family:inherit;text-decoration:none;padding:4px 10px;border-radius:4px;color:#fff;line-height:1.3}
+.sbadge i{font-style:normal;font-size:11px;background:rgba(255,255,255,.25);border-radius:3px;padding:0 4px}
+.sbadge.logs{background:var(--card);color:var(--ink);border:1px solid var(--line)}.sbadge.logs.has{background:#4b5563;color:#fff;border-color:#4b5563}
+.sbadge.dn{background:#e5484d}.sbadge.wr{background:#f5b800;color:#3a2a00}.sbadge.ok{background:#8cb92c}.sbadge.ps{background:#4a7cc9}.sbadge.na{background:#94a3b8}
+.sbadge:hover{filter:brightness(1.08)}
+
+/* ---- หน้า Status & Logs ---- */
+.evtabs{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+.evtabs .tabs{flex-wrap:wrap}.evsep{width:1px;background:var(--line);margin:0 4px}
+.evtabs input{min-width:220px;font:14px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+.evtitle{color:var(--blue);font-size:22px;font-weight:500;margin:18px 0 4px}
+.evmeta{color:var(--mut);font-size:12.5px;margin-bottom:14px}
+.evcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px}
+.evcard{border:1px solid var(--line);border-left:6px solid #94a3b8;border-radius:6px;padding:12px 16px 14px;background:var(--card)}
+.evcard.s-dn{border-left-color:#e5484d}.evcard.s-wr{border-left-color:#f5b800}.evcard.s-ok{border-left-color:#8cb92c}.evcard.s-ps{border-left-color:#4a7cc9}
+.evcard,.evcard h3{color:var(--ink)}
+.evcard h3{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:500;margin:0 0 10px}
+.evico{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:3px;color:#fff;font:700 12px inherit;font-family:inherit;font-style:normal;padding:0 4px;background:#94a3b8}
+.evico.sm{min-width:18px;height:18px;font-size:10px;margin-right:6px}
+.evico.dn{background:#e5484d}.evico.wr{background:#f5b800;color:#3a2a00}.evico.ok{background:#8cb92c}.evico.ps{background:#4a7cc9}
+.evgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;font-size:13px}
+.evgrid small{display:block;color:var(--mut);font-weight:600;font-size:12px;margin-bottom:2px}
+.evgrid a{color:var(--ink);text-decoration:none}.evgrid a:hover{color:var(--blue)}
+.evpath{display:block;color:var(--mut);font-size:11.5px}
+.evst{font-weight:600;display:inline-flex;align-items:center}.evst.dn{color:#e5484d}.evst.wr{color:#c27c00}.evst.ok{color:#0a9a60}.evst.ps{color:var(--blue)}
+.evsince{color:var(--mut);font-size:12px}
+.evgraph{display:flex;align-items:center;gap:8px}.evspark{width:160px;height:32px}.evlast{font-size:12px;color:var(--mut)}.evnone{color:var(--mut)}
+.evtbl{font-size:13px}.evtbl td{vertical-align:top}.evtbl td.evmsg{white-space:normal;max-width:560px}
+.evtbl td.ok{color:#0a9a60}.evtbl td.bad{color:#e5484d}
+.evtbl a{color:var(--blue);text-decoration:none}
+@media(max-width:600px){.evcards{grid-template-columns:1fr}.evgrid{grid-template-columns:1fr}}

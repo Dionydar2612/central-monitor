@@ -34,6 +34,7 @@
 <div class="pop" id="menu" hidden></div>
 <div class="pop" id="dates" hidden><div class="dfield"><small>Start</small><button type="button" id="ds" aria-expanded="false"></button></div><div class="dfield"><small>End</small><button type="button" id="de" aria-expanded="false"></button></div><div id="cal" hidden></div><p id="err" role="alert"></p><button id="ap">Apply</button></div>
 </div>
+<div class="sbadges" id="sbadges"></div>
 <div class="user"><span><span id="systemDot" class="dot green"></span><span id="systemStatus">Loading...</span></span><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings">Settings</a><button id="logoutButton">Logout</button></div>
 </header>
 
@@ -101,6 +102,7 @@
 <div class="tblw scroll logscroll"><table class="pl"><thead><tr><th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th>Message</th><th>Metrics at time</th></tr></thead><tbody id="plog"><tr><td colspan="6" class="empty">Loading logs...</td></tr></tbody></table></div></section>
 </div>
 <!-- ตรรกะทั้งหมดของหน้านี้ -->
+<script src="/badges.js"></script>
 <script src="/dashboard.js"></script>
 </body>
 </html>

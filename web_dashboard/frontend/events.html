@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!--
+  events.html - หน้า Status & Logs
+    แท็บ sensor ตามสถานะ (Down/Error, Warning, OK, Paused, ทั้งหมด) จาก /api/sensors  (puller/sensor_monitor.py)
+    แท็บ System log (sensor เปลี่ยนสถานะ ฯลฯ) และ Activity log (ใครทำอะไรในหน้าเว็บ, admin เท่านั้น) จาก /api/events
+  ลิงก์จากป้ายบนหัวหน้าเว็บ (badges.js) เช่น /events?status=warning  /events?tab=system
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor - Status &amp; Logs</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><b>Status &amp; Logs</b><div style="color:var(--mut);font-size:12px;margin-top:2px">Sensors by status · system log · activity log</div></div>
+<div class="sbadges" id="sbadges"></div>
+<div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings" id="settingsLink" hidden>Settings</a><button id="logoutButton">Logout</button></div>
+</header>
+
+<section class="card">
+<div class="evtabs">
+<div class="tabs" id="evTabs" role="tablist" aria-label="View">
+<button type="button" data-tab="down,error">▼ Down / Error</button>
+<button type="button" data-tab="warning">W Warning</button>
+<button type="button" data-tab="ok">✓ OK</button>
+<button type="button" data-tab="paused">II Paused</button>
+<button type="button" data-tab="all">All sensors</button>
+<span class="evsep"></span>
+<button type="button" data-tab="system">System log</button>
+<button type="button" data-tab="activity" id="tabActivity" hidden>Activity log</button>
+</div>
+<input type="search" id="evFind" placeholder="Filter..." aria-label="Filter" autocomplete="off">
+</div>
+<h2 id="evTitle" class="evtitle">Sensors</h2>
+<div class="evmeta" id="evMeta"></div>
+<div id="evBody"><div class="empty">Loading...</div></div>
+</section>
+</div>
+<script src="/badges.js"></script>
+<script src="/events.js"></script>
+</body>
+</html>
