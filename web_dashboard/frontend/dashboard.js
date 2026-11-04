@@ -1231,6 +1231,29 @@ function renderLoad() {
     if (S.hoverX != null) drawHover(S.hoverX);
 }
 
+/* เมนูรายการ log ในวงกลมที่มีเลข: ERROR ก่อน ใหม่ก่อน  คลิกรายการ -> หน้าต่างรายละเอียด */
+function showMarkMenu(g, cx, cy) {
+    const box = q("#mkMenu");
+    const items = [...g.items].sort((a, b) => (a.level === "ERROR" ? 0 : 1) - (b.level === "ERROR" ? 0 : 1) || b.ts - a.ts);
+    const err = items.filter(m => m.level === "ERROR").length, warn = items.length - err;
+    const t = ts => formatTimestamp(new Date(ts * 1000).toISOString());
+    const range = items.length ? `${t(Math.min(...items.map(m => m.ts)))} – ${t(Math.max(...items.map(m => m.ts)))}` : "";
+    box.innerHTML = `<div class="mkhd"><b>${items.length} logs</b>${err ? ` <span class="mklv e">${err} ERROR</span>` : ""}${warn ? ` <span class="mklv w">${warn} WARN</span>` : ""}<button type="button" class="mkx" aria-label="Close">×</button><div class="mkrng">${escapeHtml(range)}</div></div>
+<div class="mklist">${items.map((m, i) => `<button type="button" role="menuitem" class="mkit" data-i="${i}"><span class="mklv ${m.level === "ERROR" ? "e" : "w"}">${m.level}</span><span class="mkt">${escapeHtml(t(m.ts))}</span><span class="mkty">${escapeHtml(m.type || "")}</span><span class="mkmsg">${escapeHtml(String(m.message || "").slice(0, 160))}</span></button>`).join("")}</div>`;
+    box.hidden = false;
+    const w = box.offsetWidth, h = box.offsetHeight;
+    box.style.left = Math.max(8, Math.min(cx - w / 2, innerWidth - w - 8)) + "px";
+    box.style.top = (cy + 12 + h > innerHeight - 8 ? Math.max(8, cy - h - 12) : cy + 12) + "px";
+    box.querySelectorAll(".mkit").forEach(b => b.addEventListener("click", () => { hideMarkMenu(); openLogDetail(items[+b.dataset.i]); }));
+    box.querySelector(".mkx").addEventListener("click", hideMarkMenu);
+    const first = box.querySelector(".mkit"); if (first) first.focus({ preventScroll: true });
+}
+function hideMarkMenu() { const b = q("#mkMenu"); if (b) b.hidden = true; }
+document.addEventListener("pointerdown", e => { if (!e.target.closest("#mkMenu") && !e.target.closest(".mk")) hideMarkMenu(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") hideMarkMenu(); });
+addEventListener("scroll", hideMarkMenu, true);
+addEventListener("resize", hideMarkMenu);
+
 /* จัดกลุ่มจุด log ที่อยู่ใกล้กัน (ห่างกันไม่ถึง 12 หน่วย ไม่งั้นจุดจะทับกัน) -> S.markGroups */
 function groupMarks() {
     const [s0, e0] = rng(), t0 = s0 / 1000, span = Math.max(e0 / 1000 - t0, 1);
@@ -1327,9 +1350,9 @@ function setupChart() {
         if (!S.drag) {
             if (!mk) return;
             const g = (S.markGroups || [])[+mk.dataset.g]; if (!g) return;
-            /* เปิด log ที่ร้ายแรงที่สุดและใหม่ที่สุดในกลุ่ม */
-            const item = g.items.find(m => m.level === "ERROR") || g.items[0];
-            openLogDetail(item);
+            /* 1 log -> เปิดเลย, หลาย log -> เมนูให้เลือก */
+            if (g.items.length === 1) openLogDetail(g.items[0]);
+            else showMarkMenu(g, e.clientX, e.clientY);
             return;
         }
         const { x } = local(e), x0 = S.drag.x0; S.drag = null;

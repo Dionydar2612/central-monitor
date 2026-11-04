@@ -1113,3 +1113,20 @@ td.bad{color:#e5484d}
 .logack{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:4px;background:#b7791f;color:#fff;vertical-align:1px}
 #ackedCnt{font-style:normal;color:var(--mut)}
 .sbadge.rec{background:#0f766e}
+
+/* เมนูรายการ log ในวงกลมที่มีเลขบนกราฟ */
+.mkmenu{position:fixed;z-index:60;width:min(460px,calc(100vw - 16px));max-height:min(420px,70vh);display:flex;flex-direction:column;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);overflow:hidden}
+.mkmenu[hidden]{display:none!important}
+.mkhd{padding:8px 34px 6px 12px;border-bottom:1px solid var(--line);position:relative;font-size:13px}
+.mkrng{font-size:11px;opacity:.7;margin-top:2px}
+.mkx{position:absolute;right:6px;top:4px;border:0;background:none;font-size:18px;line-height:1;cursor:pointer;color:inherit;opacity:.6;padding:4px 6px}
+.mkx:hover{opacity:1}
+.mklist{overflow:auto}
+.mkit{display:grid;grid-template-columns:auto auto 1fr;gap:2px 8px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;color:inherit;padding:7px 12px;cursor:pointer;font:inherit;font-size:12px}
+.mkit:last-child{border-bottom:0}
+.mkit:hover,.mkit:focus{background:rgba(127,127,127,.12);outline:none}
+.mkt{opacity:.75;white-space:nowrap}
+.mkty{opacity:.6;justify-self:end}
+.mkmsg{grid-column:1/-1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+.mklv{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;color:#fff;white-space:nowrap}
+.mklv.e{background:#e5484d}.mklv.w{background:#c98a00}
