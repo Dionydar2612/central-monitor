@@ -61,6 +61,7 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+    image: central-monitor-puller:local     # buffer-cleaner ใช้ image นี้ร่วม (ไม่ build ซ้ำพร้อมกัน)
     container_name: central-puller
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # ไม่รันเป็น root -> ไฟล์ใน data/ config/ เป็นของ user บน host
     hostname: central-puller
@@ -180,16 +181,16 @@ services:
   # ---------------------------------------------------------------
   # buffer-cleaner : ลบไฟล์ใน data/buffer ที่เก่ากว่า storage.buffer_retention
   # ใช้ image เดียวกับ puller (มี python + yaml) รัน cleanup-buffer.py แบบวนต่อเนื่อง
+  # ไม่ build เอง: เดิม build Dockerfile เดียวกันพร้อม central-puller แล้ว Docker บางรุ่น (containerd
+  # image store) ชนกันตอน export -> "parent snapshot ... does not exist" ตอนนี้ใช้ image ที่ puller build แล้ว
   # ค่า retention และความถี่ (storage.cleanup_interval) อ่านจาก config/puller.yaml
   # ที่เดียว -> แก้ค่าแล้วมีผลรอบถัดไป ไม่ต้อง restart และไม่มีตัวเลขซ้ำในไฟล์นี้
   # ---------------------------------------------------------------
   buffer-cleaner:
-    build:
-      context: ..
-      dockerfile: docker/dockerfiles/puller.Dockerfile
-      args:
-        HOST_UID: ${HOST_UID:-1000}
-        HOST_GID: ${HOST_GID:-1000}
+    image: central-monitor-puller:local
+    pull_policy: never
+    depends_on:
+      - central-puller
     container_name: central-buffer-cleaner
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # ไม่รันเป็น root -> ไฟล์ใน data/ config/ เป็นของ user บน host
     command:
