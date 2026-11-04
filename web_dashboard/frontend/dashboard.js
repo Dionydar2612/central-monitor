@@ -1226,8 +1226,28 @@ function liveData() { return S.live && S.live.web === S.web ? S.live.data : null
 /* สถานะ process จาก ps (ตัวอักษรแรกของ STAT) */
 const PROC_STATE = { R: "running", S: "sleeping (waiting for an event)", D: "waiting on disk / I/O", Z: "zombie (finished, not cleaned up)", T: "stopped", I: "idle kernel thread" };
 
+/* process ที่เป็น "ของระบบ monitor เอง" (observer effect)
+     collector = คำสั่ง ps ที่ puller รันเพื่อเก็บรายการ (snapshot เก่า ก่อนที่ puller จะตัดออกให้)
+     self      = sshd session ที่ puller ใช้ SSH เข้ามา  (puller ติดป้ายให้) */
+function procKind(p, isLive) {
+    if (p.self) return "self";
+    if (!isLive && String(p.name || "") === "ps") return "collector";
+    return "";
+}
+const PROC_NOTE = {
+    collector: "<b>ทำไม ps ถึง 100%:</b> แถวนี้คือคำสั่ง <code>ps</code> ที่ puller รันเองเพื่อถ่ายรายการ process นี้ ไม่ใช่งานของเครื่อง · " +
+        "%CPU ของ ps = <i>เวลา CPU ที่ใช้ ÷ เวลาตั้งแต่ process เริ่ม</i> ตอนที่มันรายงาน ps เพิ่งเริ่มได้ไม่กี่มิลลิวินาทีและใช้ CPU ตลอดช่วงนั้น (กำลังอ่านข้อมูลทุก process) " +
+        "ผลหารจึงออกมาใกล้ 100% เสมอ แล้วจบไปทันที · puller รุ่นใหม่ตัดแถวนี้ออกให้แล้ว และค่าแบบวัดสด (1 วินาที) ไม่มีปัญหานี้",
+    self: "<b>ของระบบ monitor เอง:</b> นี่คือ SSH session ที่ puller ใช้เข้ามาอ่านข้อมูลเครื่องนี้ CPU ที่เห็นเกิดจากการวัดเอง ไม่ใช่งานของเครื่อง",
+    snapshot: "ค่านี้มาจาก <code>ps</code> ตอนรอบดึง = <i>เวลา CPU ทั้งหมด ÷ เวลาตั้งแต่ process เริ่ม</i> (เฉลี่ยตลอดอายุ ไม่ใช่ ณ ตอนนี้) " +
+        "process ที่เพิ่งเริ่มแล้วทำงานหนักช่วงสั้น ๆ จะดูสูงเกินจริง ส่วน process ที่รันมานานแต่เพิ่งเริ่มหนักจะดูต่ำกว่าจริง",
+    live: "วัดจริง 1 วินาที: CPU ที่ process นี้ใช้ในช่วงนั้น 100% = เต็ม 1 core"
+};
+
 /* รายละเอียดของ process 1 ตัว (แถวที่กดเปิด): รันบน core ไหนกี่ %, user, สถานะ, thread, RAM, เวลาทำงาน, คำสั่งเต็ม */
-function procDetail(p) {
+function procDetail(p, isLive) {
+    const kind = procKind(p, isLive);
+    const note = `<div class="pdnote${kind ? " warn" : ""}">${PROC_NOTE[kind] || PROC_NOTE[isLive ? "live" : "snapshot"]}</div>`;
     const kv = (k, v) => hasValue(v) && v !== "" ? `<div><small>${k}</small><span>${escapeHtml(String(v))}</span></div>` : "";
     const cores = Array.isArray(p.cores) && p.cores.length
         ? p.cores.map(c => `<span class="pcore"><b>CPU ${escapeHtml(c.core)}</b>${bar(c.cpu, 100, formatPercent(c.cpu))}</span>`).join("")
@@ -1236,7 +1256,8 @@ function procDetail(p) {
     const mem = hasValue(p.memory) ? formatPercent(p.memory) + (hasValue(p.rss_mb) ? ` · ${Number(p.rss_mb) >= 1024 ? (p.rss_mb / 1024).toFixed(1) + " GB" : Math.round(p.rss_mb) + " MB"}` : "") : null;
     const thr = hasValue(p.threads_total) ? (hasValue(p.threads) && p.cores ? `${p.threads} busy / ${p.threads_total} total` : p.threads_total) : (p.threads > 1 ? p.threads : null);
     return `<div class="pd">
-        <div class="pdcores"><small>Running on (share of each core during the 1-second sample)</small><div>${cores}</div></div>
+        ${note}
+        <div class="pdcores"><small>${isLive ? "Running on (share of each core during the 1-second sample)" : "Core"}</small><div>${cores}</div></div>
         <div class="pdkv">${kv("CPU total", hasValue(p.cpu) ? `${formatPercent(p.cpu)} of one core` : null)}${kv("State", st ? `${st} · ${PROC_STATE[st[0]] || "-"}` : null)}${kv("User", p.user)}${kv("Threads", thr)}${kv("Memory", mem)}${kv("Running for", p.elapsed ? String(p.elapsed).replace(/^(\d+)-/, "$1d ") : null)}</div>
         ${p.command ? `<div class="pdcmd"><small>Command</small><code>${escapeHtml(p.command)}</code></div>` : ""}
     </div>`;
@@ -1255,10 +1276,11 @@ function renderProcView() {
     if (!list.length) { q("#cores").innerHTML = `<tr><td colspan="3" class="empty">No process data collected</td></tr>`; return; }
     const mx = Math.max(100, ...list.map(p => Number(p.cpu || 0)));
     q("#cores").innerHTML = list.map(p => {
-        const open = S.openPid.has(Number(p.pid)), lv = level("cpu", p.cpu);
+        const open = S.openPid.has(Number(p.pid)), kind = procKind(p, !!liveList), lv = kind ? "" : level("cpu", p.cpu);
         const where = Array.isArray(p.cores) && p.cores.length ? `<em>${p.cores.length === 1 ? `CPU ${escapeHtml(p.cores[0].core)}` : `${p.cores.length} cores`}</em>` : "";
-        return `<tr class="prow${open ? " open" : ""}" data-pid="${escapeHtml(p.pid)}" tabindex="0" aria-expanded="${open}"><td><i class="caret">${open ? "▾" : "▸"}</i>${escapeHtml(p.name || "-")}${where}</td><td>${escapeHtml(p.pid ?? "-")}</td><td class="${lv}">${bar(p.cpu, mx, formatPercent(p.cpu))}</td></tr>` +
-            (open ? `<tr class="pdet"><td colspan="3">${procDetail(p)}</td></tr>` : "");
+        const tag = kind ? `<span class="ptag" title="${kind === "collector" ? "The ps command the monitor ran itself - click for why it shows ~100%" : "The SSH session the monitor uses - click for details"}">${kind === "collector" ? "monitor's own ps" : "monitor session"}</span>` : "";
+        return `<tr class="prow${open ? " open" : ""}${kind ? " own" : ""}" data-pid="${escapeHtml(p.pid)}" tabindex="0" aria-expanded="${open}"><td><i class="caret">${open ? "▾" : "▸"}</i>${escapeHtml(p.name || "-")}${where}${tag}</td><td>${escapeHtml(p.pid ?? "-")}</td><td class="${lv}">${bar(p.cpu, mx, formatPercent(p.cpu))}</td></tr>` +
+            (open ? `<tr class="pdet"><td colspan="3">${procDetail(p, !!liveList)}</td></tr>` : "");
     }).join("");
 }
 
