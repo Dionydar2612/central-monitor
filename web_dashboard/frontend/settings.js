@@ -427,6 +427,61 @@ async function addUser() {
 
 /* ---------- ผู้ใช้ / Logout / เริ่มต้น ---------- */
 
+/* ---------- อายุการเก็บข้อมูล ---------- */
+const RT = { log_retention: "r_log", incident_retention: "r_inc", system_history_retention: "r_sys" };
+let RT_DATA = null;
+function rtSec(v) { const m = /^(\d+)\s*([smhd])$/.exec(String(v || "").trim().toLowerCase()); return m ? m[1] * { s: 1, m: 60, h: 3600, d: 86400 }[m[2]] : null; }
+function rtText(v) {
+    const s = rtSec(v); if (s == null) return v || "-";
+    return s % 86400 === 0 ? `${s / 86400} day${s === 86400 ? "" : "s"}` : s % 3600 === 0 ? `${s / 3600} hours` : v;
+}
+function rtFill(id, v) {
+    const s = rtSec(v);
+    if (s != null && s % 86400 === 0) { $(id).value = s / 86400; $(id + "_u").value = "d"; }
+    else if (s != null) { $(id).value = Math.max(1, Math.round(s / 3600)); $(id + "_u").value = "h"; }
+}
+function rtRead(id) { const n = parseInt($(id).value, 10); return Number.isFinite(n) && n > 0 ? `${n}${$(id + "_u").value}` : ""; }
+function fmtBytes(b) { if (!b) return "0 B"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; } return `${b.toFixed(i ? 1 : 0)} ${u[i]}`; }
+
+async function loadRetention() {
+    try {
+        const d = RT_DATA = await api("GET", "/api/retention");
+        Object.entries(RT).forEach(([k, id]) => rtFill(id, d[k]));
+        const ix = d.indices;
+        $("r_log_note").textContent = ix
+            ? `ตอนนี้เก็บอยู่ ${ix.docs.toLocaleString()} log · ${fmtBytes(ix.bytes)} · ${ix.count} index${ix.oldest ? ` · เก่าสุดตั้งแต่ ${new Date(ix.oldest * 1000).toLocaleString("en-GB")}` : ""}`
+            : "อ่านข้อมูลจาก OpenSearch ไม่ได้";
+        $("r_prom").textContent = d.prometheus_retention ? rtText(d.prometheus_retention) : "ไม่ทราบ (ติดต่อ Prometheus ไม่ได้)";
+        retentionWarn();
+    } catch (e) { if (e.message !== "auth") say("r_msg", "โหลดค่าไม่สำเร็จ: " + e.message, "bad"); }
+}
+
+/* log เก็บนานกว่า metrics -> log ส่วนที่เกินจะไม่แสดงในหน้า Logs (แสดงเฉพาะ log ที่มี metrics) */
+function retentionWarn() {
+    const lg = rtSec(rtRead("r_log")), pr = rtSec(RT_DATA && RT_DATA.prometheus_retention);
+    const w = $("r_warn");
+    w.hidden = !(lg && pr && lg > pr);
+    if (!w.hidden) w.textContent = `หมายเหตุ: Prometheus เก็บ metrics ${rtText(RT_DATA.prometheus_retention)} — หน้า Logs แสดงเฉพาะ log ที่มี metrics ดังนั้น log ที่เก่ากว่า ${rtText(RT_DATA.prometheus_retention)} จะไม่แสดง (แต่ยังเก็บอยู่ใน OpenSearch) ถ้าต้องการเห็นด้วย ให้เพิ่ม PROMETHEUS_RETENTION ให้เท่ากัน`;
+}
+
+async function saveRetention() {
+    document.querySelectorAll("[data-r]").forEach(f => { f.classList.remove("has-err"); f.querySelector(".st-err").textContent = ""; });
+    const body = {};
+    Object.entries(RT).forEach(([k, id]) => { const v = rtRead(id); if (v && (!RT_DATA || rtSec(v) !== rtSec(RT_DATA[k]))) body[k] = v; });
+    if (!Object.keys(body).length) { say("r_msg", "ไม่มีค่าที่เปลี่ยน", ""); return; }
+    const shrink = Object.keys(body).filter(k => RT_DATA && rtSec(body[k]) < rtSec(RT_DATA[k]));
+    if (shrink.length && !confirm(`ลดอายุการเก็บ:\n${shrink.map(k => `- ${k}: ${rtText(RT_DATA[k])} → ${rtText(body[k])}`).join("\n")}\n\nข้อมูลที่เก่ากว่าค่าใหม่จะถูกลบ และกู้คืนไม่ได้ ดำเนินการต่อ?`)) return;
+    $("r_save").disabled = true;
+    try {
+        const d = await api("PUT", "/api/retention", body);
+        say("r_msg", "บันทึกแล้ว · " + (d.notes || []).join(" · "), "ok");
+        await loadRetention();
+    } catch (e) {
+        if (e.fields) Object.entries(e.fields).forEach(([k, m]) => { const f = document.querySelector(`[data-r="${k}"]`); if (f) { f.classList.add("has-err"); f.querySelector(".st-err").textContent = m; } });
+        say("r_msg", "บันทึกไม่สำเร็จ: " + e.message, "bad");
+    } finally { $("r_save").disabled = false; }
+}
+
 async function loadUser() {
     try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; } catch (e) { /* api() พาไป /login เอง */ }
 }
@@ -459,6 +514,8 @@ document.addEventListener("DOMContentLoaded", () => {
     /* Web checks ซ่อนไว้ก่อน: เปลี่ยน SHOW_CHECKS เป็น true แล้วการ์ดจะกลับมา (คู่กับ dashboard.js) */
     const SHOW_CHECKS = false;
     $("checksCard").hidden = !SHOW_CHECKS;
-    loadUser(); loadTargets(); loadUsers();
+    $("r_save").onclick = saveRetention;
+    ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
+    loadUser(); loadTargets(); loadUsers(); loadRetention();
     if (SHOW_CHECKS) loadChecks();
 });

@@ -133,6 +133,20 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 </div>
 <div class="st-msg" id="userMsg" role="status"></div>
 </section>
+<!-- อายุการเก็บข้อมูล (/api/retention): log ใน OpenSearch (ISM), ประวัติปัญหา + สถานะเครื่องย้อนหลัง (puller.yaml storage) -->
+<section class="card svc">
+<div class="top"><h2>Data retention</h2></div>
+<div style="color:var(--mut);font-size:13px">ข้อมูลที่เก่ากว่าค่านี้จะถูกลบอัตโนมัติ · ใส่เป็นชั่วโมง (h) หรือวัน (d) · การลดค่าจะลบข้อมูลเก่าที่เกินทันทีในรอบตรวจถัดไป (~5 นาที) กู้คืนไม่ได้</div>
+<div class="st-grid rtgrid">
+<div class="st-f" data-r="log_retention"><label for="r_log">Logs (ERROR / WARN) ใน OpenSearch</label><div class="rtin"><input id="r_log" type="number" min="1" step="1" inputmode="numeric"><select id="r_log_u" aria-label="Unit"><option value="d">days</option><option value="h">hours</option></select></div><div class="rtnote" id="r_log_note"></div><div class="st-err"></div></div>
+<div class="st-f" data-r="incident_retention"><label for="r_inc">Incident history (ปัญหาที่เกิดแล้ว)</label><div class="rtin"><input id="r_inc" type="number" min="1" step="1" inputmode="numeric"><select id="r_inc_u" aria-label="Unit"><option value="d">days</option><option value="h">hours</option></select></div><div class="rtnote">data/state/incidents.json · หน้า Events &gt; Incident history</div><div class="st-err"></div></div>
+<div class="st-f" data-r="system_history_retention"><label for="r_sys">Machine state history (service / process)</label><div class="rtin"><input id="r_sys" type="number" min="1" step="1" inputmode="numeric"><select id="r_sys_u" aria-label="Unit"><option value="d">days</option><option value="h">hours</option></select></div><div class="rtnote">สถานะเครื่องที่แสดงในหน้าต่าง log เก่า · บันทึกทุก 1 ชั่วโมง</div><div class="st-err"></div></div>
+<div class="st-f"><label>Metrics (Prometheus)</label><div class="rtro" id="r_prom">-</div><div class="rtnote">อ่านอย่างเดียว · เปลี่ยนที่ <code>PROMETHEUS_RETENTION</code> ใน docker/.env แล้วรัน <code>docker compose up -d prometheus</code></div></div>
+</div>
+<div class="rtwarn" id="r_warn" hidden></div>
+<div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="r_save" type="button">Save retention</button></div>
+<div class="st-msg" id="r_msg" role="status"></div>
+</section>
 <datalist id="groupList"></datalist>
 </div>
 <script src="/badges.js"></script>

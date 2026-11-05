@@ -736,6 +736,8 @@ const S = {
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
     showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
+    logWeb: "",                            // ตาราง Logs: เครื่องที่ดู ("" = ทุกเครื่อง ค่าเริ่มต้น) แยกจากเครื่องที่เลือกด้านบน
+    showMetrics: loadPref("cm.logsMetrics", true),   // คอลัมน์ Metrics ย่อในตาราง Logs (รายละเอียดเต็มอยู่ในหน้าต่าง log)
     sel: new Map(), logRows: []            // log ที่ติ๊กเลือกไว้ (id -> แถว) + แถวที่แสดงอยู่
 };
 /* วัด process สดใหม่ทุกกี่ ms (ขณะเปิดหน้า) */
@@ -874,6 +876,11 @@ function itemBucket(x, isCheck) {
 }
 const BUCKET_PILL = { dn: ["▼", "Down / Problem"], wr: ["W", "Warning"], ok: ["✓", "OK"], ps: ["II", "Paused"], na: ["?", "Unknown"] };
 
+function loadPref(key, def) {
+    try { const v = localStorage.getItem(key); return v === null ? def : v === "1"; } catch (e) { return def; }
+}
+function savePref(key, on) { try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* ignore */ } }
+
 function loadShowAcked() {
     try { return localStorage.getItem("cm.logsShowAcked") === "1"; } catch (e) { return false; }
 }
@@ -971,10 +978,15 @@ function renderMachines(ov) {
     const checks = SHOW_CHECKS && Array.isArray(ov.checks) ? ov.checks : [];
     S.webs = webs;
     if (ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
-    const cur = webs.some(w => w.web === S.web) ? S.web : ((webs.find(w => !w.paused) || webs[0] || {}).web || null);
+    /* ไม่เลือกเครื่องให้อัตโนมัติ: รายละเอียดแสดงเมื่อผู้ใช้คลิกเครื่อง (หรือเปิดด้วย /?web=) */
+    const cur = webs.some(w => w.web === S.web) ? S.web : null;
+    if (S.web && !cur && webs.length) closeDetail();
     S.web = cur;
     applyTargetThresholds((webs.find(w => w.web === cur) || {}).thresholds);
     setText("cur", cur || "-");
+    q("#curWrap").hidden = !cur; q("#curHint").hidden = !!cur;
+    q("#detail").hidden = !cur; q("#meta").hidden = !cur;
+    renderLogWebs(webs);
 
     const cb = c => checks.filter(x => x.status === c).length;
     const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
@@ -1581,7 +1593,35 @@ function setupServicePicker() {
    (ยังอยู่ใน OpenSearch ตามอายุเดิม) ติ๊ก "Show acknowledged" เพื่อดูอีกครั้ง/ยกเลิก */
 function canAckLogs() { return canOperate() && !S.info; }
 function renderLogHead(selectable) {
-    q("#plogHead").innerHTML = `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th>Message</th><th>Metrics at time</th></tr>`;
+    q("#plogHead").innerHTML = `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
+}
+function logCols(selectable) { return 5 + (selectable ? 1 : 0) + (S.showMetrics ? 1 : 0); }
+
+/* Metrics ย่อในตาราง: เฉพาะ CPU / Memory / Disk (สีตามเกณฑ์) ที่เหลือดูในหน้าต่างรายละเอียด */
+function compactMetrics(m) {
+    m = m || {};
+    const one = (k, label) => {
+        const v = Number(m[k]);
+        if (m[k] == null || !Number.isFinite(v)) return "";
+        const cls = v >= TH_DEFAULT[k].crit ? "cr" : v >= TH_DEFAULT[k].warn ? "wr" : "";
+        return `<span class="${cls}">${label} ${v.toFixed(0)}%</span>`;
+    };
+    const parts = [one("cpu", "CPU"), one("memory", "Mem"), one("disk", "Disk")].filter(Boolean);
+    return parts.length ? parts.join(" ") : "-";
+}
+
+/* dropdown เครื่องของตาราง Logs (All machines + ทุกเครื่องใน puller.yaml) */
+function renderLogWebs(webs) {
+    const sel = q("#logWeb");
+    if (!sel || document.activeElement === sel) return;
+    const names = (webs || []).map(w => w.web);
+    if (S.logWeb && !names.includes(S.logWeb)) names.push(S.logWeb);
+    const html = `<option value="">All machines</option>` + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+    if (sel.innerHTML !== html) sel.innerHTML = html;
+    sel.value = S.logWeb;
+    const info = q("#infoBtn");
+    info.disabled = !S.logWeb || S.infoBusy;
+    info.title = S.logWeb ? "" : "Choose a machine first (INFO is loaded live from one machine)";
 }
 function renderAckBar() {
     const can = canAckLogs();
@@ -1596,7 +1636,23 @@ function renderAckBar() {
     if (all) { all.checked = S.logRows.length > 0 && S.logRows.every(p => S.sel.has(p.id)); all.indeterminate = !all.checked && sel.length > 0; }
 }
 
+/* ปิดรายละเอียดเครื่อง (กลับไปเห็นแค่ WEB status + Logs) */
+function closeDetail() {
+    S.web = null; S.hist = null; S.summary = null; S.metrics = null; S.marks = []; S.markGroups = []; S.live = null;
+    togglePick(false); hideMarkMenu();
+    q("#detail").hidden = true; q("#meta").hidden = true;
+    q("#curWrap").hidden = true; q("#curHint").hidden = false;
+    setUrlWeb(null);
+    q("#mach").querySelectorAll("[aria-selected=true]").forEach(r => r.setAttribute("aria-selected", "false"));
+}
+function setUrlWeb(web) {
+    const u = new URL(location.href);
+    web ? u.searchParams.set("web", web) : u.searchParams.delete("web");
+    history.replaceState(null, "", u.pathname + (u.search || ""));
+}
+
 function renderProblems(list) {
+    if (!S.search && !S.info) S.logRowsAll = list;
     const tb = q("#plog");
     const filtered = S.lv !== "ALL" || S.lt !== "ALL";
     const selectable = canAckLogs();
@@ -1606,7 +1662,7 @@ function renderProblems(list) {
     renderLogHead(selectable);
     renderAckBar();
     if (!Array.isArray(list) || !list.length) {
-        tb.innerHTML = `<tr><td colspan="${selectable ? 7 : 6}" class="empty">${S.search ? "No logs match this search" : S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="${logCols(selectable)}" class="empty">${S.search ? "No logs match this search" : S.info ? "No INFO lines in the loaded range" : filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
         setText("logCnt", "");
         renderLogStat(0);
         return;
@@ -1619,7 +1675,7 @@ function renderProblems(list) {
         if (p.ack) tr.className = "acked";
         const ackTag = p.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${p.ack.by || "-"} · ${p.ack.at ? new Date(p.ack.at * 1000).toLocaleString("en-GB") : ""}${p.ack.note ? " · " + p.ack.note : ""}`)}">ACK</span>` : "";
         const sel = selectable ? `<td class="sel">${p.id ? `<input type="checkbox" data-sel="${escapeHtml(p.id)}"${S.sel.has(p.id) ? " checked" : ""} aria-label="Select log">` : ""}</td>` : "";
-        tr.innerHTML = `${sel}<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}${ackTag}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td><td>${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "-")}</td>`;
+        tr.innerHTML = `${sel}<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}${ackTag}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}`;
         tr.addEventListener("click", e => {
             if (e.target.closest("td.sel")) {
                 const cb = tr.querySelector("input[data-sel]"); if (!cb) return;
@@ -1645,10 +1701,10 @@ function logRange(p) {
     return p;
 }
 function logKey() { return S.start ? `${+S.start}-${S.end ? +S.end : "now"}` : "latest"; }
-function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ web: S.web }))}`; }
+function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ web: S.logWeb || "all" }))}`; }
 
 function logUrl() {
-    const p = logRange(new URLSearchParams({ web: S.web, size: "300" }));
+    const p = logRange(new URLSearchParams({ web: S.logWeb || "all", size: "300" }));
     if (S.showAcked) p.set("acked", "1");
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
@@ -1684,7 +1740,7 @@ function hlHtml(text) {
 
 function renderLogStat(shown) {
     if (S.search) {
-        const sr = S.search, scope = sr.scope === "all" ? "all WEB" : sr.web;
+        const sr = S.search, scope = sr.web ? sr.web : "all machines";
         const more = sr.truncated ? " · showing the newest matches only, narrow the search or time range to see more" : "";
         setText("lvStat", `Search "${sr.q}" in ${scope}${S.start ? " · selected time range" : ""} · ${sr.matched} match${sr.matched === 1 ? "" : "es"}${more}`);
         return;
@@ -1703,9 +1759,7 @@ function renderLogStat(shown) {
 
 /* เปลี่ยนตัวกรองแล้วโหลดเฉพาะรายการ log + จำนวน (ไม่โหลดทั้งหน้า) */
 async function reloadLogs() {
-    if (!S.web) return;
     try {
-        const w = encodeURIComponent(S.web);
         S.logKey = logKey();
         const [problems, stats] = await Promise.all([apiGet(logUrl()), apiGet(statsUrl())]);
         renderLogFilter(stats);
@@ -1718,8 +1772,8 @@ async function reloadLogs() {
    ระบบไม่เก็บ INFO -> กดปุ่มแล้วดึงสดจากเครื่อง (N บรรทัดท้ายของแต่ละ log, ถ้าเลือกช่วงเวลาไว้กรองตามช่วงนั้น)
    ผลอยู่ในหน่วยความจำของหน้าเว็บเท่านั้น (S.info) กด Close INFO / เปลี่ยนเครื่อง / รีโหลดหน้า = หายไป */
 async function loadInfo() {
-    if (!S.web || S.infoBusy) return;
-    const btn = q("#infoBtn"), web = S.web;
+    if (!S.logWeb || S.infoBusy) return;
+    const btn = q("#infoBtn"), web = S.logWeb;
     S.infoBusy = true; btn.disabled = true; btn.textContent = "Loading INFO...";
     try {
         const p = logRange(new URLSearchParams({ web, lines: q("#infoLines").value }));
@@ -1727,7 +1781,7 @@ async function loadInfo() {
         if (r.status === 401) { window.location.href = "/login"; return; }
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
-        if (web !== S.web) return;                 /* เปลี่ยนเครื่องระหว่างรอ */
+        if (web !== S.logWeb) return;              /* เปลี่ยนเครื่องระหว่างรอ */
         S.info = { rows: d.entries || [], errors: d.errors || [], lines: d.lines || q("#infoLines").value };
         if (S.search) { S.search = null; q("#logClear").hidden = true; }
         showInfo();
@@ -1735,7 +1789,7 @@ async function loadInfo() {
         console.error("INFO log error:", err);
         setText("lvStat", `Load INFO failed: ${err.message}`);
     } finally {
-        S.infoBusy = false; btn.disabled = false; btn.textContent = S.info ? "Reload INFO" : "Load INFO log";
+        S.infoBusy = false; btn.disabled = !S.logWeb; btn.textContent = S.info ? "Reload INFO" : "Load INFO log";
     }
 }
 function showInfo() {
@@ -1758,7 +1812,7 @@ async function ackLogs(on) {
     try {
         const r = await fetch(`/api/logs/${on ? "ack" : "unack"}`, {
             method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids: rows.map(p => p.id), note, web: S.web }) });
+            body: JSON.stringify({ ids: rows.map(p => p.id), note, web: [...new Set(rows.map(p => p.web))].join(",") }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
         S.sel.clear();
         await reloadLogs();            /* ค้นอยู่ -> reloadLogs ค้นซ้ำให้ */
@@ -1773,9 +1827,9 @@ async function runSearch(keep) {
     const qv = keep && S.search ? S.search.q : q("#logQ").value.trim();
     if (!qv) { clearSearch(); return; }
     if (S.searchBusy) return;
-    const scope = keep && S.search ? S.search.scope : q("#logScope").value;
+    const web = S.logWeb;
     const p = logRange(new URLSearchParams({ q: qv, size: "300" }));
-    if (scope !== "all" && S.web) p.set("web", S.web);
+    if (web) p.set("web", web);
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
     const btn = q("#logGo");
@@ -1785,7 +1839,7 @@ async function runSearch(keep) {
         if (r.status === 401) { window.location.href = "/login"; return; }
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
-        S.search = { q: qv, scope, web: S.web, rows: d.results || [], total: d.total, matched: d.matched ?? (d.results || []).length, truncated: !!d.truncated };
+        S.search = { q: qv, web, rows: d.results || [], total: d.total, matched: d.matched ?? (d.results || []).length, truncated: !!d.truncated };
         if (S.info) { S.info = null; showInfo(); }
         q("#logClear").hidden = false;
         renderProblems(S.search.rows);
@@ -1815,7 +1869,7 @@ async function openLogDetail(p) {
 /* ---------- G. การโหลดข้อมูล ----------
    โหลดเฉพาะกราฟย้อนหลังตามช่วงเวลาที่เลือก (เรียกเมื่อเปลี่ยนช่วงเวลา ไม่ต้องโหลดทั้งหน้า) */
 async function loadHist() {
-    if (!S.web) return;
+    if (!S.web) { if (logKey() !== S.logKey) reloadLogs(); return; }   /* ไม่ได้เลือกเครื่อง: เปลี่ยนช่วงเวลา -> โหลดแค่ Logs */
     const [s, e] = rng(), w = encodeURIComponent(S.web), a = Math.floor(s / 1000), b = Math.floor(e / 1000);
     const base = `/api/metrics/history?web=${w}&start=${a}&end=${b}`, main = S.chart === "main", cmp = S.cmp ? "&compare=1" : "";
     const r = await Promise.allSettled([
@@ -1842,22 +1896,29 @@ async function loadAll() {
         setSystemStatus("Loading...", "yellow");
         const ov = await apiGet("/api/overview");
         renderMachines(ov);
-        if (!S.web) { setSystemStatus("No WEB configured", "red"); return; }
-        const w = encodeURIComponent(S.web);
-        const [summary, metrics, problems, stats] = await Promise.all([
-            apiGet(`/api/summary?web=${w}`),
-            apiGet(`/api/metrics?web=${w}`),
-            apiGet(logUrl()),
-            apiGet(statsUrl())
-        ]);
+        /* ตาราง Logs (ทุกเครื่อง / เครื่องที่เลือกใน dropdown) โหลดเสมอ */
+        const [problems, stats] = await Promise.all([apiGet(logUrl()), apiGet(statsUrl())]);
         S.logKey = logKey();
+        renderLogFilter(stats);
+        if (S.search) renderProblems(S.search.rows); else if (S.info) renderProblems(S.info.rows); else renderProblems(problems);
+        if (!S.web) {
+            /* ยังไม่ได้เลือกเครื่อง: ไม่โหลดรายละเอียด  สถานะมุมบนจากภาพรวม */
+            if (!(ov.servers || []).length) setSystemStatus("No WEB configured", "red");
+            else if ((ov.down || 0) + (ov.problem || 0)) setSystemStatus(`${(ov.down || 0) + (ov.problem || 0)} machine(s) down / problem`, "red");
+            else if (ov.warning) setSystemStatus(`${ov.warning} machine(s) warning`, "yellow");
+            else setSystemStatus("System Healthy", "green");
+            return;
+        }
+        const w = encodeURIComponent(S.web);
+        const [summary, metrics] = await Promise.all([
+            apiGet(`/api/summary?web=${w}`),
+            apiGet(`/api/metrics?web=${w}`)
+        ]);
         await loadWatch();
         S.summary = summary;
         S.metrics = { ...(summary.metrics || {}), ...(metrics || {}) };
         renderMeta();
         renderLists();
-        renderLogFilter(stats);
-        if (S.search) renderProblems(S.search.rows); else if (S.info) renderProblems(S.info.rows); else renderProblems(problems);
         loadLive(false);
         await loadHist();
         const st = String(summary.status || "").toLowerCase(), cs = summary.current_state;
@@ -1999,8 +2060,11 @@ document.addEventListener("DOMContentLoaded", () => {
             saveClosedGroups(); renderMachines(); return;
         }
         const b = e.target.closest("[data-web]"); if (!b) return;
-        if (b.dataset.web !== S.web) { togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.info = null; q("#infoClear").hidden = true; q("#infoBtn").textContent = "Load INFO log"; S.live = null; S.liveErr = null; if (S.search && S.search.scope !== "all") { S.search = null; q("#logClear").hidden = true; } }
-        S.web = b.dataset.web; S.hist = null; S.lv = "ALL"; S.lt = "ALL"; loadAll();
+        if (b.dataset.web === S.web) { closeDetail(); return; }       /* คลิกเครื่องเดิมซ้ำ = ปิดรายละเอียด */
+        togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.live = null; S.liveErr = null;
+        S.web = b.dataset.web; S.hist = null;
+        setUrlWeb(S.web);
+        renderMachines(); loadAll().then(() => q("#detail").scrollIntoView({ behavior: "smooth", block: "start" }));
     });
     q("#lvTabs").addEventListener("click", e => {
         const b = e.target.closest("button[data-lv]"); if (!b) return;
@@ -2032,6 +2096,18 @@ document.addEventListener("DOMContentLoaded", () => {
         saveClosedGroups(); renderMachines();
     });
     q("#infoClear").addEventListener("click", closeInfo);
+    q("#closeDetail").addEventListener("click", closeDetail);
+    q("#logWeb").addEventListener("change", e => {
+        S.logWeb = e.target.value; S.lt = "ALL"; S.sel.clear();
+        if (S.info) { S.info = null; showInfo(); }
+        renderLogWebs(S.webs);
+        if (S.search) runSearch(true); else reloadLogs();
+    });
+    q("#showMetrics").checked = S.showMetrics;
+    q("#showMetrics").addEventListener("change", e => {
+        S.showMetrics = e.target.checked; savePref("cm.logsMetrics", S.showMetrics);
+        renderProblems(S.search ? S.search.rows : S.info ? S.info.rows : S.logRowsAll || []);
+    });
     $("logoutButton").addEventListener("click", logout);
     loadCurrentUser();
     loadAll();

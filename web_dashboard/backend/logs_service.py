@@ -46,7 +46,7 @@ import log_ack_service
 from clients import opensearch_request, prometheus_query_range, puller_info_logs
 from log_levels import detect_log_level
 from metrics_service import _labels, get_metrics_at_time, get_web_prometheus_config
-from settings import resolve_web_name
+from settings import load_web_targets, resolve_web_name
 from system_state import load_system_snapshot_at
 from timeutil import to_unix
 
@@ -222,8 +222,24 @@ def _with_metrics(entries, web):
             (int(e["_ts"]) // 60 in minutes or int(e["_ts"]) // 60 + 1 in minutes)]
 
 
+def is_all(web):
+    """web ว่าง / "all" / "*" = ทุกเครื่อง"""
+    return str(web or "").strip().lower() in ("", "all", "*")
+
+
+def all_webs():
+    """ชื่อเครื่องทั้งหมดใน puller.yaml (ตามลำดับในไฟล์)"""
+    return [str(t.get("name")) for t in load_web_targets() if t.get("name")]
+
+
 def _visible(web, include_acked=False):
-    """log ที่แสดงได้: มี metrics + (ยังไม่ acknowledge)"""
+    """log ที่แสดงได้: มี metrics + (ยังไม่ acknowledge)   web ว่าง/"all" = รวมทุกเครื่อง ใหม่ -> เก่า"""
+    if is_all(web):
+        merged = []
+        for w in all_webs():
+            merged += _visible(w, include_acked)
+        merged.sort(key=lambda e: e["_ts"], reverse=True)
+        return merged
     entries = _with_metrics(_scan(web), web)
     return entries if include_acked else _not_acked(entries)
 

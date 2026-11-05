@@ -36,6 +36,23 @@
 
 
 
+
+## หน้าแรกแสดงแค่ WEB status + Logs ทุกเครื่อง · ตั้งอายุข้อมูลจากหน้า Settings
+
+- เปิดหน้าแรกเห็นแค่ WEB status และ Logs · คลิกเครื่องแล้วค่อยโหลด KPI / กราฟ / Service / Process ของเครื่องนั้น
+  คลิกเครื่องเดิมซ้ำ หรือกด "Close details" = ปิด · ลิงก์ /?web=<ชื่อ> ยังเปิดเครื่องนั้นได้ตรง ๆ
+- Logs: ปริยายแสดง log ของทุกเครื่อง · dropdown "Machine" เลือกดูทีละเครื่อง (แทน This WEB / All WEB เดิม ใช้กับ Search ด้วย)
+  Load INFO log ต้องเลือกเครื่องก่อน (ดึงสดจากเครื่องเดียว)
+- คอลัมน์ Metrics ย่อเหลือ CPU / Mem / Disk (สีตามเกณฑ์) ติ๊ก "Metrics" เพื่อซ่อน/แสดง (จำไว้ใน browser)
+  Message ใช้ความกว้างที่เหลือทั้งหมด ชี้เมาส์ดูข้อความเต็ม · รายละเอียดเต็มอยู่ในหน้าต่าง log เหมือนเดิม
+- Settings > Data retention: ตั้งอายุ log ใน OpenSearch, Incident history, Machine state history (ชั่วโมง/วัน)
+  - log: อัปเดต ISM policy + ผูก index เดิมให้ใช้ค่าใหม่ด้วย (ลบของเก่าเกินในรอบตรวจถัดไป ~5 นาที)
+    ค่าที่ตั้งจำไว้ที่ data/state/retention.json -> cm-update / install.sh ไม่เขียนทับกลับ
+  - incident / machine state: เขียนลง puller.yaml (storage.*) คงคอมเมนต์เดิม
+  - แสดงขนาด/จำนวน log ที่เก็บอยู่ และอายุ metrics ของ Prometheus (เตือนถ้า log เก็บนานกว่า metrics)
+- อายุ metrics ของ Prometheus ที่มากับ stack ตั้งได้ที่ PROMETHEUS_RETENTION ใน docker/.env (ปริยาย 7d)
+- API: /api/problems, /api/log-stats รับ web=all · GET/PUT /api/retention (admin)
+
 ## วงกลมที่มีเลขบนกราฟ -> เมนูเลือก log
 
 - คลิกวงกลมที่มีเลข (หลาย log อยู่ใกล้กัน) จะขึ้นเมนูรายการ log ในกลุ่มนั้น: ERROR ก่อน ใหม่ก่อน, เวลา, ชนิด, ข้อความย่อ

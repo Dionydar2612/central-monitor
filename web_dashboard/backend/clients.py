@@ -45,6 +45,27 @@ def opensearch_request(path, payload):
         return json.loads(response.read().decode("utf-8"))
 
 
+def opensearch_call(method, path, payload=None):
+    """เรียก OpenSearch แบบระบุ method (GET/PUT/POST) คืน (HTTP status, dict)  ไม่ throw เมื่อได้ 4xx/5xx"""
+    token = base64.b64encode(f"{OS_USER}:{OS_PASSWORD}".encode("utf-8")).decode("ascii")
+    req = urllib.request.Request(
+        OPENSEARCH + path,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        method=method,
+        headers={"Content-Type": "application/json", "Authorization": f"Basic {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, context=ssl._create_unverified_context(), timeout=20) as r:
+            body = r.read()
+            return r.status, json.loads(body.decode("utf-8")) if body else {}
+    except urllib.error.HTTPError as e:
+        body = e.read()
+        try:
+            return e.code, json.loads(body.decode("utf-8")) if body else {}
+        except ValueError:
+            return e.code, {"error": body.decode("utf-8", "replace")[:300]}
+
+
 def prometheus_query(query, timestamp=None):
     """instant query: ค่า ณ เวลาหนึ่ง (ไม่ใส่ timestamp = ตอนนี้)"""
     params = {"query": query}

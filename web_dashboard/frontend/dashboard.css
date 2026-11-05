@@ -1130,3 +1130,24 @@ td.bad{color:#e5484d}
 .mkmsg{grid-column:1/-1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
 .mklv{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;color:#fff;white-space:nowrap}
 .mklv.e{background:#e5484d}.mklv.w{background:#c98a00}
+
+/* ตาราง Logs: Message กินที่ที่เหลือทั้งหมด (ตัดด้วย ... ชี้เมาส์ดูเต็ม), Metrics ย่อเป็นคอลัมน์แคบ */
+.pl{width:100%}
+.pl .msg,.pl td.msg{max-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl th.msg{max-width:none}
+.pl td.pm{font-size:12px;color:var(--mut);white-space:nowrap}
+.pl td.pm span+span{margin-left:8px}
+.pl td.pm .wr{color:#c98a00;font-weight:600}
+.pl td.pm .cr{color:#e5484d;font-weight:600}
+/* ปุ่มลักษณะลิงก์ (Close details) */
+.linkbtn{border:0;background:none;padding:0;color:var(--blue);font:inherit;cursor:pointer;text-decoration:underline}
+.linkbtn:hover{opacity:.8}
+#detail[hidden],#meta[hidden]{display:none!important}
+/* Settings > Data retention */
+.rtgrid{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.rtin{display:flex;gap:6px}
+.st-f .rtin input{flex:1;min-width:0}
+.st-f .rtin select{width:auto;flex:0 0 auto}
+.rtnote{color:var(--mut);font-size:12px;margin-top:5px;line-height:1.4}
+.rtro{font-size:15px;font-weight:600;padding:9px 0}
+.rtwarn{margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(245,165,36,.14);color:var(--ink);font-size:13px;line-height:1.45}

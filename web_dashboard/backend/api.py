@@ -76,6 +76,7 @@ import log_ack_service
 import checks_service
 import sensors_service
 import users_service
+import retention_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
@@ -164,7 +165,7 @@ def _required_role(method, path):
         return "operator"
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
-    if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users")):
+    if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention")):
         return "admin"
     if path.startswith("/api/checks"):
         return "viewer" if method == "GET" else "admin"
@@ -197,6 +198,8 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note")),
     ("POST", re.compile(r"^/api/logs/unack$"), "log.unack", ("web",)),
     ("POST", re.compile(r"^/api/users$"), "user.add", ("username", "role")),
+    ("PUT", re.compile(r"^/api/retention$"), "settings.retention",
+     ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
 ]
@@ -307,6 +310,20 @@ def current_user():
 
 def _user_error(e):
     return jsonify({"error": "validation", "fields": e.fields}), e.status
+
+
+@app.get("/api/retention")
+def retention_get():
+    """อายุการเก็บข้อมูล: log (OpenSearch ISM), ประวัติปัญหา, สถานะเครื่องย้อนหลัง, metrics (อ่านอย่างเดียว)"""
+    return jsonify(retention_service.get_settings())
+
+
+@app.put("/api/retention")
+def retention_put():
+    ok, out = retention_service.update_settings(request.get_json(silent=True) or {}, session.get("username", ""))
+    if not ok:
+        return jsonify(out), 400
+    return jsonify({**out, "settings": retention_service.get_settings()})
 
 
 @app.get("/api/users")
@@ -504,12 +521,13 @@ def summary():
 @app.get("/api/problems")
 def problems():
     """รายการ log ของเครื่อง (ใหม่ -> เก่า) size ปริยาย 200 สูงสุด 1000
+    web=all (หรือว่าง) = log ของทุกเครื่องรวมกัน
 
     ตัวกรอง (ไม่ใส่ = ทั้งหมด)
         level=ERROR,WARN   เฉพาะระดับที่เลือก (ERROR / WARN / INFO)
         type=application   เฉพาะชนิด log (resource log.source: application / loginuser / logapp / other)
     """
-    web = request.args.get("web", "web-01")
+    web = request.args.get("web", "all")
 
     try:
         size = min(int(request.args.get("size", "200")), 1000)
@@ -554,8 +572,8 @@ def logs_unack():
 
 @app.get("/api/log-stats")
 def log_stats():
-    """จำนวน log ของเครื่องแยกตาม level และ type (นับจากชุดเดียวกับ /api/problems)"""
-    web = request.args.get("web", "web-01")
+    """จำนวน log ของเครื่องแยกตาม level และ type (นับจากชุดเดียวกับ /api/problems)  web=all = ทุกเครื่อง"""
+    web = request.args.get("web", "all")
     start, end = _range_args()
     return jsonify(get_log_stats(web, start, end))
 

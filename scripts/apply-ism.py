@@ -6,6 +6,7 @@ apply-ism.py - ตั้ง/อัปเดต ISM policy ลบ log อัต�
 
 อ่าน   : policy JSON จาก stdin
 ใช้ env : OPENSEARCH_ADMIN_PASSWORD (จำเป็น), OPENSEARCH_LOG_RETENTION (เช่น 90m, 12h, 7d ปริยาย 7d)
+          ถ้าตั้งจากหน้า Settings > Data retention ไว้ (data/state/retention.json) ใช้ค่านั้นก่อน
 ทำอะไร  : แทนค่า min_index_age ใน policy ด้วย OPENSEARCH_LOG_RETENTION
           - ยังไม่มี policy -> สร้าง
           - มีอยู่แล้ว      -> ดึง seq_no/primary_term แล้วอัปเดต (เดิมได้ 409 แล้วค่าใหม่ไม่ถูกใช้)
@@ -16,6 +17,12 @@ import base64, json, os, re, ssl, sys, urllib.error, urllib.request
 
 URL = "https://opensearch:9200/_plugins/_ism/policies/central-log-retention"
 retention = os.environ.get("OPENSEARCH_LOG_RETENTION", "7d").strip() or "7d"
+# ค่าที่ตั้งจากหน้า Settings > Data retention มาก่อน .env (ไม่งั้น cm-update จะเขียนทับกลับเป็นค่าเดิม)
+try:
+    with open(os.path.join(os.environ.get("CENTRAL_STATE_DIR", "/data/state"), "retention.json")) as _f:
+        retention = (json.load(_f).get("log_retention") or retention).strip()
+except (OSError, ValueError, AttributeError):
+    pass
 
 if not re.fullmatch(r"\d+(m|h|d)", retention):
     sys.exit(f"OPENSEARCH_LOG_RETENTION ไม่ถูกต้อง: {retention!r} (ตัวอย่าง 90m, 12h, 7d)")
@@ -53,6 +60,8 @@ else:
     sys.exit(f"GET policy -> HTTP {status}: {existing}")
 
 if status in (200, 201):
+    # index ที่มีอยู่แล้วให้ใช้ policy เวอร์ชันใหม่ด้วย
+    call("POST", "https://opensearch:9200/_plugins/_ism/change_policy/logs-central-*", {"policy_id": "central-log-retention"})
     print(f"ISM-OK policy {action}: delete logs older than {retention}")
 else:
     sys.exit(f"PUT policy -> HTTP {status}: {out}")
