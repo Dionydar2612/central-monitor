@@ -651,6 +651,7 @@ const N_LABEL = { down: "เครื่อง Down", error: "Error (disk เต
 function renderNotify(d) {
     $("n_on").checked = !!d.enabled || !d.url_set;
     $("n_url").value = "";
+    $("n_times").value = (d.summary_times || []).join(", ");
     $("n_hint").textContent = d.url_set ? `บันทึกไว้แล้ว: ${d.url_hint}` : "ยังไม่ได้ตั้ง";
     const box = $("n_levels"); box.textContent = "";
     (d.all_levels || Object.keys(N_LABEL)).forEach(k => box.append(
@@ -667,7 +668,7 @@ function notifyErrors(e) {
 async function saveNotify(extra) {
     notifyErrors(null);
     const body = Object.assign({
-        enabled: $("n_on").checked,
+        enabled: $("n_on").checked, summary_times: $("n_times").value,
         levels: [...$("n_levels").querySelectorAll("input:checked")].map(i => i.value),
     }, $("n_url").value.trim() ? { webhook_url: $("n_url").value.trim() } : {}, extra || {});
     $("n_save").disabled = true;
@@ -721,6 +722,10 @@ document.addEventListener("DOMContentLoaded", () => {
     $("al_reset").onclick = resetAlerts;
     $("n_save").onclick = () => saveNotify();
     $("n_test").onclick = testNotify;
+    $("n_sumnow").onclick = async () => {
+        try { const d = await api("POST", "/api/notify-settings/summary-now", {}); say("n_msg", d.message, "ok"); }
+        catch (e) { say("n_msg", "ส่งไม่ได้: " + e.message, "bad"); }
+    };
     $("n_clear").onclick = () => { if (confirm("ลบ webhook URL? (หยุดส่งแจ้งเตือนไป Teams)")) saveNotify({ webhook_url: "-", enabled: false }); };
     $("f_type").addEventListener("change", e => setType(e.target.value));
     $("agMake").onclick = makeAgentCommand;

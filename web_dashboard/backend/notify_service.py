@@ -4,6 +4,7 @@ notify_service.py - ตั้งค่าการแจ้งเตือน Mi
 
 เก็บใน config/puller.yaml -> notify.teams  (ตัวส่งจริง: start_push_log/puller/notify.py ใน central-puller)
     enabled, webhook_url, levels [down, error, warning, recovered, checks]
+    summary_times ["08:30", "17:00"]   ส่งการ์ดสรุปสถานะทุกเครื่องทุกวันตามเวลานี้ (เวลาของเครื่อง central)
 
 webhook URL เป็นความลับ (ใครมี URL ก็โพสต์เข้าช่องได้)
     GET  ไม่ส่ง URL เต็มกลับไป แสดงแค่ host + 6 ตัวท้าย
@@ -12,11 +13,15 @@ webhook URL เป็นความลับ (ใครมี URL ก็โพ�
 """
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
 
+import os
+
+import settings
 import targets_service
 
 LEVELS = ("down", "error", "warning", "recovered", "checks")
@@ -40,6 +45,7 @@ def get_settings():
     levels = t.get("levels") if isinstance(t.get("levels"), list) else list(LEVELS)
     return {"enabled": t.get("enabled", True) is not False and bool(url), "url_set": bool(url), "url_hint": _hint(url),
             "levels": [str(x) for x in levels],
+            "summary_times": [str(x) for x in t.get("summary_times") or []],
             "all_levels": list(LEVELS)}
 
 
@@ -73,6 +79,21 @@ def update_settings(payload):
         if bad:
             errors["levels"] = f"ไม่รู้จัก: {', '.join(map(str, bad))}"
         vals["levels"] = [x for x in LEVELS if x in lv]
+    if "summary_times" in payload:
+        raw = payload["summary_times"]
+        if isinstance(raw, str):
+            raw = re.split(r"[,\s]+", raw)
+        times = []
+        for x in raw or []:
+            x = str(x).strip()
+            if not x:
+                continue
+            m = re.match(r"^(\d{1,2})[:.](\d{2})$", x)
+            if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+                errors["summary_times"] = f"เวลาไม่ถูกต้อง: {x} (ใช้รูปแบบ 08:30)"
+                continue
+            times.append(f"{int(m.group(1)):02d}:{m.group(2)}")
+        vals["summary_times"] = sorted(set(times))[:12]
     if errors:
         return False, {"error": "ค่าไม่ถูกต้อง", "fields": errors}
 
@@ -135,3 +156,15 @@ def send_test(webhook_url=None):
         return False, f"Teams ตอบ HTTP {e.code} {body}".strip()
     except Exception as e:
         return False, f"ติดต่อ Teams ไม่ได้ (central ออกอินเทอร์เน็ตได้ไหม / proxy): {e}"
+
+
+SUMMARY_REQUEST_FILE = os.path.join(settings.STATE_DIR, "notify_summary.request")
+
+
+def request_summary():
+    """ขอให้ puller ส่งการ์ดสรุปตอนนี้ (puller เห็นไฟล์นี้ในรอบตรวจถัดไป ~30 วินาที)"""
+    if not get_settings()["url_set"]:
+        return False, "ยังไม่ได้ใส่ webhook URL"
+    with open(SUMMARY_REQUEST_FILE, "w") as f:
+        f.write("1")
+    return True, "จะส่งการ์ดสรุปภายใน ~30 วินาที"

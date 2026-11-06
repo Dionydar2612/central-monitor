@@ -218,6 +218,32 @@ class TeamsNotify(unittest.TestCase):
         self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["style"], "good")
         self.assertEqual(sent[1][1]["summary"], "🟢 lx-01 · CPU กลับปกติ (12%) · เป็นอยู่ 10m")
 
+    def test_summary(self):
+        sensors = [
+            {"web": "a", "kind": "memory", "status": "warning", "value": 83.2, "unit": "%", "warning": 80, "error": 95},
+            {"web": "a", "kind": "mem_available", "status": "warning", "value": 16.8, "unit": "%", "warning": 20, "error": 10},
+            {"web": "b", "kind": "availability", "status": "down"},
+            {"web": "c", "kind": "cpu", "status": "ok"},
+            {"web": "d", "kind": "cpu", "status": "ok"},
+        ]
+        card = notify.build_summary(sensors, [{"web": "c", "end": time.time()}])["attachments"][0]["content"]
+        lines = [b["text"] for b in card["body"][1:]]
+        self.assertEqual(lines, ["🔴 b · เครื่องดับ หรือไม่ส่งข้อมูล", "🟡 a · RAM ใช้ไป 83% (เกณฑ์ 80%)",
+                                 "🟢 c · กลับปกติ", "🟢 d · ปกติ"])
+
+    def test_one_card_per_issue(self):
+        sent = []
+        orig = notify._enqueue
+        notify._enqueue = lambda url, payload, what: sent.append(payload)
+        try:
+            notify.sensor_events([
+                {"web": "w", "to": "warning", "level": "warning", "kind": "memory", "value": 89, "unit": "%", "warning": 80},
+                {"web": "w", "to": "error", "level": "error", "kind": "disk", "value": 93, "unit": "%", "error": 90, "mount": "C:"},
+            ], {"notify": {"teams": {"webhook_url": "https://x"}}})
+        finally:
+            notify._enqueue = orig
+        self.assertEqual([p["summary"] for p in sent], ["🟡 w · RAM ใช้ไป 89% (เกณฑ์ 80%)", "🔴 w · Disk C: เต็ม 93% (เกณฑ์ 90%)"])
+
     def test_disabled_without_url(self):
         self.assertFalse(notify.settings({"notify": {"teams": {"webhook_url": ""}}})["enabled"])
         self.assertFalse(notify.settings({})["enabled"])

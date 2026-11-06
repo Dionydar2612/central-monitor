@@ -208,8 +208,9 @@ _AUDIT_RULES = [
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
      ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
-    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels")),
+    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
+    ("POST", re.compile(r"^/api/notify-settings/summary-now$"), "settings.notify_summary_now", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
 ]
@@ -475,6 +476,16 @@ def notify_settings_test():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)
+
+
+@app.post("/api/notify-settings/summary-now")
+def notify_summary_now():
+    """ส่งการ์ดสรุปสถานะทุกเครื่องไป Teams ตอนนี้ (ผ่าน puller)"""
+    try:
+        ok, msg = notify_service.request_summary()
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 400)
 
 
 # ============================================================

@@ -27,6 +27,7 @@ puller.yaml
 """
 
 import json
+import os
 import queue
 import threading
 import time
@@ -43,7 +44,6 @@ STYLE = {"down": "attention", "error": "attention", "warning": "warning", "recov
 LABEL = {"down": "DOWN", "error": "ERROR", "warning": "WARNING", "recovered": "RECOVERED", "ok": "OK",
          "up": "UP", "unknown": "UNKNOWN", "paused": "PAUSED"}
 RANK = {"recovered": 0, "ok": 0, "up": 0, "unknown": 1, "warning": 2, "error": 3, "down": 4}
-MAX_CHANGES_PER_CARD = 15
 RETRIES = (5, 30, 120)          # วินาทีที่รอก่อนลองใหม่
 
 _queue = queue.Queue(maxsize=500)
@@ -58,8 +58,20 @@ def settings(config=None):
     levels = t.get("levels")
     if not isinstance(levels, list):
         levels = list(ALL_LEVELS)
+    times = t.get("summary_times")
+    times = [str(x) for x in times] if isinstance(times, list) else []
     return {"enabled": t.get("enabled", True) is not False and url.startswith("https://"), "url": url,
-            "levels": {str(x) for x in levels}}
+            "levels": {str(x) for x in levels}, "summary_times": sorted({x for x in times if _hhmm(x)})}
+
+
+def _hhmm(x):
+    """"08:30" -> (8, 30)  ไม่ถูกต้อง -> None"""
+    try:
+        h, m = str(x).strip().split(":")
+        h, m = int(h), int(m)
+        return (h, m) if 0 <= h <= 23 and 0 <= m <= 59 else None
+    except (ValueError, AttributeError):
+        return None
 
 
 def _now_text():
@@ -250,27 +262,118 @@ def _kind(event):
 
 
 def sensor_events(events, config=None):
-    """เหตุการณ์จาก sensor_monitor.run_once (สถานะที่ยืนยันแล้ว) -> การ์ดละ 1 เครื่อง
-    หัวการ์ด = เรื่องที่หนักที่สุด (เห็นได้จากหน้าแจ้งเตือนโดยไม่ต้องเปิด)  ตัวการ์ด = 1 บรรทัดต่อเรื่อง"""
+    """เหตุการณ์จาก sensor_monitor.run_once (สถานะที่ยืนยันแล้ว) -> 1 การ์ดต่อ 1 เรื่อง
+    การ์ด = บรรทัดเดียว เช่น "🟡 host-window · RAM ใช้ไป 83% (เกณฑ์ 80%)" + เวลา"""
     s = settings(config)
     if not s["enabled"] or not events:
         return
-    by_web = {}
     for e in events:
         k = _kind(e)
-        if k and k in s["levels"]:
-            by_web.setdefault(e.get("web") or "?", []).append((k, e))
-    for web, items in by_web.items():
-        items.sort(key=lambda x: -RANK.get(x[0], 0))           # หนักสุดขึ้นก่อน
-        worst = items[0][0]
-        lines = [f"{ICON.get(k, '')} {short_text(k, e)}" for k, e in items[:MAX_CHANGES_PER_CARD]]
-        if len(items) > MAX_CHANGES_PER_CARD:
-            lines.append(f"... และอีก {len(items) - MAX_CHANGES_PER_CARD} เรื่อง")
-        more = f" และอีก {len(items) - 1} เรื่อง" if len(items) > 1 else ""
-        title = f"{ICON.get(worst, '')} {web} · {short_text(*items[0], with_limit=len(items) == 1)}{more}"
-        group = items[0][1].get("group")
+        if not k or k not in s["levels"]:
+            continue
+        web = e.get("web") or "?"
+        title = f"{ICON.get(k, '')} {web} · {short_text(k, e)}"
+        group = e.get("group")
         footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
-        _enqueue(s["url"], build_card(title, worst, lines if len(items) > 1 else [], footer), f"{web} {worst}")
+        _enqueue(s["url"], build_card(title, k, [], footer), f"{web} {e.get('sensor')} {k}")
+
+
+# ------------------------------------------------------------------
+# สรุปประจำวัน: ส่งตามเวลาที่ตั้ง (notify.teams.summary_times เช่น ["08:30", "17:00"])
+#   1 บรรทัดต่อเครื่อง: 🔴 Down / Error · 🟡 Warning · 🟢 ปกติ / กลับปกติ (วันนี้มีปัญหาแต่หายแล้ว) · ⏸ Paused
+#   ปัญหาของเครื่อง = ข้อความสั้นของแต่ละ sensor ที่ไม่ปกติ เช่น "RAM ใช้ไป 83% (เกณฑ์ 80%)"
+# ------------------------------------------------------------------
+
+SUMMARY_MAX_LINES = 60
+SUMMARY_LATE = 15 * 60          # puller หยุดไปเกินเวลานี้หลังเวลาที่ตั้ง -> ไม่ส่งย้อนหลัง
+
+
+def _sensor_as_event(sn):
+    return {"kind": sn.get("kind"), "value": sn.get("value"), "unit": sn.get("unit"), "warning": sn.get("warning"),
+            "error": sn.get("error"), "mount": sn.get("mount"), "sensor": sn.get("name"), "sid": sn.get("id"),
+            "to": sn.get("status")}
+
+
+def build_summary(sensors, incidents, now=None):
+    """การ์ดสรุปสถานะทุกเครื่อง ณ ตอนนี้  sensors = sensors.json["sensors"]  incidents = incidents.json"""
+    now = now or time.time()
+    start = datetime.fromtimestamp(now).astimezone().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    had_problem = {i.get("web") for i in incidents or [] if (i.get("end") or 0) >= start}
+    machines = {}
+    for sn in sensors or []:
+        m = machines.setdefault(sn.get("web") or "?", {"worst": "ok", "issues": [], "paused": False, "group": sn.get("group")})
+        st = sn.get("status")
+        if st == "paused":
+            m["paused"] = True
+            continue
+        if st in ("down", "error", "warning"):
+            if RANK.get(st, 0) > RANK.get(m["worst"], 0):
+                m["worst"] = st
+            if st == "down" or sn.get("kind") != "bottleneck":       # คอขวดซ้ำกับค่าที่เกินอยู่แล้ว -> ไม่ใส่ในสรุป
+                m["issues"].append((RANK.get(st, 0), sn.get("kind"), short_text(st, _sensor_as_event(sn))))
+    rows = []
+    for web, m in machines.items():
+        if m["paused"]:
+            rows.append((-1, web, f"⏸ {web} · หยุดตรวจ (Paused)"))
+        elif m["worst"] in ("down", "error", "warning"):
+            kinds = {k for _, k, _ in m["issues"]}
+            # RAM ใช้ไป % กับ RAM เหลือ % เป็นเรื่องเดียวกัน -> แสดงแค่ RAM ใช้ไป
+            issues = [t for _, k, t in sorted(m["issues"], key=lambda x: -x[0])
+                      if not (k == "mem_available" and "memory" in kinds)] or ["คอขวด"]
+            if m["worst"] == "down":
+                issues = ["เครื่องดับ หรือไม่ส่งข้อมูล"]
+            rows.append((RANK[m["worst"]], web, f"{ICON[m['worst']]} {web} · {', '.join(issues)}"))
+        elif web in had_problem:
+            rows.append((0.5, web, f"🟢 {web} · กลับปกติ"))
+        else:
+            rows.append((0, web, f"🟢 {web} · ปกติ"))
+    rows.sort(key=lambda r: (-r[0], r[1]))
+    n_bad = sum(1 for r in rows if r[0] >= 3)
+    n_warn = sum(1 for r in rows if r[0] == 2)
+    n_ok = sum(1 for r in rows if 0 <= r[0] < 2)
+    level = "error" if n_bad else "warning" if n_warn else "ok"
+    when = datetime.fromtimestamp(now).astimezone().strftime("%d/%m/%Y %H:%M")
+    title = f"📋 สรุปสถานะเครื่อง {when} · 🔴 {n_bad} · 🟡 {n_warn} · 🟢 {n_ok}"
+    lines = [r[2] for r in rows[:SUMMARY_MAX_LINES]]
+    if len(rows) > SUMMARY_MAX_LINES:
+        lines.append(f"... และอีก {len(rows) - SUMMARY_MAX_LINES} เครื่อง")
+    return build_card(title, level, lines or ["ยังไม่มีเครื่อง"])
+
+
+def maybe_summary(sensors, incidents, state_file, request_file, config=None):
+    """เรียกทุกรอบ sensor (30 วินาที): ถึงเวลาที่ตั้ง หรือมีคำขอ "ส่งสรุปตอนนี้" จากหน้าเว็บ -> ส่งการ์ดสรุป"""
+    s = settings(config)
+    if not s["url"].startswith("https://"):
+        return
+    now = time.time()
+    forced = os.path.exists(request_file)
+    if forced:
+        try:
+            os.remove(request_file)
+        except OSError:
+            pass
+    due = None
+    if s["enabled"] and s["summary_times"]:
+        today = datetime.fromtimestamp(now).astimezone()
+        try:
+            with open(state_file) as f:
+                last = json.load(f).get("last", "")
+        except (OSError, ValueError):
+            last = ""
+        for t in s["summary_times"]:
+            h, m = _hhmm(t)
+            at = today.replace(hour=h, minute=m, second=0, microsecond=0)
+            key = at.strftime("%Y-%m-%d %H:%M")
+            if 0 <= now - at.timestamp() <= SUMMARY_LATE and key > last:
+                due = key
+    if not forced and not due:
+        return
+    if due:
+        tmp = state_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"last": due}, f)
+        os.replace(tmp, state_file)
+    _enqueue(s["url"], build_summary(sensors, incidents, now), "daily summary" + (" (manual)" if forced else ""))
 
 
 def check_event(name, url, old, new, result, group="", config=None):

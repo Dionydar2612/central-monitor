@@ -58,6 +58,8 @@ import notify
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
 INCIDENTS_FILE = os.path.join(STATE_DIR, "incidents.json")
+SUMMARY_STATE_FILE = os.path.join(STATE_DIR, "notify_summary.json")       # เวลาที่ส่งสรุปล่าสุด (กันส่งซ้ำ)
+SUMMARY_REQUEST_FILE = os.path.join(STATE_DIR, "notify_summary.request")  # หน้าเว็บกด "ส่งสรุปตอนนี้"
 INTERVAL = 30
 MAX_INCIDENTS = 20000
 
@@ -780,6 +782,7 @@ def run_once(previous):
     append_events(events)
     try:
         notify.sensor_events(events, config)          # การ์ดแจ้งเตือน Microsoft Teams (ถ้าตั้งไว้)
+        notify.maybe_summary(sensors, _read(INCIDENTS_FILE, []), SUMMARY_STATE_FILE, SUMMARY_REQUEST_FILE, config)
     except Exception as e:
         print(f"[NOTIFY ERROR] {e!r}")
     return {s["id"]: s for s in sensors}

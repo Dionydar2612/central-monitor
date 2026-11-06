@@ -78,6 +78,25 @@ class Backend(unittest.TestCase):
         acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
         self.assertIn("settings.alerts", acts)
 
+    def test_notify_settings(self):
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        self.assertEqual(c.post("/api/notify-settings/summary-now", json={}).status_code, 400)   # ยังไม่มี URL
+        bad = c.put("/api/notify-settings", json={"webhook_url": "http://x", "summary_times": "25:00"})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("webhook_url", bad.json["fields"])
+        self.assertIn("summary_times", bad.json["fields"])
+        ok = c.put("/api/notify-settings", json={"webhook_url": "https://example.webhook.office.com/abc123456",
+                                                 "summary_times": "17:00, 8.30", "levels": ["down", "error"]})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json["summary_times"], ["08:30", "17:00"])
+        self.assertNotIn("webhook_url", ok.json)                         # ไม่ส่ง URL เต็มกลับ
+        self.assertTrue(ok.json["url_hint"].endswith("123456"))
+        self.assertEqual(c.post("/api/notify-settings/summary-now", json={}).status_code, 200)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "state", "notify_summary.request")))
+        log = open(os.path.join(self.tmp, "state", "audit.log"), encoding="utf-8").read()
+        self.assertNotIn("abc123456", log)                               # URL ไม่อยู่ใน Activity log
+
     def test_password_hash(self):
         import users_service as u
         h = u.hash_password("secret-pass")
