@@ -284,11 +284,25 @@ $conf += @"
     Tag              cm.hb
     Scrape_Interval  30
 
+# CPU / Memory / Disk / Network / Service / Process ของเครื่อง (ชื่อแบบ windows_exporter)
+[INPUT]
+    Name             windows_exporter_metrics
+    Tag              cm.win
+    Scrape_Interval  15
+    metrics          __CM_COLLECTORS__
+
 
 "@
 $conf += (Output "cm.event" "eventlog" "") + "`r`n"
 if ($logPaths.Count -gt 0) { $conf += (Output "cm.file" "application" "") + "`r`n" }
 $conf += (Output "cm.hb" "agent" "    add_label        cm_web $Name") + "`r`n"
+$conf += (Output "cm.win" "metrics" "    add_label        cm_web $Name") + "`r`n"
+
+# collector ที่อยากได้ (process = รายการ process ที่กิน CPU/RAM) ถ้าเวอร์ชันนี้ไม่รู้จัก จะถอยไปใช้ชุดปริยาย
+$Collectors = "cpu,cpu_info,os,net,logical_disk,cs,thermalzone,logon,system,service,memory,paging_file,process"
+$confFull = $conf.Replace("__CM_COLLECTORS__", $Collectors)
+$confBasic = $conf -replace '(?m)^\s*metrics\s+__CM_COLLECTORS__\r?\n', ''
+$conf = $confFull
 
 $ConfFile = Join-Path $DataDir "fluent-bit.conf"
 [IO.File]::WriteAllText($ConfFile, $conf, (New-Object Text.UTF8Encoding($false)))
@@ -300,7 +314,13 @@ Say "   ตรวจ config"
 # fluent-bit เขียนข้อความลง stderr -> PowerShell 5.1 ถือเป็น error เมื่อ ErrorActionPreference=Stop จึงปิดชั่วคราว
 $ErrorActionPreference = "Continue"; $dry = & $FluentExe -c $ConfFile --dry-run 2>&1 | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" } }; $ErrorActionPreference = "Stop"
 $dry | Where-Object { $_ -and $_ -notmatch "RemoteException" } | Select-Object -Last 3 | ForEach-Object { Write-Host "   $_" }
-if ($LASTEXITCODE -ne 0) { throw "config ไม่ผ่าน (ดูข้อความด้านบน)" }
+if ($LASTEXITCODE -ne 0) {
+    Warn "config แบบเต็มไม่ผ่าน -> ลองชุด collector ปริยาย"
+    [IO.File]::WriteAllText($ConfFile, $confBasic, (New-Object Text.UTF8Encoding($false)))
+    $ErrorActionPreference = "Continue"; $dry = & $FluentExe -c $ConfFile --dry-run 2>&1 | ForEach-Object { "$_" }; $ErrorActionPreference = "Stop"
+    $dry | Where-Object { $_ -and $_ -notmatch "RemoteException" } | Select-Object -Last 3 | ForEach-Object { Write-Host "   $_" }
+    if ($LASTEXITCODE -ne 0) { throw "config ไม่ผ่าน (ดูข้อความด้านบน)" }
+}
 
 # ---------------------------------------------------------------- 6) Windows service
 Say "5/6 ติดตั้ง Windows service '$ServiceName'"
@@ -320,6 +340,16 @@ Start-Service $ServiceName
 Say "6/6 ตรวจสถานะ"
 Start-Sleep 8
 $s = Get-Service $ServiceName
+$wemErr = (Test-Path $agentLog) -and (Select-String -Path $agentLog -Pattern "windows_exporter_metrics.*(error|unknown|invalid)|\[error\].*collector" -Quiet)
+if ($s.Status -ne "Running" -or $wemErr) {
+    Warn "collector บางตัวใช้กับ Fluent Bit $Version ไม่ได้ -> ใช้ชุดปริยาย (อาจไม่มีรายการ process)"
+    Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
+    [IO.File]::WriteAllText($ConfFile, $confBasic, (New-Object Text.UTF8Encoding($false)))
+    if (Test-Path $agentLog) { Move-Item $agentLog "$agentLog.old" -Force }
+    Start-Service $ServiceName
+    Start-Sleep 8
+    $s = Get-Service $ServiceName
+}
 Write-Host "   service: $($s.Status)"
 $logFile = Join-Path $DataDir "fluent-bit.log"
 if (Test-Path $logFile) {

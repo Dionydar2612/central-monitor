@@ -78,11 +78,12 @@ processors:
           - set(severity_text, attributes["level"]) where attributes["level"] != nil
           - set(body, attributes["message"]) where attributes["message"] != nil
           - delete_matching_keys(attributes, "^(cm_web|source|file|level|message)$")
-    # สัญญาณ "ยังทำงาน" ใช้เวลาที่ central ได้รับ (นาฬิกาเครื่อง Windows คลาดไม่ทำให้ Prometheus ปฏิเสธ)
+    # metrics: ใช้เวลาของเครื่อง Windows ถ้าใกล้ความจริง  นาฬิกาคลาด (>5 นาทีย้อนหลัง / >1 นาทีล่วงหน้า)
+    # หรือไม่มีเวลา -> ใช้เวลาที่ central ได้รับแทน (ไม่งั้น Prometheus ปฏิเสธ "out of bounds")
     metric_statements:
       - context: datapoint
         statements:
-          - set(time, Now())
+          - set(time, Now()) where UnixSeconds(time) < UnixSeconds(Now()) - 300 or UnixSeconds(time) > UnixSeconds(Now()) + 60
 
   # log ที่ไม่ได้มาจาก cm-agent.lua (ไม่มีชื่อเครื่อง) -> ทิ้ง
   filter/agents:

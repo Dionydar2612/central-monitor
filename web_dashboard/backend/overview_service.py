@@ -83,13 +83,22 @@ def _agent_server(target, base, sensor_states=None):
     """เครื่อง Windows (agent): online = ได้ข้อมูลจาก agent ภายใน 3 นาที  (CPU/Memory/Disk = ขั้นถัดไป)"""
     st = agent_service.status(base["web"])
     sensor = (sensor_states or {}).get(base["web"])
+    values = {"cpu": None, "memory": None, "disk": None}
+    state = "DOWN"
+    if st["online"]:
+        labels = _labels(get_web_prometheus_config(base["web"]))
+        for key in values:
+            values[key] = _round(prom_value(PROMQL[key](labels)))
+        state = classify_state(values)
+        if sensor:
+            state = _SENSOR_STATE.get(sensor["worst"], state)
     return {
         **base,
         "kind": "agent", "os": target.get("os") or "windows",
         "instance": None,
         "status": "online" if st["online"] else "offline",
-        "state": "HEALTHY" if st["online"] else "DOWN",
-        "cpu": None, "memory": None, "disk": None,
+        "state": state,
+        **values,
         "last_pull": st["last_seen"],
         "thresholds": (sensor or {}).get("thresholds"), "acked": (sensor or {}).get("acked", 0),
         "problems": [] if st["online"] else ["no data from agent"],

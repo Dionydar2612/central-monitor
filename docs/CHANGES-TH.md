@@ -38,6 +38,17 @@
 
 
 
+
+## เครื่อง Windows ผ่าน agent - ขั้นที่ 2: metrics
+
+- agent เก็บ windows_exporter_metrics ทุก 15 วินาที (cpu, os, cs, memory, logical_disk, net, system, service, process ...)
+  ถ้า Fluent Bit เวอร์ชันนั้นไม่รู้จัก collector บางตัว สคริปต์ถอยไปใช้ชุดปริยายเอง
+- agent ส่งชื่อเครื่อง/ชนิดข้อมูลใน header X-CM-Web / X-CM-Source (Fluent Bit 5 ส่ง record มาแค่ข้อความ)
+- central-agent-gw: ใส่ label cm_web ให้ทุก metric · เวลาของเครื่อง Windows คลาดเกิน 5 นาที -> ใช้เวลาที่รับแทน
+- หน้า Dashboard / ภาพรวม / sensor / incident ใช้ PromQL ชุด Windows อัตโนมัติ (metrics_service.WIN_PROMQL)
+  Service = windows_service_state · Process = windows_process_* · ไดรฟ์ = volume (C: D:)
+- ระหว่างทดสอบแก้: zip ไม่ซ้อนโฟลเดอร์, dry-run ไม่หยุดเพราะ stderr, แสดงเฉพาะ log ของรอบนี้
+
 ## เครื่อง Windows ผ่าน agent (Fluent Bit) - ขั้นที่ 1: สถานะ + log
 
 คู่มือทีละขั้น: docs/WINDOWS-AGENT-TH.md

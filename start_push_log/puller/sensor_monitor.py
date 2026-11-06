@@ -64,6 +64,7 @@ STATUS_TEXT = {"ok": "OK", "warning": "Warning", "error": "Error", "down": "Down
                "paused": "Paused", "unknown": "Unknown"}
 RANK = {"ok": 0, "paused": 0, "unknown": 1, "warning": 2, "error": 3, "down": 4}
 PROBLEM = ("warning", "error", "down", "unknown")
+AGENT_TIMEOUT = 180          # วินาที: agent Windows ไม่ส่งสัญญาณนานกว่านี้ = Down
 
 
 # ------------------------------------------------------------------
@@ -222,21 +223,41 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, hyst):
         add("availability", "availability", "Availability", "paused", unit="", message="Paused by user")
         return out
 
-    up = _one(f'up{{web="{name}"}}')
-    if up is None:
-        up = _one(f"up{{{labels}}}")
-    if up != 1:
-        add("availability", "availability", "Availability", "down", unit="",
-            message="node_exporter is not responding (machine down or port 9100 blocked)")
-        return out
-    add("availability", "availability", "Availability", "ok", unit="", message="Up")
+    agent = str(t.get("type") or "ssh") == "agent"
+    if agent:
+        # Windows (Fluent Bit): ส่งสัญญาณทุก 30 วินาที + metrics แบบ windows_exporter ผ่าน remote write
+        labels = f'cm_web="{name}"'
+        age = _one(f'time() - max(timestamp({{__name__=~"fluentbit_uptime.*",{labels}}}))')
+        if age is None or age > AGENT_TIMEOUT:
+            add("availability", "availability", "Availability", "down", unit="",
+                message="agent is not sending data (service cm-agent stopped, machine off, or port 4318 blocked)")
+            return out
+        add("availability", "availability", "Availability", "ok", unit="", message=f"Agent sending ({age:.0f}s ago)")
+        cpu_expr = f'100 - (avg(rate(windows_cpu_time_total{{{labels},mode="idle"}}[5m])) * 100)'
+        mem_expr = (f"(1 - max(windows_os_physical_memory_free_bytes{{{labels}}}) / "
+                    f"max(windows_cs_physical_memory_bytes{{{labels}}})) * 100")
+        vol = f'{labels},volume!~"HarddiskVolume.*|_Total"'
+        disk_expr = (f'label_replace((1 - windows_logical_disk_free_bytes{{{vol}}} / windows_logical_disk_size_bytes{{{vol}}})'
+                     f' * 100, "mountpoint", "$1", "volume", "(.*)")')
+    else:
+        up = _one(f'up{{web="{name}"}}')
+        if up is None:
+            up = _one(f"up{{{labels}}}")
+        if up != 1:
+            add("availability", "availability", "Availability", "down", unit="",
+                message="node_exporter is not responding (machine down or port 9100 blocked)")
+            return out
+        add("availability", "availability", "Availability", "ok", unit="", message="Up")
+        cpu_expr = f'100 - (avg by(instance) (rate(node_cpu_seconds_total{{{labels},mode="idle"}}[5m])) * 100)'
+        mem_expr = f"(1 - node_memory_MemAvailable_bytes{{{labels}}} / node_memory_MemTotal_bytes{{{labels}}}) * 100"
+        disk_expr = (f"(1 - node_filesystem_avail_bytes{{{labels},{_REAL_FS}}} / "
+                     f"node_filesystem_size_bytes{{{labels},{_REAL_FS}}}) * 100")
 
-    cpu = _one(f'100 - (avg by(instance) (rate(node_cpu_seconds_total{{{labels},mode="idle"}}[5m])) * 100)')
+    cpu = _one(cpu_expr)
     st = _grade(cpu, th["cpu"], prev("cpu"), hyst)
     add("cpu", "cpu", "CPU average 5m", st, cpu,
         message=_limit_msg("CPU", cpu, th["cpu"], st) if cpu is not None else "no data")
 
-    mem_expr = f"(1 - node_memory_MemAvailable_bytes{{{labels}}} / node_memory_MemTotal_bytes{{{labels}}}) * 100"
     mem = _one(mem_expr)
     mem_pk = _one(_peak(mem_expr))
     judge = max(v for v in (mem, mem_pk) if v is not None) if (mem is not None or mem_pk is not None) else None
@@ -244,8 +265,6 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, hyst):
     add("memory", "memory", "Memory Usage", st, mem, peak=mem_pk,
         message=_limit_msg("memory used", mem, th["memory"], st, mem_pk) if mem is not None else "no data")
 
-    disk_expr = (f"(1 - node_filesystem_avail_bytes{{{labels},{_REAL_FS}}} / "
-                 f"node_filesystem_size_bytes{{{labels},{_REAL_FS}}}) * 100")
     peaks = {m.get("mountpoint"): v for m, v in (_query(_peak(disk_expr)) or [])}
     seen = set()
     for metric, val in sorted(_query(disk_expr) or [], key=lambda r: r[0].get("mountpoint", "")):
@@ -258,6 +277,8 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, hyst):
         add(f"disk:{mount}", "disk", f"Disk Usage: {mount}", st, val, mount=mount, peak=pk,
             message=f"{_limit_msg('disk used', val, th['disk'], st, pk)} · free {100 - val:.1f}%")
 
+    if agent:
+        return out                       # agent ไม่ใช้ SSH -> ไม่มี sensor Log pull
     last = _last_contact(name, checkpoints)
     if last is None:
         add("logpull", "logpull", "Log pull (SSH)", "warning", unit="",
@@ -314,9 +335,7 @@ def run_once(previous):
     except Exception:
         interval = 3600
     checkpoints = _read(CHECKPOINT_FILE, {})
-    # เครื่อง agent (Windows) ยังไม่มี sensor (ขั้นถัดไป: metrics ของ Windows) -> ข้าม
-    targets = [t for t in config.get("targets") or []
-               if isinstance(t, dict) and t.get("name") and str(t.get("type") or "ssh") != "agent"]
+    targets = [t for t in config.get("targets") or [] if isinstance(t, dict) and t.get("name")]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         sensors = [s for group in pool.map(

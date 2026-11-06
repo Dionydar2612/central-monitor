@@ -10,8 +10,15 @@ Fluent Bit (service: cm-agent)  ──HTTPS :4318──▶  central-agent-gw ─
   สัญญาณ "ยังทำงาน" ทุก 30 วินาที
 ```
 
-ขั้นนี้ (ขั้นที่ 1) ได้: เครื่องขึ้นใน WEB status (OK / Down + Last seen) และ log ขึ้นในตาราง Logs
-ยังไม่มี: CPU / Memory / Disk / Service / Process ของ Windows (ขั้นที่ 2)
+ได้อะไร
+- สถานะ OK / Warning / Down + Last seen ในหน้า WEB status (ป้าย Win)
+- log ERROR/WARN ในตาราง Logs
+- CPU / Memory / Disk (แยกไดรฟ์ C: D:) / Disk I/O / Network / กราฟ System Load
+- Service (running / stopped) และ Process ที่ใช้ CPU / RAM สูงสุด
+- sensor + แจ้งสถานะตามเกณฑ์ + Incident history เหมือนเครื่อง Linux
+
+ต่างจาก Linux: ไม่มี Load average (แท็บ Load = processor queue length) · CPU breakdown "iowait" = interrupt + DPC
+· Load INFO log ใช้ไม่ได้ (ไม่มี SSH) · นาฬิกาเครื่อง Windows ต้องตรง (เวลาของ log มาจากเครื่อง)
 
 ---
 

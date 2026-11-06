@@ -51,6 +51,10 @@ def get_web_prometheus_config(web):
         if target.get("name") != web:
             continue
 
+        # เครื่อง Windows (agent): metrics เข้ามาทาง remote write พร้อม label cm_web="<ชื่อเครื่อง>"
+        if str(target.get("type") or "ssh") == "agent":
+            return {"job": "cm-agent", "instance": web, "os": str(target.get("os") or "windows"), "web": web}
+
         prometheus = target.get("prometheus", {})
         job = prometheus.get("job")
         instance = prometheus.get("instance")
@@ -64,7 +68,10 @@ def get_web_prometheus_config(web):
 
 
 def _labels(config):
-    """ส่วน {...} ที่ใช้กรอง series ของเครื่องนี้ใน PromQL"""
+    """ส่วน {...} ที่ใช้กรอง series ของเครื่องนี้ใน PromQL
+    Windows (agent) -> cm_web="<ชื่อ>"  (PROMQL เลือกชุด query ของ Windows จาก label นี้)"""
+    if config.get("os") == "windows":
+        return f'cm_web="{config["web"]}"'
     return f'job="{config["job"]}",instance="{config["instance"]}"'
 
 
@@ -88,7 +95,7 @@ def _disk_used_pct(l):
     )
 
 
-PROMQL = {
+LINUX_PROMQL = {
     # CPU average 5m (%) = 100 - เวลา idle เฉลี่ยทุก core ย้อนหลัง 5 นาที
     "cpu": lambda l: (
         f'100 - (avg by(instance) (rate(node_cpu_seconds_total{{{l},mode="idle"}}[5m])) * 100)'
@@ -142,6 +149,70 @@ PROMQL = {
     "load15": lambda l: f"node_load15{{{l}}}",
     "cores": lambda l: f'count(node_cpu_seconds_total{{{l},mode="idle"}})',
 }
+
+# ---------------------------------------------------------------------------
+# Windows (agent: Fluent Bit windows_exporter_metrics -> remote write) ชื่อ metric แบบ windows_exporter
+#   ไดรฟ์ = volume (C:, D:) ตัด HarddiskVolumeN (พาร์ทิชันระบบที่ไม่มีอักษรไดรฟ์) และ _Total
+#   cpu_iowait ไม่มีบน Windows -> ใช้เวลา interrupt + DPC (งานของ driver/ฮาร์ดแวร์) แทน
+#   load average ไม่มีบน Windows -> load1 = processor queue length (จำนวนงานที่รอ CPU)
+# ---------------------------------------------------------------------------
+_WIN_VOL = 'volume!~"HarddiskVolume.*|_Total"'
+_WIN_NIC = 'nic!~"(?i).*(isatap|loopback|teredo|pseudo).*"'
+
+
+def _win_disk_used_pct(l):
+    return (
+        f'label_replace((1 - windows_logical_disk_free_bytes{{{l},{_WIN_VOL}}} / '
+        f'windows_logical_disk_size_bytes{{{l},{_WIN_VOL}}}) * 100, "mountpoint", "$1", "volume", "(.*)")'
+    )
+
+
+def _none(l):
+    return f"cm_no_such_metric{{{l}}}"           # ไม่มีค่า (หน้าเว็บแสดง "-")
+
+
+WIN_PROMQL = {
+    "cpu": lambda l: f'100 - (avg(rate(windows_cpu_time_total{{{l},mode="idle"}}[5m])) * 100)',
+    "cpu_core": lambda l: (
+        f'label_replace(100 - (avg by(core) (rate(windows_cpu_time_total{{{l},mode="idle"}}[5m])) * 100),'
+        f' "cpu", "$1", "core", "(?:.*,)?([0-9]+)")'
+    ),
+    "memory": lambda l: (
+        f"(1 - max(windows_os_physical_memory_free_bytes{{{l}}}) / max(windows_cs_physical_memory_bytes{{{l}}})) * 100"
+    ),
+    "disk": lambda l: f"max({_win_disk_used_pct(l)})",
+    "disk_mount": _win_disk_used_pct,
+    "disk_read": lambda l: f"sum(rate(windows_logical_disk_read_bytes_total{{{l},{_WIN_VOL}}}[5m])) / 1024 / 1024",
+    "disk_write": lambda l: f"sum(rate(windows_logical_disk_write_bytes_total{{{l},{_WIN_VOL}}}[5m])) / 1024 / 1024",
+    "io": lambda l: (
+        f"(sum(rate(windows_logical_disk_read_bytes_total{{{l},{_WIN_VOL}}}[5m])) + "
+        f"sum(rate(windows_logical_disk_write_bytes_total{{{l},{_WIN_VOL}}}[5m]))) / 1024 / 1024"
+    ),
+    "io_util": lambda l: (
+        f"clamp_min(max(100 - rate(windows_logical_disk_idle_seconds_total{{{l},{_WIN_VOL}}}[5m]) * 100), 0)"
+    ),
+    "net_rx": lambda l: f"sum(rate(windows_net_bytes_received_total{{{l},{_WIN_NIC}}}[5m])) / 1024 / 1024",
+    "net_tx": lambda l: f"sum(rate(windows_net_bytes_sent_total{{{l},{_WIN_NIC}}}[5m])) / 1024 / 1024",
+    "cpu_user": lambda l: f'avg(rate(windows_cpu_time_total{{{l},mode="user"}}[5m])) * 100',
+    "cpu_system": lambda l: f'avg(rate(windows_cpu_time_total{{{l},mode="privileged"}}[5m])) * 100',
+    "cpu_iowait": lambda l: f'sum(avg by(mode) (rate(windows_cpu_time_total{{{l},mode=~"interrupt|dpc"}}[5m]))) * 100',
+    "load1": lambda l: f"max(windows_system_processor_queue_length{{{l}}})",
+    "load5": _none,
+    "load15": _none,
+    "cores": lambda l: f'count(windows_cpu_time_total{{{l},mode="idle"}})',
+}
+
+
+def _is_windows(labels):
+    return str(labels).startswith("cm_web=")
+
+
+def _pick(key):
+    return lambda l: (WIN_PROMQL.get(key, _none) if _is_windows(l) else LINUX_PROMQL[key])(l)
+
+
+# ใช้ PROMQL[key](labels) ได้ทั้ง Linux และ Windows (เลือกจาก labels)
+PROMQL = {key: _pick(key) for key in LINUX_PROMQL}
 
 # ค่าที่ดึงจาก snapshot ของ puller มาเสริม (Prometheus ไม่มี) -> system_state.py
 SNAPSHOT_METRIC_KEYS = (
@@ -199,6 +270,42 @@ def get_cpu_per_core(labels):
 
 
 # ---------------------------------------------------------------------------
+# Windows: service / process จาก Prometheus (agent ไม่มี snapshot ของ puller)
+# ---------------------------------------------------------------------------
+
+def get_windows_services(labels):
+    """[{name, status}] จาก windows_service_state (ค่า 1 = สถานะปัจจุบันของ service)"""
+    out = {}
+    for metric, value in prom_vector(f"windows_service_state{{{labels}}} == 1"):
+        name = metric.get("name")
+        if name:
+            out[name] = str(metric.get("state") or "unknown").replace(" ", "-")
+    return [{"name": n, "status": s} for n, s in sorted(out.items(), key=lambda x: x[0].lower())]
+
+
+def get_windows_processes(labels, limit=15):
+    """[{name, pid, cpu %, memory %, rss_mb}] process ที่ใช้ CPU / RAM สูงสุด (windows_process_*)"""
+    skip = 'process!~"_Total|Idle"'
+    cores = f'scalar(count(windows_cpu_time_total{{{labels},mode="idle"}}))'
+    cpu = prom_vector(f"topk({limit}, sum by(process, process_id) "
+                      f"(rate(windows_process_cpu_time_total{{{labels},{skip}}}[2m])) * 100 / {cores})")
+    mem = prom_vector(f"topk({limit}, sum by(process, process_id) "
+                      f"(windows_process_working_set_private_bytes{{{labels},{skip}}}))")
+    total = prom_value(f"max(windows_cs_physical_memory_bytes{{{labels}}})")
+    rows = {}
+    for metric, value in cpu:
+        key = (metric.get("process"), metric.get("process_id"))
+        rows.setdefault(key, {"name": key[0], "pid": key[1]})["cpu"] = round(value, 2) if _finite(value) else None
+    for metric, value in mem:
+        key = (metric.get("process"), metric.get("process_id"))
+        r = rows.setdefault(key, {"name": key[0], "pid": key[1]})
+        if _finite(value):
+            r["rss_mb"] = round(value / 1048576, 1)
+            r["memory"] = round(value / total * 100, 2) if total else None
+    return list(rows.values())
+
+
+# ---------------------------------------------------------------------------
 # 1) ค่าตอนนี้
 # ---------------------------------------------------------------------------
 
@@ -244,6 +351,16 @@ def get_current_metrics(web):
         metrics["io"] = round(
             (metrics["disk_read"] or 0) + (metrics["disk_write"] or 0), 2
         )
+
+    if config.get("os") == "windows":
+        from datetime import datetime, timezone
+        metrics["load_1m"] = _round(prom_value(PROMQL["load1"](labels)))
+        metrics["services"] = get_windows_services(labels)
+        metrics["processes"] = get_windows_processes(labels)
+        metrics["cpu_cores"] = {}
+        metrics["system_events"] = []
+        metrics["system_timestamp"] = datetime.now(timezone.utc).isoformat()
+        return metrics
 
     # เสริมด้วยสถานะเครื่องที่ puller เก็บ (Prometheus ยังเป็นแหล่งหลักของค่าสด)
     system = load_system_snapshot(web)

@@ -183,6 +183,12 @@ def _history_query(sensor, labels):
     kind = sensor.get("kind")
     if kind in ("cpu", "memory"):
         return PROMQL[kind](labels)
+    if kind == "disk" and sensor.get("mount") and labels.startswith("cm_web="):     # Windows: ไดรฟ์ C: D:
+        vol = str(sensor["mount"]).replace('"', "")
+        l = f'{labels},volume="{vol}"'
+        return f"(1 - windows_logical_disk_free_bytes{{{l}}} / windows_logical_disk_size_bytes{{{l}}}) * 100"
+    if kind == "availability" and labels.startswith("cm_web="):
+        return f'(count(time() - timestamp({{__name__=~"fluentbit_uptime.*",{labels}}}) < 180) or vector(0)) * 100'
     if kind == "disk" and sensor.get("mount"):
         mount = str(sensor["mount"]).replace("\\", "\\\\").replace('"', '\\"')
         l = f'{labels},mountpoint="{mount}",{_REAL_FS}'

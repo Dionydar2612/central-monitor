@@ -98,6 +98,7 @@ from metrics_service import (
     get_cpu_cores,
     get_metrics_history,
     get_web_prometheus_config,
+    _labels,
 )
 from overview_service import get_overview
 from settings import STATIC_DIR, load_web_targets
@@ -443,6 +444,17 @@ def live_processes():
     if cached and cached[0] > now:
         return jsonify(cached[2]), cached[1]
 
+    if agent_service.agent_target(web):
+        # Windows: ไม่มี SSH -> ใช้ process จาก Prometheus (windows_process_*) อัปเดตทุก ~15 วินาที
+        from datetime import datetime, timezone
+        from metrics_service import get_windows_processes
+        procs = get_windows_processes(_labels(get_web_prometheus_config(web)))
+        data = {"time": datetime.now(timezone.utc).isoformat(),
+                "memory_top": sorted([p for p in procs if p.get("memory") is not None],
+                                     key=lambda p: p["memory"], reverse=True)[:10]}
+        _LIVE_CACHE[web] = (now + LIVE_TTL, 200, data)
+        return jsonify(data), 200
+
     try:
         status, data = puller_get("/processes", {"target": resolve_web_name(web)})
     except Exception as e:
@@ -525,10 +537,12 @@ def summary():
 
     if agent_service.agent_target(web):
         st = agent_service.status(web)
+        current = get_current_metrics(web) if st["online"] else {}
         return jsonify({"web": web, "kind": "agent", "status": "online" if st["online"] else "offline",
                         "last_pull": st["last_seen"], "problem_count": get_problem_count(web),
-                        "errors_15m": get_errors_15m(web), "current_state": "HEALTHY" if st["online"] else "DOWN",
-                        "metrics": {}})
+                        "errors_15m": get_errors_15m(web),
+                        "current_state": classify_state(current) if st["online"] else "DOWN",
+                        "metrics": {k: current.get(k) for k in ("cpu", "memory", "disk", "load_1m")}})
 
     current = get_current_metrics(web)
     config = get_web_prometheus_config(web)
