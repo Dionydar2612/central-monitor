@@ -208,7 +208,7 @@ $LuaFile = Join-Path $DataDir "cm-agent.lua"
 $tls = if ($SkipCertCheck) { "    Tls.verify       Off" } else { "    Tls.verify       On`r`n    Tls.ca_file      $CaDest" }
 if (-not $SkipCertCheck -and $Central -notmatch '^[0-9.]+$') { $tls += "`r`n    Tls.vhost        $Central" }
 
-function Output($match, $extra) {
+function Output($match, $source, $extra) {
 @"
 [OUTPUT]
     Name             opentelemetry
@@ -218,6 +218,8 @@ function Output($match, $extra) {
     Logs_uri         /v1/logs
     Metrics_uri      /v1/metrics
     Header           Authorization Bearer $Token
+    Header           X-CM-Web $Name
+    Header           X-CM-Source $source
     Tls              On
 $tls
     Retry_Limit      no_limits
@@ -284,9 +286,9 @@ $conf += @"
 
 
 "@
-$conf += (Output "cm.event" "") + "`r`n"
-if ($logPaths.Count -gt 0) { $conf += (Output "cm.file" "") + "`r`n" }
-$conf += (Output "cm.hb" "    add_label        cm_web $Name") + "`r`n"
+$conf += (Output "cm.event" "eventlog" "") + "`r`n"
+if ($logPaths.Count -gt 0) { $conf += (Output "cm.file" "application" "") + "`r`n" }
+$conf += (Output "cm.hb" "agent" "    add_label        cm_web $Name") + "`r`n"
 
 $ConfFile = Join-Path $DataDir "fluent-bit.conf"
 [IO.File]::WriteAllText($ConfFile, $conf, (New-Object Text.UTF8Encoding($false)))
