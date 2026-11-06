@@ -113,7 +113,7 @@ def package_zip():
         for name in sorted(os.listdir(src)):
             path = os.path.join(src, name)
             if os.path.isfile(path):
-                z.write(path, f"cm-agent-windows/{name}")
+                z.write(path, name)          # ไม่ซ้อนโฟลเดอร์ (Extract All สร้างโฟลเดอร์ให้เอง)
         if os.path.isfile(AGENT_CA):
-            z.write(AGENT_CA, "cm-agent-windows/central-ca.pem")
+            z.write(AGENT_CA, "central-ca.pem")
     return buf.getvalue()
