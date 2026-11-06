@@ -137,6 +137,13 @@ def _options(config):
     return {"confirm": confirm, "hyst": hyst, "retention": retention}
 
 
+def _group(status):
+    """กลุ่มของสถานะสำหรับการนับยืนยัน: ok / problem (warning, error, down) / unknown"""
+    if status in ("warning", "error", "down"):
+        return "problem"
+    return status
+
+
 def _grade(value, th, prev=None, hyst=0.0):
     """ระดับของค่า (ใช้ hysteresis: ต้องลดต่ำกว่าเกณฑ์ - hyst ก่อนจะลดระดับ)"""
     if value is None:
@@ -354,12 +361,15 @@ def run_once(previous):
 
         # --- ยืนยันสถานะใหม่ N รอบติดกัน (paused / sensor ใหม่ = ทันที) ---
         first_seen = now                      # เวลาที่เห็นสถานะใหม่ครั้งแรก (ก่อนยืนยันครบ N รอบ)
-        if confirmed is None or raw == "paused" or confirmed == "paused" or raw == confirmed:
+        #   - sensor ใหม่ / ยังไม่เคยมีข้อมูล (unknown) -> ใช้สถานะแรกที่ได้ทันที
+        #   - นับต่อเนื่องตาม "กลุ่ม" (ok / มีปัญหา) ค่าที่แกว่ง Warning <-> Error ยังนับรวมกัน แล้วใช้ระดับล่าสุด
+        #     (เดิมนับแยกระดับ: CPU 88% <-> 92% สลับกัน ไม่เคยครบ 2 รอบ ค้าง "seen 1/2")
+        if confirmed in (None, "unknown") or raw == "paused" or confirmed == "paused" or raw == confirmed:
             new = raw
             s["pending"] = None
         else:
             pend = old.get("pending") or {}
-            same = pend.get("status") == raw
+            same = _group(pend.get("status")) == _group(raw)
             count = pend.get("count", 0) + 1 if same else 1
             first_seen = pend.get("first", now) if same else now
             if count >= opts["confirm"]:
