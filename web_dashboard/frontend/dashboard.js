@@ -1032,7 +1032,6 @@ function renderMachines(ov) {
     const cb = c => checks.filter(x => x.status === c).length;
     const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
     const okCount = webs.filter(w => w.state === "HEALTHY").length;
-    const pct = (k, v) => hasValue(v) ? `<span class="${level(k, v) || "ok"}">${Number(v).toFixed(1)}%</span>` : "-";
     q("#ovTiles").innerHTML =
         tile("Total", ov.total, "tot", hasValue(ov.windows) ? `${ov.linux || 0} Linux · ${ov.windows || 0} Windows` : "machines") +
         tile("Up", ov.up || 0, "up", `${okCount} OK`) +
@@ -1040,9 +1039,6 @@ function renderMachines(ov) {
         tile("Warning", ov.warning || 0, "nok", "≥ warning threshold") +
         tile("Critical", ov.problem || 0, "dn", "≥ error threshold") +
         tile("Paused", ov.paused || 0, "ps", "not monitored") +
-        tile("Avg CPU", pct("cpu", ov.avg_cpu), "avg", "online machines") +
-        tile("Avg RAM", pct("memory", ov.avg_memory), "avg", "online machines") +
-        tile("Avg Disk", pct("disk", ov.avg_disk), "avg", "fullest drive") +
         (SHOW_CHECKS ? tile("Web checks", checks.length, "chk", checks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "");
     q("#ovTiles").classList.add("many");
 

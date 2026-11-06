@@ -117,7 +117,7 @@ Linux ใช้ node_exporter ในรูปแบบเดียวกัน (
 
 ## 7. หน้าเว็บ
 
-- **WEB status**: ไทล์ Total / Up / Down / Warning / Critical / Paused + ค่าเฉลี่ย CPU / RAM / Disk ของเครื่องที่ online
+- **WEB status**: ไทล์ Total / Up / Down / Warning / Critical / Paused
   หัวกลุ่มแสดงค่าเฉลี่ยของกลุ่ม · ตาราง: Name, OS, IP, Status, CPU, Memory, Disk, Network (MB/s + ping ms / loss %), Alerts, Last pull
   คลิกหัวคอลัมน์เพื่อเรียง · ตัวกรองข้อความ / OS / สถานะ
 - **รายละเอียดเครื่อง Windows** 8 แท็บ: Overview · Performance · Bottleneck · Processes · Services · Hardware · System · Alerts & Events
