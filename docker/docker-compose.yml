@@ -414,6 +414,8 @@ services:
       - NET_RAW
     networks:
       - central-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # ping เครื่องที่ตั้ง host เป็น host.docker.internal (เช่น central บน WSL)
     volumes:
       - ../metrics/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     restart: unless-stopped

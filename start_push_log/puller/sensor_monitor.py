@@ -220,7 +220,9 @@ def _linux_exprs(l):
 def _ping_exprs(name):
     sel = f'cm_target="{name}"'
     return {
-        "net_latency": f'avg(avg_over_time(probe_icmp_duration_seconds{{{sel},phase="rtt"}}[5m])) * 1000',
+        # เฉลี่ยเฉพาะ ping ที่ตอบ (ping ที่หายมี rtt = 0 จะทำให้ค่าต่ำผิด)
+        "net_latency": (f'sum(sum_over_time(probe_icmp_duration_seconds{{{sel},phase="rtt"}}[5m])) / '
+                        f'sum(sum_over_time(probe_success{{{sel}}}[5m])) * 1000'),
         "packet_loss": f"(1 - avg(avg_over_time(probe_success{{{sel}}}[5m]))) * 100",
         "samples": f"sum(count_over_time(probe_success{{{sel}}}[5m]))",
     }

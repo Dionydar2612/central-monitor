@@ -63,7 +63,8 @@ BATCH = [
     ("net", f"sum by(cm_web) (rate(windows_net_bytes_received_total{{{_NIC}}}[5m]) + "
             f"rate(windows_net_bytes_sent_total{{{_NIC}}}[5m])) / 1048576", "cm_web"),
     ("hb_age", 'time() - max by(cm_web) (timestamp({__name__=~"fluentbit_uptime.*",cm_web!=""}))', "cm_web"),
-    ("ping_ms", 'avg by(cm_target) (avg_over_time(probe_icmp_duration_seconds{phase="rtt"}[5m])) * 1000', "cm_target"),
+    ("ping_ms", 'sum by(cm_target) (sum_over_time(probe_icmp_duration_seconds{phase="rtt"}[5m])) / '
+                'sum by(cm_target) (sum_over_time(probe_success[5m])) * 1000', "cm_target"),
     ("loss", "(1 - avg by(cm_target) (avg_over_time(probe_success[5m]))) * 100", "cm_target"),
 ]
 

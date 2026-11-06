@@ -625,13 +625,22 @@ def summary():
 
     up = prom_value(f'up{{job="{config["job"]}"}}') if config else None
 
+    # สถานะเดียวกับตาราง WEB status: ใช้ผลของ sensor (รวม ping / disk latency / bottleneck) ถ้ามี
+    state = classify_state(current)
+    try:
+        worst = (sensors_service.target_states().get(web) or {}).get("worst")
+        state = {"down": "DOWN", "error": "PROBLEM", "warning": "WARNING", "unknown": "WARNING",
+                 "ok": "HEALTHY"}.get(worst, state)
+    except Exception as e:
+        print(f"[SUMMARY] sensor state {web}: {e!r}")
+
     return jsonify({
         "web": web,
         "status": "online" if up == 1 else "offline",
         "last_pull": last_pull_time(web),
         "problem_count": get_problem_count(web),
         "errors_15m": get_errors_15m(web),
-        "current_state": classify_state(current),
+        "current_state": state,
         "metrics": current,
     })
 

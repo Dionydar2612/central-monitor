@@ -78,7 +78,9 @@ def _ping(web):
     """latency (ms) / packet loss (%) จาก blackbox_exporter (job ping)  ไม่มี host / ไม่ได้เปิด -> None"""
     sel = f'cm_target="{web}"'
     res = _run({
-        "rtt": f'avg(avg_over_time(probe_icmp_duration_seconds{{{sel},phase="rtt"}}[5m])) * 1000',
+        # เฉลี่ยเฉพาะ ping ที่ตอบ (ping ที่หายมี rtt = 0)
+        "rtt": (f'sum(sum_over_time(probe_icmp_duration_seconds{{{sel},phase="rtt"}}[5m])) / '
+                f'sum(sum_over_time(probe_success{{{sel}}}[5m])) * 1000'),
         "loss": f"(1 - avg(avg_over_time(probe_success{{{sel}}}[5m]))) * 100",
         "up": f"max(probe_success{{{sel}}})",
         "samples": f"sum(count_over_time(probe_success{{{sel}}}[5m]))",
