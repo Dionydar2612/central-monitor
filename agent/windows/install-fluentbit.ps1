@@ -310,6 +310,9 @@ if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
         -Description "ส่ง ERROR/WARN log และสถานะเครื่องไปที่ Central Monitor" -StartupType Automatic | Out-Null
 }
 sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
+# log เก่าเก็บเป็น .old -> ข้อความที่ตรวจด้านล่างเป็นของรอบนี้เท่านั้น
+$agentLog = Join-Path $DataDir "fluent-bit.log"
+if (Test-Path $agentLog) { Move-Item $agentLog "$agentLog.old" -Force }
 Start-Service $ServiceName
 
 Say "6/6 ตรวจสถานะ"
