@@ -53,7 +53,8 @@
 
 <!-- รายละเอียดเครื่องที่เลือก: ซ่อน (และไม่โหลด) จนกว่าจะคลิกเครื่องใน WEB status
      แบ่ง 8 แท็บ (#dTabs, machine.js): Overview / Performance / Bottleneck / Processes / Services / Hardware / System / Alerts & Events
-     แต่ละแท็บ = <div class="dpane" data-pane="..."> แท็บที่ไม่ได้เปิดจะไม่โหลดข้อมูล -->
+     แต่ละแท็บ = <div class="dpane" data-pane="..."> แท็บที่ไม่ได้เปิดจะไม่โหลดข้อมูล
+     แท็บใช้กับเครื่อง Windows เท่านั้น · เครื่อง Linux ใช้หน้าแบบเดิม (กราฟ + Service คู่กัน, Process, System events) -->
 <div id="detail" hidden>
 <div class="dtabs" id="dTabs" role="tablist" aria-label="Machine details">
 <button type="button" role="tab" data-tab="overview" aria-selected="true">Overview</button>
@@ -72,7 +73,7 @@
 <div class="grid kpis" id="kpis"></div>
 
 <!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) -->
-<div class="grid one">
+<div class="grid one" id="ovMain">
 <section class="card">
 <div class="top"><h2>System Load</h2><div class="chopt"><button type="button" class="svbtn" id="zoomReset" hidden>Reset zoom</button></div></div>
 <div class="chbar"><div class="tabs" id="chTabs" role="group" aria-label="Chart metric"></div><div class="lgd" id="lgd"></div></div>
@@ -90,7 +91,7 @@
 <div class="dpane" data-pane="bottleneck" hidden><div id="pnBn" class="pn"></div></div>
 <!-- รายการ Service (#sv: Linux จาก snapshot ของ puller / Windows จาก windows_exporter) -->
 <div class="dpane" data-pane="services" hidden>
-<div class="grid one">
+<div class="grid one" id="svHome">
 <section class="card svcard">
 <div class="top"><h2>Service</h2><div class="svh"><span class="cnt" id="svCnt"></span><button type="button" class="svbtn" id="svEdit" aria-expanded="false" aria-controls="svPick">Select</button></div></div>
 <!-- ตัวเลือก service ที่จะแสดง (บันทึกที่ puller.yaml -> targets[].watch_services ผ่าน /api/targets/<web>/services) -->

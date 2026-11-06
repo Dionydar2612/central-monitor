@@ -1,7 +1,7 @@
 # Windows Monitoring & Bottleneck Detection
 
 ที่เก็บ metrics มีที่เดียวคือ **Prometheus** (อ่านด้วย PromQL) ไม่ใช้ InfluxDB / Zabbix / Grafana
-ค่าที่เครื่องไม่มีจะแสดง **Unavailable** และสิ่งที่ระบบอ่านไม่ได้แสดง **Unsupported** พร้อมเหตุผล ไม่มีค่าสมมติ
+ค่าที่อ่านไม่ได้จะไม่แสดง (ซ่อนแถว / คอลัมน์ / การ์ดนั้น) ไม่มีค่าสมมติ
 
 ## 1. เส้นทางข้อมูล
 
@@ -118,7 +118,9 @@ Linux ใช้ node_exporter ในรูปแบบเดียวกัน (
 - **WEB status**: ไทล์ Total / Up / Down / Warning / Critical / Paused + ค่าเฉลี่ย CPU / RAM / Disk ของเครื่องที่ online
   หัวกลุ่มแสดงค่าเฉลี่ยของกลุ่ม · ตาราง: Name, OS, IP, Status, CPU, Memory, Disk, Network (MB/s + ping ms / loss %), Alerts, Last pull
   คลิกหัวคอลัมน์เพื่อเรียง · ตัวกรองข้อความ / OS / สถานะ
-- **รายละเอียดเครื่อง** 8 แท็บ: Overview · Performance · Bottleneck · Processes · Services · Hardware · System · Alerts & Events
+- **รายละเอียดเครื่อง Windows** 8 แท็บ: Overview · Performance · Bottleneck · Processes · Services · Hardware · System · Alerts & Events
+- **รายละเอียดเครื่อง Linux** ใช้หน้าแบบเดิม (ไม่มีแท็บ): KPI, กราฟ System Load คู่การ์ด Service, CPU / Memory process, System events
+  (sensor ใหม่ของ Linux เช่น Disk latency, Packet loss, Bottleneck ยังทำงานและดูได้ที่หน้า Events)
 - API: `GET /api/host/<เครื่อง>/{performance|hardware|system|bottleneck}`, `GET/PUT /api/alert-settings` (admin)
 
 ## 8. เพิ่มเครื่อง Windows
@@ -130,7 +132,7 @@ Linux ใช้ node_exporter ในรูปแบบเดียวกัน (
 
 ## 9. ข้อจำกัด
 
-- **อุณหภูมิ CPU / พัดลม / SMART บน Windows: Unsupported** — windows_exporter ไม่มีแหล่งข้อมูลมาตรฐาน (thermal zone มักไม่มีบน server/VM) ต้องใช้ iLO / iDRAC / เครื่องมือผู้ผลิต
+- **อุณหภูมิ CPU / พัดลม / SMART บน Windows: อ่านไม่ได้ จึงไม่แสดง** — windows_exporter ไม่มีแหล่งข้อมูลมาตรฐาน (thermal zone มักไม่มีบน server/VM) ต้องใช้ iLO / iDRAC / เครื่องมือผู้ผลิต
   มีเฉพาะอุณหภูมิ / พัดลมของ GPU เมื่อ driver รองรับ (WDDM 2.4+) และสถานะดิสก์จาก `diskdrive`
 - Linux: อุณหภูมิ / พัดลมมีเมื่อ node_exporter เห็น hwmon (เครื่องจริง) · SMART ต้องติดตั้ง smartctl_exporter เพิ่ม
 - Packet loss ประมาณจาก ping 1 ครั้งทุก 15 วินาที (20 ครั้ง / 5 นาที) วัดจาก central ไปเครื่อง ไม่ใช่ระหว่างเครื่องกับผู้ใช้

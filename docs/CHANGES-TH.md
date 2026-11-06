@@ -12,7 +12,7 @@
 | ระยะเวลาก่อนแจ้งเตือน | ค่าเริ่มต้น **3 นาที** (`sensors.confirm_checks: 6`) ปรับได้ที่ Settings > Alerts |
 | Settings > Alerts | การ์ดใหม่: นาทีก่อนแจ้งเตือน, hysteresis, เปิด/ปิด bottleneck, service สำคัญ, ตารางเกณฑ์ Linux / Windows (`GET/PUT /api/alert-settings`, admin, บันทึก Activity log) · ฟอร์มเครื่องมีเกณฑ์ชนิดใหม่ + service สำคัญเฉพาะเครื่อง |
 | WEB status | ไทล์ Up / Down / Warning / Critical + ค่าเฉลี่ย CPU / RAM / Disk · ค่าเฉลี่ยต่อกลุ่ม · คอลัมน์ OS / Network / Alerts · คลิกหัวคอลัมน์เพื่อเรียง · ตัวกรอง OS / สถานะ · ถาม Prometheus แบบรวม (จำนวน query ไม่ขึ้นกับจำนวนเครื่อง) |
-| รายละเอียดเครื่อง | 8 แท็บ: Overview, Performance, Bottleneck, Processes, Services, Hardware, System, Alerts & Events (`machine.js`, `host_details.py`, `GET /api/host/<เครื่อง>/<แท็บ>`) · ค่าที่ไม่มี = Unavailable, ที่อ่านไม่ได้ = Unsupported |
+| รายละเอียดเครื่อง | แท็บใช้กับเครื่อง Windows เท่านั้น เครื่อง Linux ใช้หน้าแบบเดิม · ค่าที่อ่านไม่ได้ไม่แสดง · 8 แท็บ: Overview, Performance, Bottleneck, Processes, Services, Hardware, System, Alerts & Events (`machine.js`, `host_details.py`, `GET /api/host/<เครื่อง>/<แท็บ>`) · ค่าที่ไม่มี = Unavailable, ที่อ่านไม่ได้ = Unsupported |
 
 **ต้องทำหลังอัปเดต**: `cm-update` ที่ central (สร้าง container blackbox) แล้วรันคำสั่งติดตั้ง agent ซ้ำบนเครื่อง Windows ทุกเครื่อง
 

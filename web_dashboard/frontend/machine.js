@@ -10,7 +10,8 @@
      Hardware      CPU รุ่น / RAM / ดิสก์ / การ์ดเครือข่าย / GPU / อุณหภูมิ       GET /api/host/<web>/hardware
      System        ชื่อเครื่อง / OS / build / uptime / เวลา / IP / agent          GET /api/host/<web>/system
      Alerts & Events  sensor ของเครื่อง + ประวัติปัญหา 7 วัน                      GET /api/sensors?web= , /api/incidents?web=
-   ค่าที่ exporter ไม่ส่ง -> "Unavailable" ; สิ่งที่ระบบอ่านไม่ได้ -> "Unsupported" พร้อมเหตุผล (ไม่มีค่าสมมติ)
+   ใช้เฉพาะเครื่อง Windows · เครื่อง Linux แสดงหน้าแบบเดิม (ไม่มีแท็บ: KPI + กราฟคู่ Service, Process, System events)
+   ค่าที่อ่านไม่ได้ไม่แสดง (ซ่อนแถว / คอลัมน์ / การ์ดที่ไม่มีค่า) ไม่มีค่าสมมติ
    ใช้ตัวแปร/ฟังก์ชันจาก dashboard.js: S, q, escapeHtml, hasValue, formatNumber, formatTimestamp, apiGet
    ===================================================================== */
 (function () {
@@ -18,7 +19,7 @@
     const PANES = ["overview", "performance", "bottleneck", "processes", "services", "hardware", "system", "alerts"];
     const API_KIND = { performance: "performance", bottleneck: "bottleneck", hardware: "hardware", system: "system" };
     const REFRESH_MS = { performance: 15000, bottleneck: 30000, hardware: 300000, system: 60000, alerts: 30000, processes: 20000 };
-    const P = { tab: loadTab(), data: {}, at: {}, busy: {} };
+    const P = { tab: loadTab(), data: {}, at: {}, busy: {}, win: false };
 
     function loadTab() {
         try { const t = localStorage.getItem("cm.detailTab"); return PANES.includes(t) ? t : "overview"; } catch (e) { return "overview"; }
@@ -115,12 +116,12 @@
             ["Established", num(t.established, 0)], ["Connection failures/s", num(t.failures_per_sec, 3)],
             ["Resets/s", num(t.resets_per_sec, 3)], ["Retransmit", num(t.retransmit_pct, 2, "%")],
         ]));
-        const ping = card("Ping from central", p.available ? kv([
+        const ping = !p.available ? "" : card("Ping from central", kv([
             ["Latency (avg 5m)", val(num(p.latency_ms, 1, " ms"), lv("net_latency", p.latency_ms))],
             ["Packet loss (5m)", val(num(p.packet_loss, 1, "%"), lv("packet_loss", p.packet_loss))],
             ["Reachable now", p.reachable ? `<b class="ok">Yes</b>` : `<b class="cr">No</b>`],
             ["Samples (5m)", esc(p.samples_5m)],
-        ]) : `<div class="empty">${esc(p.reason || "Unavailable")}</div>`);
+        ]));
         return `<div class="grid pgrid2">${cpu}${mem}</div>${disks}${devs}${net}<div class="grid pgrid2">${tcp}${ping}</div>
             <div class="pnote">ค่าจาก Prometheus (เฉลี่ย 5 นาที) · อัปเดต ${ts(d.generated_at)}</div>`;
     }
@@ -170,10 +171,8 @@
             ...(d.gpus || []).filter(x => hasValue(x.temperature_c)).map(x => `<tr><td>GPU ${esc(x.device)}</td><td>Temperature</td><td>${num(x.temperature_c, 1, " °C")}</td></tr>`),
             ...(d.gpus || []).filter(x => hasValue(x.fan_rpm)).map(x => `<tr><td>GPU ${esc(x.device)}</td><td>Fan</td><td>${num(x.fan_rpm, 0, " rpm")}</td></tr>`),
             ...(d.fans || []).map(x => `<tr><td>${esc(x.fan)}</td><td>Fan</td><td>${num(x.rpm, 0, " rpm")}</td></tr>`)];
-        const sensors = card("Sensors", table(["Sensor", "Type", "Value"], sens, "ไม่มีเซนเซอร์ที่อ่านได้"));
-        const uns = (d.unsupported || []).length ? card("Unsupported", `<ul class="unsup">${d.unsupported.map(x =>
-            `<li><span class="na">Unsupported</span> <b>${esc(x.item)}</b> - ${esc(x.reason)}</li>`).join("")}</ul>`) : "";
-        return `<div class="grid pgrid2">${cpu}${mem}</div>${drives}${vols}${nics}<div class="grid pgrid2">${sensors}${uns}</div>`;
+        const sensors = sens.length ? card("Sensors", table(["Sensor", "Type", "Value"], sens)) : "";
+        return `<div class="grid pgrid2">${cpu}${mem}</div>${drives}${vols}${nics}${sensors}`;
     }
 
     /* ---------------- System ---------------- */
@@ -234,6 +233,52 @@
             io.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.pid || "-")}</td><td>${num(p.io_mb, 2)}</td></tr>`)));
     }
 
+    /* ---------------- ซ่อนค่าที่อ่านไม่ได้ ----------------
+       แถว (dl.kv) ที่ไม่มีค่า -> ลบ · คอลัมน์ตารางที่ไม่มีค่าทุกแถว -> ลบ · ช่องที่เหลือ -> "-"
+       การ์ดที่ไม่เหลือข้อมูล -> ลบ */
+    function blank(node) {
+        const c = node.cloneNode(true);
+        c.querySelectorAll(".na").forEach(n => n.remove());
+        return !/[0-9A-Za-z\u0E00-\u0E7F]/.test(c.textContent);
+    }
+    function prune(box) {
+        box.querySelectorAll("dl.kv dd").forEach(dd => {
+            if (dd.querySelector(".na") && blank(dd)) { const dt = dd.previousElementSibling; if (dt) dt.remove(); dd.remove(); }
+        });
+        box.querySelectorAll("table.ptbl").forEach(t => {
+            const rows = [...t.tBodies[0].rows], n = t.tHead.rows[0].cells.length;
+            for (let i = n - 1; i >= 1; i--) {
+                if (rows.length && rows.every(r => !r.cells[i] || blank(r.cells[i]))) {
+                    t.tHead.rows[0].deleteCell(i); rows.forEach(r => r.cells[i] && r.deleteCell(i));
+                }
+            }
+        });
+        box.querySelectorAll(".na").forEach(n => n.replaceWith("-"));
+        box.querySelectorAll(".pcard").forEach(c => {
+            const hasKv = c.querySelector("dl.kv dt"), hasRows = c.querySelector("table.ptbl tbody tr"), extra = c.querySelector(".cores,.advice,.bnhead");
+            if (!hasKv && !hasRows && !extra) c.remove();
+        });
+        box.querySelectorAll(".grid.pgrid2").forEach(g => { if (!g.querySelector(".card")) g.remove(); });
+    }
+
+    /* ---------------- Windows = แท็บ / Linux = หน้าแบบเดิม ---------------- */
+    function isWindows() {
+        const w = (S.webs || []).find(x => x.web === S.web);
+        return !!w && w.os === "windows";
+    }
+    const LINUX_PANES = ["overview", "processes", "system"];
+    function layout() {
+        const win = isWindows(), main = q("#ovMain"), home = q("#svHome"), sv = q("#detail .svcard");
+        P.win = win;
+        q("#dTabs").hidden = !win;
+        if (sv && main && home) {
+            if (win && sv.parentNode !== home) { home.append(sv); main.className = "grid one"; }
+            if (!win && sv.parentNode !== main) { main.append(sv); main.className = "grid main"; }
+        }
+        if (win) { show(P.tab); return; }
+        document.querySelectorAll("#detail .dpane").forEach(p => { p.hidden = !LINUX_PANES.includes(p.dataset.pane); });
+    }
+
     /* ---------------- โหลด / วาด ---------------- */
     const RENDER = { performance: renderPerformance, bottleneck: renderBottleneck, hardware: renderHardware,
                      system: renderSystem, alerts: renderAlerts, processes: renderProcesses };
@@ -262,6 +307,7 @@
             if (web !== S.web) return;
             P.data[key] = d; P.at[key] = Date.now();
             box.innerHTML = RENDER[tab](d || {});
+            prune(box);
         } catch (err) {
             console.error(`Pane ${tab}:`, err);
             if (tab !== "processes") box.innerHTML = `<div class="empty">โหลดข้อมูลไม่ได้: ${esc(err.message || err)}</div>`;
@@ -271,6 +317,7 @@
     }
 
     function show(tab) {
+        if (!P.win) return;
         P.tab = PANES.includes(tab) ? tab : "overview";
         saveTab(P.tab);
         document.querySelectorAll("#dTabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === P.tab)));
@@ -279,8 +326,8 @@
     }
 
     window.CMPanes = {
-        refresh(force) { if (S.web) load(P.tab, force); },
-        reset() { P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
+        refresh(force) { layout(); if (S.web && P.win) load(P.tab, force); },
+        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
         show,
     };
 
@@ -293,6 +340,6 @@
             const i = PANES.indexOf(P.tab), n = PANES[(i + (e.key === "ArrowRight" ? 1 : PANES.length - 1)) % PANES.length];
             show(n); const b = tabs.querySelector(`[data-tab="${n}"]`); if (b) b.focus();
         });
-        show(P.tab);
+        layout();
     });
 })();
