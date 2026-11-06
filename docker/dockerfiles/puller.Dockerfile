@@ -45,4 +45,7 @@ COPY start_push_log/puller/ /app/
 COPY start_push_log/cleanup/ /app/cleanup/
 
 # คำสั่งปริยาย = puller (service buffer-cleaner ใน compose ใส่คำสั่งของตัวเองทับ)
+# print() ออก docker logs ทันที (ไม่พักไว้ใน buffer -> docker logs ว่าง ตอนหาปัญหา)
+ENV PYTHONUNBUFFERED=1
+
 CMD ["python3", "/app/puller.py"]

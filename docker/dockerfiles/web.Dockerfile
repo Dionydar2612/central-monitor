@@ -47,4 +47,7 @@ COPY web_dashboard/backend/ /app/
 COPY web_dashboard/frontend/ /app/static/
 
 # คำสั่งจริงถูกกำหนดใน docker-compose.yml (workers/threads/timeout) ค่านี้เป็นค่าสำรอง
+# print() ออก docker logs ทันที (ไม่พักไว้ใน buffer -> docker logs ว่าง ตอนหาปัญหา)
+ENV PYTHONUNBUFFERED=1
+
 CMD ["gunicorn", "--chdir", "/app", "--bind", "0.0.0.0:8000", "api:app"]
