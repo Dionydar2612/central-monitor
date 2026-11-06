@@ -84,6 +84,8 @@ processors:
       - context: datapoint
         statements:
           - set(time, Now()) where UnixSeconds(time) < UnixSeconds(Now()) - 300 or UnixSeconds(time) > UnixSeconds(Now()) + 60
+          # สัญญาณ "ยังทำงาน" ใช้เวลาที่ central ได้รับเสมอ -> สถานะ Online/Down ไม่ขึ้นกับนาฬิกาของเครื่อง Windows
+          - set(time, Now()) where IsMatch(metric.name, "^fluentbit_uptime")
 
   # log ที่ไม่ได้มาจาก cm-agent.lua (ไม่มีชื่อเครื่อง) -> ทิ้ง
   filter/agents:
