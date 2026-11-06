@@ -752,11 +752,14 @@ def run_once(previous):
         if confirmed is None and new == "ok":
             continue                          # sensor ใหม่ที่ปกติ ไม่ต้องบันทึก
         fields = {"source": "sensor", "level": new, "web": s["web"], "group": s["group"],
-                  "sensor": s["name"], "from": confirmed, "to": new}
+                  "sensor": s["name"], "from": confirmed, "to": new,
+                  # ใช้ทำข้อความสั้นในการ์ด Teams (notify.py)
+                  "sid": s["id"], "kind": s.get("kind"), "value": s.get("value"), "unit": s.get("unit"),
+                  "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error")}
         if new == "ok" and closed and closed[-1]["id"] == s["id"]:
             c = closed[-1]
             pk = f" · peak {c['peak']:.1f}{'%' if c.get('unit') == '%' else ''}" if c.get("peak") is not None else ""
-            fields.update(level="recovered", duration=c["duration"],
+            fields.update(level="recovered", duration=c["duration"], peak=c.get("peak"), worst=c["worst"],
                           message=f"{s['web']} · {s['name']}: Recovered → OK after {_fmt_duration(c['duration'])} "
                                   f"({STATUS_TEXT.get(c['worst'], c['worst'])}{pk}) · {s['message']}")
         else:

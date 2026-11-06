@@ -64,7 +64,7 @@ def settings(config=None):
 
 
 def _now_text():
-    return datetime.now().astimezone().strftime("%d/%m/%Y %H:%M:%S")
+    return datetime.now().astimezone().strftime("%d/%m/%Y %H:%M")
 
 
 def _dur(sec):
@@ -75,23 +75,111 @@ def _dur(sec):
     return f"{d}d {h}h" if d else f"{h}h {m}m" if h else f"{m}m" if m else f"{s}s"
 
 
-def build_card(title, level, facts, lines, link=None, link_title="Open dashboard"):
-    """Adaptive Card 1.4 สำหรับ Teams (ใช้ได้ทั้ง Workflows webhook และ Incoming Webhook)"""
-    body = [{
-        "type": "Container", "style": STYLE.get(level, "default"), "bleed": True,
-        "items": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}],
-    }]
-    if facts:
-        body.append({"type": "FactSet", "facts": [{"title": k, "value": str(v)} for k, v in facts if v not in (None, "")]})
-    for text, lv in lines:
-        color = {"attention": "Attention", "warning": "Warning", "good": "Good"}.get(STYLE.get(lv, ""), "Default")
-        body.append({"type": "TextBlock", "text": text, "wrap": True, "spacing": "Small", "color": color})
+ICON = {"down": "🔴", "error": "🔴", "warning": "🟡", "recovered": "🟢", "up": "🟢", "ok": "🟢"}
+BOTTLENECK_TH = {"cpu": "คอขวด CPU (งานรอคิว)", "memory": "คอขวด RAM (ใช้ page file / swap หนัก)",
+                 "disk": "คอขวด Disk (ตอบช้า คิวยาว)", "network": "คอขวด Network"}
+
+
+def build_card(title, level, lines, footer="", link=None, link_title="เปิด dashboard"):
+    """Adaptive Card 1.4 แบบสั้น: หัวเรื่อง 1 บรรทัด + รายการละ 1 บรรทัด + บรรทัดเล็กท้าย
+    (ใช้ได้ทั้ง Teams Workflows webhook และ Incoming Webhook)"""
+    body = [{"type": "Container", "style": STYLE.get(level, "default"), "bleed": True,
+             "items": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}]}]
+    for text in lines:
+        body.append({"type": "TextBlock", "text": text, "wrap": True, "spacing": "Small"})
+    if footer:
+        body.append({"type": "TextBlock", "text": footer, "isSubtle": True, "size": "Small", "wrap": True, "spacing": "Medium"})
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
-            "version": "1.4", "msteams": {"width": "Full"}, "body": body}
+            "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": title, "body": body}
     if link:
         card["actions"] = [{"type": "Action.OpenUrl", "title": link_title, "url": link}]
-    return {"type": "message", "attachments": [
+    return {"type": "message", "summary": title, "attachments": [
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
+
+
+def _n(v):
+    """ตัวเลขอ่านง่าย: 82.8 -> 83, 7.5 -> 7.5"""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f"{v:.0f}" if abs(v) >= 10 else f"{v:.1f}".rstrip("0").rstrip(".")
+
+
+def _limit(e):
+    lim = e.get("error") if e.get("to") == "error" else e.get("warning")
+    return _n(lim)
+
+
+def _subject(e):
+    """ชื่อเรื่องสั้น ๆ ของ sensor"""
+    k, name = e.get("kind"), str(e.get("sensor") or "")
+    sid = str(e.get("sid") or "")
+    if k == "availability":
+        return "เครื่อง"
+    if k == "cpu":
+        return "CPU"
+    if k == "memory":
+        return "RAM"
+    if k == "mem_available":
+        return "RAM ว่าง"
+    if k == "disk":
+        return f"Disk {e.get('mount') or name.split(':', 1)[-1].strip()}"
+    if k == "disk_latency":
+        return "Disk latency"
+    if k == "packet_loss":
+        return "Ping loss"
+    if k == "net_latency":
+        return "Ping latency"
+    if k == "service":
+        return f"Service {name.split(':', 1)[-1].strip()}"
+    if k == "bottleneck":
+        return BOTTLENECK_TH.get(sid.rsplit(":", 1)[-1], "คอขวด")
+    if k == "logpull":
+        return "ดึง log (SSH)"
+    return name
+
+
+def short_text(kind, e, with_limit=True):
+    """ข้อความ 1 บรรทัดที่อ่านแล้วรู้เลยว่าเกิดอะไร (with_limit=False: ไม่ใส่เกณฑ์ ใช้กับหัวการ์ด)"""
+    k, v, lim = e.get("kind"), _n(e.get("value")), _limit(e)
+    sub = _subject(e)
+    if kind == "recovered":
+        if k == "availability":
+            txt = "เครื่องกลับมาออนไลน์"
+        elif k == "service":
+            txt = f"{sub} ทำงานแล้ว"
+        else:
+            txt = f"{sub} กลับปกติ" + (f" ({v}{'%' if e.get('unit') == '%' else ' ' + str(e.get('unit') or '')})".rstrip() if v else "")
+        if e.get("duration"):
+            txt += f" · เป็นอยู่ {_dur(e['duration'])}"
+        return txt
+    if not with_limit:
+        lim = None
+    gate = f" (เกณฑ์ {lim}{'%' if e.get('unit') == '%' else ' ms' if e.get('unit') == 'ms' else ''})" if lim else ""
+    if k == "availability":
+        return "เครื่องดับ หรือไม่ส่งข้อมูล"
+    if k == "cpu":
+        return f"CPU สูง {v}%{gate}" if v else "CPU สูง"
+    if k == "memory":
+        return f"RAM ใช้ไป {v}%{gate}" if v else "RAM ใกล้เต็ม"
+    if k == "mem_available":
+        return (f"RAM เหลือแค่ {v}%" + (f" (ต่ำกว่า {lim}%)" if lim else "")) if v else "RAM เหลือน้อย"
+    if k == "disk":
+        return f"{sub} เต็ม {v}%{gate}" if v else f"{sub} ใกล้เต็ม"
+    if k == "disk_latency":
+        return f"Disk ตอบช้า {v} ms{gate}" if v else "Disk ตอบช้า"
+    if k == "packet_loss":
+        return f"Ping หาย {v}%{gate}" if v else "Ping หาย"
+    if k == "net_latency":
+        return f"Ping ช้า {v} ms{gate}" if v else "Ping ไม่ตอบ"
+    if k == "service":
+        return f"{sub} หยุดทำงาน"
+    if k == "bottleneck":
+        return sub
+    if k == "logpull":
+        return "ดึง log ทาง SSH ไม่ได้"
+    return f"{sub} {LABEL.get(e.get('to'), e.get('to') or '')}".strip()
 
 
 def post(url, payload, timeout=15):
@@ -165,7 +253,8 @@ def _kind(event):
 
 
 def sensor_events(events, config=None):
-    """เหตุการณ์จาก sensor_monitor.run_once (สถานะที่ยืนยันแล้ว) -> การ์ดละ 1 เครื่อง"""
+    """เหตุการณ์จาก sensor_monitor.run_once (สถานะที่ยืนยันแล้ว) -> การ์ดละ 1 เครื่อง
+    หัวการ์ด = เรื่องที่หนักที่สุด (เห็นได้จากหน้าแจ้งเตือนโดยไม่ต้องเปิด)  ตัวการ์ด = 1 บรรทัดต่อเรื่อง"""
     s = settings(config)
     if not s["enabled"] or not events:
         return
@@ -175,31 +264,17 @@ def sensor_events(events, config=None):
         if k and k in s["levels"]:
             by_web.setdefault(e.get("web") or "?", []).append((k, e))
     for web, items in by_web.items():
-        worst = max((k for k, _ in items), key=lambda k: RANK.get(k, 0))
-        problems = [k for k, _ in items if k != "recovered"]
-        if not problems:
-            title = f"{web}: กลับมาปกติ ({len(items)} รายการ)" if len(items) > 1 else \
-                    f"{web}: {items[0][1].get('sensor')} กลับมาปกติ"
-            worst = "recovered"
-        elif len(items) == 1:
-            title = f"{web}: {items[0][1].get('sensor')} {LABEL[worst]}"
-        else:
-            title = f"{web}: {LABEL[worst]} ({len(items)} รายการ)"
-        first = items[0][1]
-        lines = []
-        for k, e in items[:MAX_CHANGES_PER_CARD]:
-            msg = str(e.get("message") or "")
-            prefix = f"{e.get('web')} · "
-            if msg.startswith(prefix):
-                msg = msg[len(prefix):]
-            if k == "recovered" and e.get("duration"):
-                msg += f" (เป็นอยู่ {_dur(e['duration'])})"
-            lines.append((f"**{LABEL[k]}** · {msg}", k))
+        items.sort(key=lambda x: -RANK.get(x[0], 0))           # หนักสุดขึ้นก่อน
+        worst = items[0][0]
+        lines = [f"{ICON.get(k, '')} {short_text(k, e)}" for k, e in items[:MAX_CHANGES_PER_CARD]]
         if len(items) > MAX_CHANGES_PER_CARD:
-            lines.append((f"... และอีก {len(items) - MAX_CHANGES_PER_CARD} รายการ (ดูในหน้า Events)", "warning"))
+            lines.append(f"... และอีก {len(items) - MAX_CHANGES_PER_CARD} เรื่อง")
+        more = f" และอีก {len(items) - 1} เรื่อง" if len(items) > 1 else ""
+        title = f"{ICON.get(worst, '')} {web} · {short_text(*items[0], with_limit=len(items) == 1)}{more}"
+        group = items[0][1].get("group")
+        footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
         link = f"{s['dashboard_url']}/?web={urllib.parse.quote(web)}" if s["dashboard_url"] else None
-        facts = [("เครื่อง", web), ("กลุ่ม", first.get("group") or "-"), ("เวลา", _now_text())]
-        _enqueue(s["url"], build_card(title, worst, facts, lines, link), f"{web} {worst}")
+        _enqueue(s["url"], build_card(title, worst, lines if len(items) > 1 else [], footer, link), f"{web} {worst}")
 
 
 def check_event(name, url, old, new, result, group="", config=None):
@@ -210,13 +285,17 @@ def check_event(name, url, old, new, result, group="", config=None):
     level = "recovered" if new == "up" else new
     if level == "recovered" and old not in ("down", "warning"):
         return
-    title = f"Web check {name}: {LABEL.get(level, new.upper())}"
-    facts = [("URL", url), ("กลุ่ม", group or "-"), ("สถานะ", f"{LABEL.get(old, old or '-')} → {LABEL.get(new, new)}"),
-             ("HTTP", result.get("code")), ("เวลาตอบ", f"{result['ms']} ms" if result.get("ms") is not None else None),
-             ("เวลา", _now_text())]
     ssl_ = result.get("ssl") or {}
-    if ssl_.get("days_left") is not None:
-        facts.insert(3, ("SSL หมดอายุใน", f"{ssl_['days_left']} วัน"))
-    lines = [(str(result["error"]), level)] if result.get("error") else []
+    if level == "recovered":
+        text = f"เว็บ {name} กลับมาปกติ"
+    elif level == "warning" and ssl_.get("days_left") is not None:
+        text = f"SSL ของ {name} หมดอายุใน {ssl_['days_left']} วัน"
+    elif result.get("code"):
+        text = f"เว็บ {name} ล่ม (HTTP {result['code']})"
+    else:
+        text = f"เว็บ {name} เข้าไม่ได้"
+    title = f"{ICON.get(level, '')} {text}"
+    lines = [url]
+    footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
     link = f"{s['dashboard_url']}/events" if s["dashboard_url"] else None
-    _enqueue(s["url"], build_card(title, level, facts, lines, link), f"check {name} {new}")
+    _enqueue(s["url"], build_card(title, level, lines, footer, link), f"check {name} {new}")

@@ -200,11 +200,11 @@ class TeamsNotify(unittest.TestCase):
         try:
             notify.sensor_events([
                 {"web": "win-01", "group": "TQ", "sensor": "Availability", "from": "ok", "to": "down", "level": "down",
-                 "message": "win-01 · Availability: OK → Down · agent is not sending data"},
+                 "kind": "availability", "message": "win-01 · Availability: OK → Down · agent is not sending data"},
                 {"web": "win-01", "group": "TQ", "sensor": "Disk Usage: C:", "from": "ok", "to": "warning", "level": "warning",
                  "message": "win-01 · Disk Usage: C:: OK → Warning"},                       # warning ไม่ได้เลือก -> ไม่ส่ง
                 {"web": "lx-01", "group": "", "sensor": "CPU average 5m", "from": "error", "to": "ok", "level": "recovered",
-                 "duration": 600, "message": "lx-01 · CPU average 5m: Recovered → OK after 10m"},
+                 "kind": "cpu", "value": 12.3, "unit": "%", "duration": 600, "message": "lx-01 · CPU average 5m: Recovered → OK after 10m"},
             ], self.CFG)
         finally:
             notify._enqueue = orig
@@ -212,10 +212,12 @@ class TeamsNotify(unittest.TestCase):
         card = sent[0][1]["attachments"][0]["content"]
         self.assertEqual(sent[0][1]["type"], "message")
         self.assertEqual(card["type"], "AdaptiveCard")
-        self.assertIn("Availability DOWN", card["body"][0]["items"][0]["text"])
+        self.assertEqual(card["body"][0]["items"][0]["text"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")
+        self.assertEqual(sent[0][1]["summary"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")   # ข้อความในหน้าแจ้งเตือน
         self.assertEqual(card["body"][0]["style"], "attention")
         self.assertEqual(card["actions"][0]["url"], "https://central:8090/?web=win-01")
         self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["style"], "good")
+        self.assertEqual(sent[1][1]["summary"], "🟢 lx-01 · CPU กลับปกติ (12%) · เป็นอยู่ 10m")
 
     def test_disabled_without_url(self):
         self.assertFalse(notify.settings({"notify": {"teams": {"webhook_url": ""}}})["enabled"])
