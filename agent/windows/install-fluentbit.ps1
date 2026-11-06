@@ -295,7 +295,9 @@ $ConfFile = Join-Path $DataDir "fluent-bit.conf"
 icacls $DataDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 
 Say "   ตรวจ config"
-& $FluentExe -c $ConfFile --dry-run 2>&1 | Select-Object -Last 3 | ForEach-Object { Write-Host "   $_" }
+# fluent-bit เขียนข้อความลง stderr -> PowerShell 5.1 ถือเป็น error เมื่อ ErrorActionPreference=Stop จึงปิดชั่วคราว
+$ErrorActionPreference = "Continue"; $dry = & $FluentExe -c $ConfFile --dry-run 2>&1 | ForEach-Object { "$_" }; $ErrorActionPreference = "Stop"
+$dry | Select-Object -Last 3 | ForEach-Object { Write-Host "   $_" }
 if ($LASTEXITCODE -ne 0) { throw "config ไม่ผ่าน (ดูข้อความด้านบน)" }
 
 # ---------------------------------------------------------------- 6) Windows service
