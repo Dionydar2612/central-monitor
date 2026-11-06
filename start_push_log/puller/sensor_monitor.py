@@ -782,10 +782,26 @@ def run_once(previous):
     append_events(events)
     try:
         notify.sensor_events(events, config)          # การ์ดแจ้งเตือน Microsoft Teams (ถ้าตั้งไว้)
-        notify.maybe_summary(sensors, _read(INCIDENTS_FILE, []), SUMMARY_STATE_FILE, SUMMARY_REQUEST_FILE, config)
+        notify.maybe_summary(sensors, _read(INCIDENTS_FILE, []), SUMMARY_STATE_FILE, SUMMARY_REQUEST_FILE, config,
+                             extra_fn=lambda: _summary_extra(targets))
     except Exception as e:
         print(f"[NOTIFY ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
+
+
+def _summary_extra(targets):
+    """Disk I/O utilization % (ดิสก์ที่ไม่ว่างมากที่สุด) ต่อเครื่อง สำหรับการ์ดสรุปใน Teams"""
+    out = {}
+    for t in targets:
+        if t.get("paused"):
+            continue
+        prom = t.get("prometheus") or {}
+        if str(t.get("type") or "ssh") == "agent":
+            ex = _win_exprs(f'cm_web="{t["name"]}"')
+        else:
+            ex = _linux_exprs(f'job="{prom.get("job")}",instance="{prom.get("instance")}"')
+        out[t["name"]] = {"io_util": _one(ex["disk_busy"])}
+    return out
 
 
 def _loop():

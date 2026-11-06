@@ -294,53 +294,100 @@ def _sensor_as_event(sn):
             "to": sn.get("status")}
 
 
-def build_summary(sensors, incidents, now=None):
-    """การ์ดสรุปสถานะทุกเครื่อง ณ ตอนนี้  sensors = sensors.json["sensors"]  incidents = incidents.json"""
+def _pct(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f"{v:.0f}%" if v >= 10 else f"{v:.1f}".rstrip("0").rstrip(".") + "%"
+
+
+def _mark(st):
+    return f" {ICON[st]}" if st in ("warning", "error", "down") else ""
+
+
+def build_summary(sensors, incidents, now=None, extra=None):
+    """การ์ดสรุปสถานะทุกเครื่อง ณ ตอนนี้
+    sensors = sensors.json["sensors"]  incidents = incidents.json  extra = {เครื่อง: {"io_util": %}}
+    ต่อเครื่อง: หัว "🟡 host-window" + บรรทัดค่า "CPU 43% · RAM 83% 🟡 · Disk C: 19%, D: 40% · Disk I/O 1.4%"
+               + ปัญหาอื่นที่ไม่ใช่ค่าเหล่านี้ (service หยุด, ping ...) ถ้ามี"""
     now = now or time.time()
+    extra = extra or {}
     start = datetime.fromtimestamp(now).astimezone().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     had_problem = {i.get("web") for i in incidents or [] if (i.get("end") or 0) >= start}
     machines = {}
     for sn in sensors or []:
-        m = machines.setdefault(sn.get("web") or "?", {"worst": "ok", "issues": [], "paused": False, "group": sn.get("group")})
-        st = sn.get("status")
+        m = machines.setdefault(sn.get("web") or "?", {"worst": "ok", "paused": False, "cpu": None, "mem": None,
+                                                       "disks": [], "other": []})
+        st, k = sn.get("status"), sn.get("kind")
         if st == "paused":
             m["paused"] = True
             continue
-        if st in ("down", "error", "warning"):
-            if RANK.get(st, 0) > RANK.get(m["worst"], 0):
-                m["worst"] = st
-            if st == "down" or sn.get("kind") != "bottleneck":       # คอขวดซ้ำกับค่าที่เกินอยู่แล้ว -> ไม่ใส่ในสรุป
-                m["issues"].append((RANK.get(st, 0), sn.get("kind"), short_text(st, _sensor_as_event(sn))))
-    rows = []
+        if st in ("down", "error", "warning") and RANK.get(st, 0) > RANK.get(m["worst"], 0):
+            m["worst"] = st
+        if k == "cpu":
+            m["cpu"] = (sn.get("value"), st)
+        elif k == "memory":
+            m["mem"] = (sn.get("value"), st)
+        elif k == "disk":
+            m["disks"].append((str(sn.get("mount") or "?"), sn.get("value"), st))
+        elif st in ("error", "warning") and k not in ("bottleneck", "mem_available"):
+            m["other"].append(f"{ICON[st]} {short_text(st, _sensor_as_event(sn))}")
+
+    blocks = []
     for web, m in machines.items():
         if m["paused"]:
-            rows.append((-1, web, f"⏸ {web} · หยุดตรวจ (Paused)"))
-        elif m["worst"] in ("down", "error", "warning"):
-            kinds = {k for _, k, _ in m["issues"]}
-            # RAM ใช้ไป % กับ RAM เหลือ % เป็นเรื่องเดียวกัน -> แสดงแค่ RAM ใช้ไป
-            issues = [t for _, k, t in sorted(m["issues"], key=lambda x: -x[0])
-                      if not (k == "mem_available" and "memory" in kinds)] or ["คอขวด"]
-            if m["worst"] == "down":
-                issues = ["เครื่องดับ หรือไม่ส่งข้อมูล"]
-            rows.append((RANK[m["worst"]], web, f"{ICON[m['worst']]} {web} · {', '.join(issues)}"))
+            blocks.append((-1, web, f"⏸ {web}", ["หยุดตรวจ (Paused)"]))
+            continue
+        if m["worst"] == "down":
+            blocks.append((4, web, f"🔴 {web}", ["เครื่องดับ หรือไม่ส่งข้อมูล"]))
+            continue
+        vals = []
+        if m["cpu"] and _pct(m["cpu"][0]):
+            vals.append(f"CPU {_pct(m['cpu'][0])}{_mark(m['cpu'][1])}")
+        if m["mem"] and _pct(m["mem"][0]):
+            vals.append(f"RAM {_pct(m['mem'][0])}{_mark(m['mem'][1])}")
+        if m["disks"]:
+            vals.append("Disk " + ", ".join(f"{mt} {_pct(v)}{_mark(st)}" for mt, v, st in sorted(m["disks"]) if _pct(v)))
+        io = (extra.get(web) or {}).get("io_util")
+        if _pct(io):
+            vals.append(f"Disk I/O {_pct(io)}")
+        lines = [" · ".join(vals)] if vals else []
+        lines += m["other"]
+        if m["worst"] in ("error", "warning"):
+            head = f"{ICON[m['worst']]} {web}"
+            rank = RANK[m["worst"]]
         elif web in had_problem:
-            rows.append((0.5, web, f"🟢 {web} · กลับปกติ"))
+            head, rank = f"🟢 {web} · กลับปกติ", 0.5
         else:
-            rows.append((0, web, f"🟢 {web} · ปกติ"))
-    rows.sort(key=lambda r: (-r[0], r[1]))
-    n_bad = sum(1 for r in rows if r[0] >= 3)
-    n_warn = sum(1 for r in rows if r[0] == 2)
-    n_ok = sum(1 for r in rows if 0 <= r[0] < 2)
+            head, rank = f"🟢 {web}", 0
+        blocks.append((rank, web, head, lines))
+    blocks.sort(key=lambda r: (-r[0], r[1]))
+
+    n_bad = sum(1 for r in blocks if r[0] >= 3)
+    n_warn = sum(1 for r in blocks if r[0] == 2)
+    n_ok = sum(1 for r in blocks if 0 <= r[0] < 2)
     level = "error" if n_bad else "warning" if n_warn else "ok"
     when = datetime.fromtimestamp(now).astimezone().strftime("%d/%m/%Y %H:%M")
     title = f"📋 สรุปสถานะเครื่อง {when} · 🔴 {n_bad} · 🟡 {n_warn} · 🟢 {n_ok}"
-    lines = [r[2] for r in rows[:SUMMARY_MAX_LINES]]
-    if len(rows) > SUMMARY_MAX_LINES:
-        lines.append(f"... และอีก {len(rows) - SUMMARY_MAX_LINES} เครื่อง")
-    return build_card(title, level, lines or ["ยังไม่มีเครื่อง"])
+
+    body = [{"type": "Container", "style": STYLE.get(level, "default"), "bleed": True,
+             "items": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}]}]
+    for _, _, head, lines in blocks[:SUMMARY_MAX_LINES]:
+        items = [{"type": "TextBlock", "text": head, "weight": "Bolder", "wrap": True}]
+        items += [{"type": "TextBlock", "text": t, "wrap": True, "spacing": "None"} for t in lines if t]
+        body.append({"type": "Container", "separator": True, "spacing": "Medium", "items": items})
+    if len(blocks) > SUMMARY_MAX_LINES:
+        body.append({"type": "TextBlock", "text": f"... และอีก {len(blocks) - SUMMARY_MAX_LINES} เครื่อง", "wrap": True})
+    if not blocks:
+        body.append({"type": "TextBlock", "text": "ยังไม่มีเครื่อง", "wrap": True})
+    card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
+            "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": title, "body": body}
+    return {"type": "message", "summary": title, "attachments": [
+        {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
 
 
-def maybe_summary(sensors, incidents, state_file, request_file, config=None):
+def maybe_summary(sensors, incidents, state_file, request_file, config=None, extra_fn=None):
     """เรียกทุกรอบ sensor (30 วินาที): ถึงเวลาที่ตั้ง หรือมีคำขอ "ส่งสรุปตอนนี้" จากหน้าเว็บ -> ส่งการ์ดสรุป"""
     s = settings(config)
     if not s["url"].startswith("https://"):
@@ -373,7 +420,12 @@ def maybe_summary(sensors, incidents, state_file, request_file, config=None):
         with open(tmp, "w") as f:
             json.dump({"last": due}, f)
         os.replace(tmp, state_file)
-    _enqueue(s["url"], build_summary(sensors, incidents, now), "daily summary" + (" (manual)" if forced else ""))
+    try:
+        extra = extra_fn() if extra_fn else None          # ค่าที่ไม่มีใน sensor (Disk I/O) ถามเฉพาะตอนจะส่ง
+    except Exception as e:
+        print(f"[NOTIFY ERROR] summary extra: {e!r}")
+        extra = None
+    _enqueue(s["url"], build_summary(sensors, incidents, now, extra), "daily summary" + (" (manual)" if forced else ""))
 
 
 def check_event(name, url, old, new, result, group="", config=None):

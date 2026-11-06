@@ -220,16 +220,20 @@ class TeamsNotify(unittest.TestCase):
 
     def test_summary(self):
         sensors = [
+            {"web": "a", "kind": "cpu", "status": "ok", "value": 43.2},
             {"web": "a", "kind": "memory", "status": "warning", "value": 83.2, "unit": "%", "warning": 80, "error": 95},
             {"web": "a", "kind": "mem_available", "status": "warning", "value": 16.8, "unit": "%", "warning": 20, "error": 10},
+            {"web": "a", "kind": "disk", "status": "ok", "value": 18.7, "mount": "C:"},
             {"web": "b", "kind": "availability", "status": "down"},
-            {"web": "c", "kind": "cpu", "status": "ok"},
-            {"web": "d", "kind": "cpu", "status": "ok"},
+            {"web": "c", "kind": "cpu", "status": "ok", "value": 5},
+            {"web": "d", "kind": "cpu", "status": "ok", "value": 7},
         ]
-        card = notify.build_summary(sensors, [{"web": "c", "end": time.time()}])["attachments"][0]["content"]
-        lines = [b["text"] for b in card["body"][1:]]
-        self.assertEqual(lines, ["🔴 b · เครื่องดับ หรือไม่ส่งข้อมูล", "🟡 a · RAM ใช้ไป 83% (เกณฑ์ 80%)",
-                                 "🟢 c · กลับปกติ", "🟢 d · ปกติ"])
+        card = notify.build_summary(sensors, [{"web": "c", "end": time.time()}],
+                                    extra={"a": {"io_util": 1.4}})["attachments"][0]["content"]
+        blocks = [[i["text"] for i in b["items"]] for b in card["body"][1:]]
+        self.assertEqual(blocks, [["🔴 b", "เครื่องดับ หรือไม่ส่งข้อมูล"],
+                                  ["🟡 a", "CPU 43% · RAM 83% 🟡 · Disk C: 19% · Disk I/O 1.4%"],
+                                  ["🟢 c · กลับปกติ", "CPU 5%"], ["🟢 d", "CPU 7%"]])
 
     def test_one_card_per_issue(self):
         sent = []
