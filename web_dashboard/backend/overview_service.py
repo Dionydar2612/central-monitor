@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import agent_service
 from checks_service import get_checks
 from clients import prom_value
 from metrics_service import PROMQL, _labels, _round, classify_state, get_web_prometheus_config
@@ -40,6 +41,9 @@ def _server(target, sensor_states=None):
         return {**base, "instance": (target.get("prometheus") or {}).get("instance"),
                 "status": "paused", "state": "PAUSED", "cpu": None, "memory": None, "disk": None,
                 "last_pull": last_pull_time(name)}
+
+    if agent_service.is_agent(target):
+        return _agent_server(target, base, sensor_states)
 
     config = get_web_prometheus_config(name)
 
@@ -72,6 +76,23 @@ def _server(target, sensor_states=None):
         "state": state,
         **values,
         "last_pull": last_pull_time(name),
+    }
+
+
+def _agent_server(target, base, sensor_states=None):
+    """เครื่อง Windows (agent): online = ได้ข้อมูลจาก agent ภายใน 3 นาที  (CPU/Memory/Disk = ขั้นถัดไป)"""
+    st = agent_service.status(base["web"])
+    sensor = (sensor_states or {}).get(base["web"])
+    return {
+        **base,
+        "kind": "agent", "os": target.get("os") or "windows",
+        "instance": None,
+        "status": "online" if st["online"] else "offline",
+        "state": "HEALTHY" if st["online"] else "DOWN",
+        "cpu": None, "memory": None, "disk": None,
+        "last_pull": st["last_seen"],
+        "thresholds": (sensor or {}).get("thresholds"), "acked": (sensor or {}).get("acked", 0),
+        "problems": [] if st["online"] else ["no data from agent"],
     }
 
 

@@ -77,6 +77,7 @@ import checks_service
 import sensors_service
 import users_service
 import retention_service
+import agent_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
@@ -312,6 +313,30 @@ def _user_error(e):
     return jsonify({"error": "validation", "fields": e.fields}), e.status
 
 
+@app.get("/api/targets/<name>/agent-setup")
+def agent_setup(name):
+    """คำสั่งติดตั้ง agent ของเครื่อง Windows นี้ (admin)  central = IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก"""
+    t = agent_service.agent_target(name)
+    if not t:
+        return jsonify({"error": "ไม่พบเครื่อง agent ชื่อนี้"}), 404
+    central = (request.args.get("central") or request.host.rsplit(":", 1)[0]).strip("[]")
+    if not re.match(r"^[A-Za-z0-9.:-]{1,253}$", central):
+        return jsonify({"error": "central ต้องเป็น IP หรือชื่อเครื่อง"}), 400
+    return jsonify({**agent_service.setup_info(t, central), "central": central,
+                    "status": agent_service.status(name)})
+
+
+@app.get("/api/targets/agent-package.zip")
+def agent_package():
+    """ชุดติดตั้ง agent Windows (สคริปต์ + central-ca.pem) ไม่มี token ในไฟล์"""
+    try:
+        data = agent_service.package_zip()
+    except OSError as e:
+        return jsonify({"error": f"ไม่พบชุดติดตั้ง: {e}"}), 500
+    return app.response_class(data, mimetype="application/zip", headers={
+        "Content-Disposition": "attachment; filename=cm-agent-windows.zip", "Cache-Control": "no-store"})
+
+
 @app.get("/api/retention")
 def retention_get():
     """อายุการเก็บข้อมูล: log (OpenSearch ISM), ประวัติปัญหา, สถานะเครื่องย้อนหลัง, metrics (อ่านอย่างเดียว)"""
@@ -497,6 +522,13 @@ def log_markers():
 def summary():
     """ข้อมูลรวมของเครื่องสำหรับแถบด้านบนของ dashboard"""
     web = request.args.get("web", "web-01")
+
+    if agent_service.agent_target(web):
+        st = agent_service.status(web)
+        return jsonify({"web": web, "kind": "agent", "status": "online" if st["online"] else "offline",
+                        "last_pull": st["last_seen"], "problem_count": get_problem_count(web),
+                        "errors_15m": get_errors_15m(web), "current_state": "HEALTHY" if st["online"] else "DOWN",
+                        "metrics": {}})
 
     current = get_current_metrics(web)
     config = get_web_prometheus_config(web)

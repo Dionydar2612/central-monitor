@@ -69,6 +69,10 @@ WILDCARDS = "*?["
 # กลุ่มของเครื่อง: path คั่นด้วย / ลึกได้ 5 ชั้น เช่น "TQ/IT" หรือ "ThaiQuest/TQ/PP/Server" (ไทยได้)
 GROUP_PART = r"[A-Za-z0-9฀-๿ _.()&+-]{1,40}"
 GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,4}}$")
+# เครื่อง Windows (agent): path ไฟล์ log เช่น C:\inetpub\logs\LogFiles\*\*.log (ห้าม , ; " ' เพราะใช้คั่น/ใส่ใน config)
+WINPATH_RE = re.compile(r"^[A-Za-z]:\\[^\x00-\x1f,;\"'<>|]{1,300}$")
+CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,99}$")
+TARGET_TYPES = ("ssh", "agent")
 
 
 def clean_group(value, errors, field="group"):
@@ -151,12 +155,66 @@ def _text(data, key):
     return value.strip() if isinstance(value, str) else ""
 
 
+def validate_agent_target(data, existing_names, editing=None):
+    """เครื่อง Windows ที่ส่งข้อมูลเองผ่าน agent (Fluent Bit) ไม่ใช้ SSH
+    puller.yaml:  type: agent / os: windows / agent: {logs: [C:\...], channels: [System, Application]}"""
+    errors = {}
+    name = editing or _text(data, "name")
+    if not NAME_RE.match(name):
+        errors["name"] = "ใช้ a-z 0-9 และ - เท่านั้น (ขึ้นต้นด้วยตัวอักษร/ตัวเลข ยาวไม่เกิน 40)"
+    elif editing is None and name in existing_names:
+        errors["name"] = "มีชื่อนี้อยู่แล้ว"
+
+    host = _text(data, "host")                      # ไม่บังคับ (ใช้แสดงในหน้าเว็บ)
+    if host and not _valid_host(host):
+        errors["host"] = "ต้องเป็น IP หรือชื่อโดเมนที่ถูกต้อง (หรือเว้นว่าง)"
+
+    agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
+    logs_in = agent.get("logs") if isinstance(agent.get("logs"), list) else []
+    logs = []
+    if len(logs_in) > MAX_LOGS_PER_TARGET:
+        errors["agent.logs"] = f"เพิ่มได้ไม่เกิน {MAX_LOGS_PER_TARGET} path"
+    for p in logs_in[:MAX_LOGS_PER_TARGET]:
+        p = str(p or "").strip()
+        if not p:
+            continue
+        if not WINPATH_RE.match(p):
+            errors["agent.logs"] = f"path ไม่ถูกต้อง: {p[:80]} (ต้องขึ้นต้นด้วยไดรฟ์ เช่น C:\\ ห้ามมี , ; \" ')"
+        logs.append(p)
+
+    ch_in = agent.get("channels") if isinstance(agent.get("channels"), list) else ["System", "Application"]
+    channels = []
+    for c in ch_in[:20]:
+        c = str(c or "").strip()
+        if not c:
+            continue
+        if not CHANNEL_RE.match(c):
+            errors["agent.channels"] = f"ชื่อ channel ไม่ถูกต้อง: {c[:60]}"
+        channels.append(c)
+
+    group = clean_group(data.get("group"), errors)
+    paused = bool(data.get("paused", False))
+    thresholds = clean_thresholds(data.get("thresholds"), errors)
+    if errors:
+        raise ValidationError(errors)
+    return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "paused": paused,
+            "thresholds": thresholds, "agent": {"logs": logs, "channels": channels}}
+
+
+def is_agent(t):
+    return isinstance(t, dict) and str(t.get("type") or "ssh") == "agent"
+
+
 def validate_target(data, existing_names, editing=None):
     """ตรวจ + จัดรูปข้อมูล target หนึ่งเครื่อง  คืน dict ที่พร้อมเขียนลง yaml
     ผิด -> raise ValidationError พร้อมข้อความรายช่อง"""
     errors = {}
     if not isinstance(data, dict):
         raise ValidationError({"_": "invalid body"})
+    if str(data.get("type") or "ssh") not in TARGET_TYPES:
+        raise ValidationError({"type": "ชนิดเครื่องต้องเป็น ssh หรือ agent"})
+    if data.get("type") == "agent":
+        return validate_agent_target(data, existing_names, editing)
 
     name = editing or _text(data, "name")
     if not NAME_RE.match(name):
@@ -271,9 +329,33 @@ def _targets_seq(doc):
     return seq
 
 
+def _agent_node(t):
+    a = CommentedMap()
+    logs = CommentedSeq()
+    logs.extend(t["agent"]["logs"])
+    a["logs"] = logs
+    ch = CommentedSeq(t["agent"]["channels"])
+    ch.fa.set_flow_style()
+    a["channels"] = ch
+    return a
+
+
 def _to_node(t):
     node = CommentedMap()
     node["name"] = t["name"]
+    if is_agent(t):
+        node["type"] = "agent"
+        node["os"] = t.get("os", "windows")
+        if t.get("host"):
+            node["host"] = t["host"]
+        if t.get("group"):
+            node["group"] = t["group"]
+        if t.get("paused"):
+            node["paused"] = True
+        if t.get("thresholds"):
+            node["thresholds"] = _thresholds_node(t["thresholds"])
+        node["agent"] = _agent_node(t)
+        return node
     node["host"] = t["host"]
     if t.get("group"):
         node["group"] = t["group"]
@@ -293,6 +375,14 @@ def _to_node(t):
 
 def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
+    if is_agent(t) or is_agent(node):
+        for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent"):
+            if key in node:
+                del node[key]
+        for k, v in _to_node(t).items():
+            if k != "name":
+                node[k] = v
+        return
     node["host"] = t["host"]
     _set_or_drop(node, "group", t.get("group") or None)
     _set_or_drop(node, "paused", True if t.get("paused") else None)
@@ -366,6 +456,8 @@ def regenerate_prometheus_targets(doc):
     out = []
     for web in doc.get("targets") or []:
         prom = web.get("prometheus") or {}
+        if is_agent(web):
+            continue                    # agent ส่ง metrics เข้ามาเอง (remote write) ไม่ต้องให้ Prometheus ไปดึง
         if web.get("name") and prom.get("job") and prom.get("instance"):
             out.append({
                 "targets": [prom["instance"]],
@@ -484,9 +576,16 @@ def public_key():
 
 def _view(t):
     t = _plain(t)
+    if is_agent(t):
+        agent = t.get("agent") or {}
+        return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
+                "group": t.get("group") or "", "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
+                "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"]},
+                "watch_services": t.get("watch_services") or []}
     ssh = t.get("ssh") or {}
     port = ssh.get("port", 22)
     return {
+        "type": "ssh",
         "name": t.get("name"),
         "host": t.get("host"),
         "group": t.get("group") or "",
@@ -507,6 +606,8 @@ def list_targets():
 
 
 def _confirm_host_key(t, payload):
+    if is_agent(t):
+        return
     fps = payload.get("trust_fingerprints")
     if fps:
         trust_host_keys(t["host"], t["ssh"]["port"], fps)
@@ -525,7 +626,8 @@ def add_target(payload):
         seq.append(_to_node(t))
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
-        request_pull(t["name"])
+        if not is_agent(t):
+            request_pull(t["name"])
     return _view(t)
 
 
@@ -542,7 +644,8 @@ def update_target(name, payload):
         _apply(node, t)
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
-        request_pull(name)
+        if not is_agent(t):
+            request_pull(name)
     return _view(t)
 
 

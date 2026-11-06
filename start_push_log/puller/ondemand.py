@@ -231,6 +231,8 @@ class _Handler(BaseHTTPRequestHandler):
         )
         if not target:
             return self._send(404, {"error": "unknown target"})
+        if str(target.get("type") or "ssh") == "agent":
+            return self._send(400, {"error": f"{name} เป็นเครื่อง Windows (agent) ไม่มี SSH - ดึงสดไม่ได้"})
 
         if url.path == "/processes":
             try:

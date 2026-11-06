@@ -1151,3 +1151,10 @@ td.bad{color:#e5484d}
 .rtnote{color:var(--mut);font-size:12px;margin-top:5px;line-height:1.4}
 .rtro{font-size:15px;font-weight:600;padding:9px 0}
 .rtwarn{margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(245,165,36,.14);color:var(--ink);font-size:13px;line-height:1.45}
+
+/* Settings: ขั้นตอนติดตั้ง agent Windows */
+.agsteps{margin:10px 0 6px 18px;padding:0;display:grid;gap:10px;font-size:13px;line-height:1.5}
+.agsteps .st-code{margin-top:6px;width:100%}
+#formCard [hidden]{display:none!important}
+#agStatus.ok{color:var(--good)}#agStatus.wr{color:#c98a00}
+.ostag{display:inline-block;font-size:10px;font-weight:700;padding:0 5px;border-radius:4px;background:#0078d4;color:#fff;vertical-align:1px;margin-left:4px}

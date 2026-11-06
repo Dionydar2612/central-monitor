@@ -55,13 +55,32 @@ async function loadTargets() {
 function renderTable() {
     const tb = $("tbody"); tb.textContent = "";
     if (!S.targets.length) {
-        tb.append(el("tr", {}, el("td", { colspan: "8", class: "empty" }, "ยังไม่มีเครื่อง กด + Add target")));
+        tb.append(el("tr", {}, el("td", { colspan: "9", class: "empty" }, "ยังไม่มีเครื่อง กด + Add target")));
         return;
     }
     S.targets.forEach(t => {
+        if (t.type === "agent") {
+            const n = (t.agent.logs || []).length;
+            tb.append(el("tr", {},
+                el("td", {}, el("b", {}, t.name)),
+                el("td", {}, "Windows (agent)"),
+                el("td", {}, t.group || "-"),
+                el("td", {}, t.host || "-"),
+                el("td", {}, "-"),
+                el("td", {}, `${(t.agent.channels || []).length} event log · ${n} file`),
+                el("td", {}, "Fluent Bit"),
+                el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
+                el("td", {}, el("div", { class: "st-actions" },
+                    el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
+                    el("button", { class: "st-btn sm", onclick: () => openForm(t) }, "Edit"),
+                    el("button", { class: "st-btn sm", onclick: () => { openForm(t); $("agCentral").focus(); } }, "Install command"),
+                    el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete")))));
+            return;
+        }
         const port = t.ssh.port && Number(t.ssh.port) !== 22 ? ":" + t.ssh.port : "";
         tb.append(el("tr", {},
             el("td", {}, el("b", {}, t.name)),
+            el("td", {}, "Linux (SSH)"),
             el("td", {}, t.group || "-"),
             el("td", {}, t.host + port),
             el("td", {}, t.ssh.user || "-"),
@@ -117,8 +136,60 @@ function logRow(item) {
         el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"));
 }
 
+/* ชนิดเครื่อง: ssh = แสดงช่อง SSH/Prometheus/log path แบบ Linux · agent = ช่อง Windows + คำสั่งติดตั้ง */
+function setType(type) {
+    $("f_type").value = type;
+    const agent = type === "agent";
+    document.querySelectorAll("#formCard .ssh-only").forEach(n => { n.hidden = agent; });
+    document.querySelectorAll("#formCard .agent-only").forEach(n => { n.hidden = !agent; });
+    $("f_type_hint").textContent = agent ? "เครื่องส่งข้อมูลเข้ามาเอง (ไม่ต้องเปิด SSH) · Host ไม่บังคับ" : "central เข้าไปดึง log ทาง SSH";
+    $("f_host").placeholder = agent ? "(ไม่บังคับ) 10.0.0.21" : "10.0.10.13";
+}
+
+function agentCentralGuess() {
+    try { const v = localStorage.getItem("cm.agentCentral"); if (v) return v; } catch (e) { /* ignore */ }
+    return location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "" : location.hostname;
+}
+
+async function makeAgentCommand() {
+    const name = S.editing;
+    if (!name) { $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วกด Install command ที่แถวของเครื่องนี้"; return; }
+    const central = $("agCentral").value.trim();
+    try { localStorage.setItem("cm.agentCentral", central); } catch (e) { /* ignore */ }
+    try {
+        const d = await api("GET", `/api/targets/${encodeURIComponent(name)}/agent-setup${central ? "?central=" + encodeURIComponent(central) : ""}`);
+        $("agCmd").value = d.command;
+        $("agPort").textContent = d.port;
+        if (!$("agCentral").value) $("agCentral").value = d.central;
+        const st = d.status || {};
+        const warn = [!d.token_set && "ยังไม่มี CENTRAL_AGENT_TOKEN ใน docker/.env (รัน cm-update)",
+                      !d.ca_available && "ยังไม่มีใบรับรอง keys/agent-tls (รัน cm-update)"].filter(Boolean);
+        $("agStatus").textContent = (st.online ? `✓ agent ส่งข้อมูลอยู่ · last seen ${new Date(st.last_seen).toLocaleString("en-GB")}`
+            : st.last_seen ? `⚠ ไม่ได้รับข้อมูลจาก agent ตั้งแต่ ${new Date(st.last_seen).toLocaleString("en-GB")}`
+            : "ยังไม่ได้รับข้อมูลจาก agent (ยังไม่ได้ติดตั้ง หรือเครื่องต่อมาไม่ได้)") + (warn.length ? " · " + warn.join(" · ") : "");
+        $("agStatus").className = st.online ? "ok" : warn.length ? "wr" : "";
+    } catch (e) { if (e.message !== "auth") $("agStatus").textContent = "สร้างคำสั่งไม่สำเร็จ: " + e.message; }
+}
+
 function openForm(t) {
     S.editing = t ? t.name : null; S.scanned = []; S.hostKeyKnown = !!(t && t.host_key_known);
+    setType(t ? (t.type || "ssh") : "ssh");
+    $("f_type").disabled = !!t;
+    $("agCmd").value = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
+    $("agCentral").value = agentCentralGuess();
+    $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
+    $("a_logs").value = t && t.agent ? (t.agent.logs || []).join("\n") : "";
+    if (t && t.type === "agent") {
+        $("formTitle").textContent = `Edit target: ${t.name}`;
+        $("f_name").value = t.name; $("f_name").disabled = true;
+        $("f_group").value = t.group || ""; $("f_paused").checked = !!t.paused; $("f_host").value = t.host || "";
+        TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => { $(`th_${k}_${lv}`).value = t.thresholds && t.thresholds[k] ? (t.thresholds[k][lv] ?? "") : ""; }));
+        clearErrors(); say("formMsg", "");
+        $("formCard").hidden = false;
+        $("formCard").scrollIntoView({ behavior: "smooth", block: "start" });
+        makeAgentCommand();
+        return;
+    }
     $("formTitle").textContent = t ? `Edit target: ${t.name}` : "Add target";
     $("f_name").value = t ? t.name : ""; $("f_name").disabled = !!t;
     $("f_group").value = t ? (t.group || "") : "";
@@ -128,7 +199,7 @@ function openForm(t) {
         $(`th_${k}_${lv}`).value = v ?? "";
     }));
     $("f_host").value = t ? t.host : "";
-    $("f_port").value = t ? (t.ssh.port || 22) : 22;
+    $("f_port").value = t ? ((t.ssh && t.ssh.port) || 22) : 22;
     $("f_user").value = t ? t.ssh.user : "central-pull";
     $("f_job").value = t ? (t.prometheus.job || "") : "";
     $("f_inst").value = t ? (t.prometheus.instance || "") : "";
@@ -166,6 +237,20 @@ function showErrors(fields) {
 }
 
 function readForm() {
+    if ($("f_type").value === "agent") {
+        return {
+            type: "agent",
+            name: $("f_name").value.trim(),
+            group: $("f_group").value.trim(),
+            paused: $("f_paused").checked,
+            host: $("f_host").value.trim(),
+            thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
+            agent: {
+                logs: $("a_logs").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
+                channels: $("a_channels").value.split(",").map(s => s.trim()).filter(Boolean),
+            },
+        };
+    }
     const logs = [...$("logs").children].map(r => ({
         name: r.querySelector('[data-k="name"]').value.trim(),
         path: r.querySelector('[data-k="path"]').value.trim(),
@@ -265,6 +350,7 @@ async function deployNow() {
 async function save() {
     clearErrors(); say("formMsg", "");
     const body = readForm();
+    if (body.type === "agent") return saveAgent(body);
     const trust = S.scanned.length && $("hkTrust") && $("hkTrust").checked;
     if (trust) body.trust_fingerprints = S.scanned.map(k => k.fingerprint);
     else if (!S.hostKeyKnown && !confirm("ยังไม่ได้เก็บ SSH host key ของเครื่องนี้\npuller จะดึง log ไม่ได้จนกว่าจะเก็บ host key\n\nบันทึกต่อไหม?")) return;
@@ -280,6 +366,26 @@ async function save() {
         else if (dep) say("listMsg", `บันทึก ${name} แล้ว แต่วาง public key ไม่สำเร็จ: ${dep.message} — กด Deploy key ที่แถวของเครื่องนี้เพื่อลองใหม่ หรือวางเองตามคำสั่งในหน้า Edit`, "bad");
         else say("listMsg", `บันทึก ${name} แล้ว — puller จะดึงเครื่องนี้ภายในไม่กี่วินาที (Prometheus เห็นเครื่องใหม่ทันที)`, "ok");
         window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+        if (e.message === "auth") return;
+        const general = showErrors(e.fields);
+        say("formMsg", general || (e.fields ? "กรุณาแก้ช่องที่มีข้อความสีแดง" : "บันทึกไม่สำเร็จ: " + e.message), "bad");
+    } finally { b.disabled = false; }
+}
+
+/* บันทึกเครื่อง Windows (agent) แล้วเปิดฟอร์มค้างไว้เพื่อแสดงคำสั่งติดตั้ง */
+async function saveAgent(body) {
+    const b = $("saveBtn"); b.disabled = true;
+    try {
+        if (S.editing) await api("PUT", "/api/targets/" + encodeURIComponent(S.editing), body);
+        else await api("POST", "/api/targets", body);
+        S.editing = body.name || S.editing;
+        $("f_name").disabled = true; $("f_type").disabled = true;
+        $("formTitle").textContent = `Edit target: ${S.editing}`;
+        say("formMsg", `บันทึก ${S.editing} แล้ว — ติดตั้ง agent ตามขั้นตอนด้านบน`, "ok");
+        await loadTargets();
+        await makeAgentCommand();
+        $("agCmd").scrollIntoView({ behavior: "smooth", block: "center" });
     } catch (e) {
         if (e.message === "auth") return;
         const general = showErrors(e.fields);
@@ -515,6 +621,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const SHOW_CHECKS = false;
     $("checksCard").hidden = !SHOW_CHECKS;
     $("r_save").onclick = saveRetention;
+    $("f_type").addEventListener("change", e => setType(e.target.value));
+    $("agMake").onclick = makeAgentCommand;
+    $("agCopy").onclick = async () => {
+        const t = $("agCmd"); if (!t.value) return; t.select();
+        try { await navigator.clipboard.writeText(t.value); } catch (e) { document.execCommand("copy"); }
+        $("agCopyMsg").textContent = "คัดลอกแล้ว"; setTimeout(() => { $("agCopyMsg").textContent = ""; }, 2500);
+    };
     ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
     loadUser(); loadTargets(); loadUsers(); loadRetention();
     if (SHOW_CHECKS) loadChecks();

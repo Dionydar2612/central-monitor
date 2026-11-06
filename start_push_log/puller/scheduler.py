@@ -118,7 +118,8 @@ def run_once(config, state, only=None, snapshot=True):
         snapshot = True
 
     paused = [t["name"] for t in targets if t.get("paused")]
-    targets = [t for t in targets if not t.get("paused")]
+    # type: agent (เครื่อง Windows) ส่งข้อมูลเข้ามาเองผ่าน central-agent-gw -> ไม่ต้อง SSH
+    targets = [t for t in targets if not t.get("paused") and str(t.get("type") or "ssh") != "agent"]
 
     label = "logs + status" if snapshot else "logs"
     print(f"\n[CYCLE] {label} targets={len(targets)} parallel={opts['parallel']}"

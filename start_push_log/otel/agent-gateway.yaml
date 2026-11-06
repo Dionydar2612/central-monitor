@@ -1,0 +1,99 @@
+# =====================================================================
+# agent-gateway.yaml - รับข้อมูลจาก agent บนเครื่อง Windows (Fluent Bit) ทาง OTLP/HTTPS
+# =====================================================================
+# รันเป็น container แยก (central-agent-gw) ไม่ปนกับ otel ตัวที่อ่าน log ของ puller
+#   -> ใบรับรอง/พอร์ตมีปัญหา ไม่กระทบ log ของเครื่อง Linux
+#
+#   Fluent Bit ──HTTPS :4318 + "Authorization: Bearer <CENTRAL_AGENT_TOKEN>"──▶ ที่นี่
+#     /v1/logs    -> จัดรูปให้เหมือน log ที่ puller ดึงมา -> OpenSearch (index เดียวกัน logs-central-*)
+#     /v1/metrics -> Prometheus (remote write) ใช้เป็นสัญญาณ "agent ยังทำงานอยู่" (fluentbit_uptime{cm_web=...})
+#
+# log จาก agent (body เป็น map ที่ cm-agent.lua สร้าง): {cm_web, source, file, level, message}
+#   resource["log.source"] = source       -> คอลัมน์ Type ในหน้าเว็บ (eventlog / iis / application)
+#   attributes["log.file.name"] = agent__<เครื่อง>__<source>__<file>
+#                                          -> หน้าเว็บรู้ว่าเป็นของเครื่องไหนแบบเดียวกับไฟล์ของ puller
+#   body = message ("<เวลา> [ERROR] ...")  -> หน้าเว็บอ่านระดับจาก [ERROR]/[WARN]
+# =====================================================================
+
+extensions:
+  bearertokenauth/agents:
+    scheme: Bearer
+    token: ${env:CENTRAL_AGENT_TOKEN}
+  basicauth/opensearch:
+    client_auth:
+      username: admin
+      password: ${env:OPENSEARCH_ADMIN_PASSWORD}
+
+receivers:
+  otlp/agents:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth/agents
+        tls:
+          cert_file: /run/agent-tls/cert.pem
+          key_file: /run/agent-tls/key.pem
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+
+  transform/agents:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        conditions:
+          - IsMap(body) and body["cm_web"] != nil
+        statements:
+          - set(resource.attributes["log.source"], body["source"])
+          - set(resource.attributes["cm.web"], body["cm_web"])
+          - set(resource.attributes["service.name"], "central-agent")
+          - set(attributes["log.file.name"], Concat(["agent", body["cm_web"], body["source"], body["file"]], "__"))
+          - set(severity_text, body["level"])
+          - set(body, body["message"])
+
+  # log ที่ไม่ได้มาจาก cm-agent.lua (ไม่มีชื่อเครื่อง) -> ทิ้ง
+  filter/agents:
+    error_mode: ignore
+    logs:
+      log_record:
+        - attributes["log.file.name"] == nil
+
+  batch:
+    timeout: 5s
+    send_batch_size: 200
+
+exporters:
+  opensearch:
+    http:
+      endpoint: https://opensearch:9200
+      auth:
+        authenticator: basicauth/opensearch
+      tls:
+        insecure_skip_verify: true
+    logs_index: logs-central-%{yyyy.MM.dd.HH}
+    logs_index_fallback: logs-central
+    logs_index_time_format: yyyy.MM.dd.HH
+
+  prometheusremotewrite:
+    endpoint: ${env:PROMETHEUS_RW_URL}
+    resource_to_telemetry_conversion:
+      enabled: true
+    tls:
+      insecure_skip_verify: true
+
+service:
+  extensions:
+    - bearertokenauth/agents
+    - basicauth/opensearch
+  pipelines:
+    logs/agents:
+      receivers: [otlp/agents]
+      processors: [memory_limiter, transform/agents, filter/agents, batch]
+      exporters: [opensearch]
+    metrics/agents:
+      receivers: [otlp/agents]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]

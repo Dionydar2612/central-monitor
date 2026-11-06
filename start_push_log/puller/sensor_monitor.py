@@ -314,7 +314,9 @@ def run_once(previous):
     except Exception:
         interval = 3600
     checkpoints = _read(CHECKPOINT_FILE, {})
-    targets = [t for t in config.get("targets") or [] if isinstance(t, dict) and t.get("name")]
+    # เครื่อง agent (Windows) ยังไม่มี sensor (ขั้นถัดไป: metrics ของ Windows) -> ข้าม
+    targets = [t for t in config.get("targets") or []
+               if isinstance(t, dict) and t.get("name") and str(t.get("type") or "ssh") != "agent"]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         sensors = [s for group in pool.map(

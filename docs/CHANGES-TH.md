@@ -37,6 +37,23 @@
 
 
 
+
+## เครื่อง Windows ผ่าน agent (Fluent Bit) - ขั้นที่ 1: สถานะ + log
+
+คู่มือทีละขั้น: docs/WINDOWS-AGENT-TH.md
+- Settings > Add target > ชนิด "Windows (agent / Fluent Bit)": ระบุ Event Log channels + path ไฟล์ log
+  บันทึกแล้วมีปุ่มดาวน์โหลดชุดติดตั้ง (zip) + คำสั่งติดตั้งที่ใส่ token ให้แล้ว
+- agent/windows/install-fluentbit.ps1: ติดตั้ง Fluent Bit เป็น service `cm-agent` ส่งเฉพาะ ERROR/WARN
+  (Event Log Critical/Error/Warning, ไฟล์ log, IIS เฉพาะ HTTP 5xx) + สัญญาณ "ยังทำงาน" ทุก 30 วินาที
+  central ล่ม -> พักไว้บนดิสก์แล้วส่งตาม
+- central-agent-gw (container ใหม่, พอร์ต 4318 HTTPS + token): log -> OpenSearch index เดิม, สัญญาณ -> Prometheus (remote write)
+  แยกจาก otel เดิม -> ถ้ามีปัญหาไม่กระทบ log ของเครื่อง Linux
+- install.sh สร้าง CENTRAL_AGENT_TOKEN + ใบรับรอง keys/agent-tls ให้ (make-cert.sh agent <IP/ชื่อ> สร้างใหม่ได้)
+- Prometheus ที่มากับ stack เปิด --web.enable-remote-write-receiver
+- หน้า Dashboard: เครื่อง Windows มีป้าย Win · สถานะ OK/Down จากสัญญาณของ agent · Last pull = เวลาที่ได้ข้อมูลล่าสุด
+  log ของ Windows แสดงทั้งหมด (ยังไม่มี metrics ให้ผูก) · puller / sensor ข้ามเครื่องชนิด agent
+- ยังไม่มี (ขั้นที่ 2): CPU / Memory / Disk / Service / Process ของ Windows
+
 ## หน้าแรกแสดงแค่ WEB status + Logs ทุกเครื่อง · ตั้งอายุข้อมูลจากหน้า Settings
 
 - เปิดหน้าแรกเห็นแค่ WEB status และ Logs · คลิกเครื่องแล้วค่อยโหลด KPI / กราฟ / Service / Process ของเครื่องนั้น

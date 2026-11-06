@@ -210,8 +210,15 @@ def _metric_minutes(web, t0, t1):
     return minutes
 
 
+def _is_agent(web):
+    return any(t.get("name") == web and str(t.get("type") or "ssh") == "agent" for t in load_web_targets())
+
+
 def _with_metrics(entries, web):
-    """เอาเฉพาะ log ที่มี metrics ณ เวลานั้น (Prometheus ล่ม/ถามไม่ได้ -> แสดงทั้งหมด ดีกว่าหายหมด)"""
+    """เอาเฉพาะ log ที่มี metrics ณ เวลานั้น (Prometheus ล่ม/ถามไม่ได้ -> แสดงทั้งหมด ดีกว่าหายหมด)
+    เครื่อง Windows (agent) ยังไม่มี metrics (ขั้นถัดไป) -> แสดงทุก log"""
+    if _is_agent(web):
+        return entries
     stamps = [e["_ts"] for e in entries if e.get("_ts")]
     if not stamps:
         return []

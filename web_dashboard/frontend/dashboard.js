@@ -935,7 +935,7 @@ function serverRows(list, cur) {
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
-            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b>${w.os === "windows" ? ` <span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent (Fluent Bit)">Win</span>` : ""}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
 

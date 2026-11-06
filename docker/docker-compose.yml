@@ -146,9 +146,16 @@ services:
     command:
       - /bin/sh
       - -c
-      - "mkdir -p /data/buffer/.otel-storage && chown -R 10001:10001 /data/buffer/.otel-storage && chmod 755 /data/buffer"
+      - >-
+        mkdir -p /data/buffer/.otel-storage && chown -R 10001:10001 /data/buffer/.otel-storage && chmod 755 /data/buffer &&
+        if [ -f /agent-src/cert.pem ] && [ -f /agent-src/key.pem ]; then
+        cp /agent-src/cert.pem /agent-src/key.pem /agent-tls/ && chown 10001:10001 /agent-tls/*.pem && chmod 400 /agent-tls/key.pem;
+        else echo "[WARN] keys/agent-tls/cert.pem ไม่มี -> central-agent-gw เริ่มไม่ได้ (รัน install.sh --keep)"; fi
     volumes:
       - ../data/buffer:/data/buffer
+      # ใบรับรองของ agent-gateway: คัดลอกจาก keys/agent-tls ให้ uid ของ otel (10001) อ่านได้
+      - ../keys/agent-tls:/agent-src:ro
+      - agent-tls:/agent-tls
     restart: "no"
     logging: *default-logging
 
@@ -178,6 +185,42 @@ services:
       - .env          # ใช้ OPENSEARCH_ADMIN_PASSWORD ใน otelcol.yaml
     environment:
       TZ: Asia/Bangkok
+    restart: unless-stopped
+    logging: *default-logging
+
+
+  # ---------------------------------------------------------------
+  # central-agent-gw : รับ log + สัญญาณสถานะจาก agent บนเครื่อง Windows (Fluent Bit)
+  #   HTTPS :4318 (ใบรับรอง keys/agent-tls) + token CENTRAL_AGENT_TOKEN ใน .env
+  #   log -> OpenSearch (index เดียวกับ log ของ puller)  metrics -> Prometheus (remote write)
+  # ตั้งค่า: start_push_log/otel/agent-gateway.yaml  · ติดตั้งฝั่ง Windows: agent/windows/
+  # ไม่มีเครื่อง Windows ก็ปล่อยไว้ได้ (ไม่มีข้อมูลเข้า) หรือปิดพอร์ตด้วย CENTRAL_AGENT_BIND=127.0.0.1
+  # ---------------------------------------------------------------
+  central-agent-gw:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    container_name: central-agent-gw
+    hostname: agent-gw
+    command:
+      - --config=/etc/otelcol/config.yaml
+    depends_on:
+      opensearch:
+        condition: service_started
+      buffer-init:
+        condition: service_completed_successfully
+    networks:
+      - central-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Prometheus บน host (โหมด external)
+    ports:
+      - "${CENTRAL_AGENT_BIND:-0.0.0.0}:${CENTRAL_AGENT_PORT:-4318}:4318"
+    volumes:
+      - ../start_push_log/otel/agent-gateway.yaml:/etc/otelcol/config.yaml:ro
+      - agent-tls:/run/agent-tls:ro
+    env_file:
+      - .env          # CENTRAL_AGENT_TOKEN, OPENSEARCH_ADMIN_PASSWORD
+    environment:
+      TZ: Asia/Bangkok
+      PROMETHEUS_RW_URL: ${PROMETHEUS_URL:-http://prometheus:9090}/api/v1/write
     restart: unless-stopped
     logging: *default-logging
 
@@ -279,6 +322,9 @@ services:
       # เฉพาะ 2 ไฟล์ (ไม่ mount private key): known_hosts เขียนได้ (เก็บ host key), public key อ่านอย่างเดียว
       - ../keys/known_hosts:/run/keys/known_hosts
       - ../keys/central_ed25519.pub:/run/keys/central_ed25519.pub:ro
+      # ชุดติดตั้ง agent Windows (หน้า Settings ดาวน์โหลดเป็น zip) + ใบรับรองที่ agent ใช้ตรวจ central
+      - ../agent:/app/agent:ro
+      - ../keys/agent-tls:/run/agent-tls:ro
       # (ไม่บังคับ) HTTPS: มี cert.pem + key.pem ในโฟลเดอร์นี้ -> gunicorn เปิด https เอง (gunicorn.conf.py)
       #   สร้างแบบ self-signed: ./scripts/make-cert.sh
       - ../keys/tls:/run/tls:ro
@@ -310,6 +356,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver   # รับสัญญาณสถานะจาก agent Windows (central-agent-gw)
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}   # อายุ metrics (docker/.env)
     depends_on:
       - node-exporter
@@ -391,3 +438,7 @@ volumes:
   # ข้อมูล time-series ของ Prometheus (เก็บ 7 วัน)
   prometheus-data:
     name: central-monitor_prometheus-data
+
+  # ใบรับรองของ central-agent-gw (คัดลอกจาก keys/agent-tls โดย buffer-init)
+  agent-tls:
+    name: central-monitor_agent-tls

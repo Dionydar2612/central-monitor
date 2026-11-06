@@ -46,6 +46,8 @@ def generate_targets():
     targets = []
 
     for web in config.get("targets", []):
+        if str(web.get("type") or "ssh") == "agent":
+            continue          # agent ส่ง metrics เข้ามาเอง (remote write)
         name = web.get("name")
         prometheus = web.get("prometheus", {})
 

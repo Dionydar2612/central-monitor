@@ -157,6 +157,16 @@ echo "สร้าง key ใหม่แล้ว ($KEY_COMMENT)"
 echo "เครื่อง target ที่เคยวาง key เก่าไว้ ต้องวาง key ใหม่ที่หน้า Settings (ปุ่ม Deploy key) หลังติดตั้งเสร็จ"
 fi
 [ -f keys/known_hosts ] || run_o touch keys/known_hosts
+
+# --- agent Windows (Fluent Bit): token + ใบรับรองของ central-agent-gw (สร้างครั้งเดียว คงไว้ทุกครั้งที่อัปเดต) ---
+if ! grep -q '^CENTRAL_AGENT_TOKEN=.\+' docker/.env; then
+  sed -i '/^CENTRAL_AGENT_TOKEN=/d' docker/.env
+  echo "CENTRAL_AGENT_TOKEN=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')" >> docker/.env
+  echo "สร้าง CENTRAL_AGENT_TOKEN ใน docker/.env (agent Windows ใช้ส่งข้อมูลเข้า :4318)"
+fi
+if [ ! -f keys/agent-tls/cert.pem ] || [ ! -f keys/agent-tls/key.pem ]; then
+  run_o bash scripts/make-cert.sh agent >/dev/null && echo "สร้างใบรับรอง keys/agent-tls/ (agent Windows ใช้ตรวจ central)"
+fi
 [ -f data/prometheus/web-nodes.json ] || printf '[]\n' | run_o tee data/prometheus/web-nodes.json >/dev/null
 
 if [ "$START" -eq 0 ]; then
@@ -172,6 +182,8 @@ WAS_RUNNING="$( cd docker && $DOCKER compose ps -q central-api 2>/dev/null || tr
 if [ -n "$WAS_RUNNING" ]; then
   # central-api mount ไฟล์ .pub เดี่ยว ๆ - สร้างไฟล์ใหม่แล้ว container เก่ายังเห็นไฟล์เดิม ต้องสร้าง container ใหม่
   ( cd docker && $DOCKER compose up -d --force-recreate --no-deps central-api central-puller )
+  # ใบรับรองของ agent อาจเปลี่ยน -> คัดลอกใหม่แล้วเริ่ม gateway ใหม่
+  ( cd docker && $DOCKER compose up -d --force-recreate buffer-init central-agent-gw ) || true
 fi
 
 # --- 7) ISM policy ---------------------------------------------------
