@@ -4,7 +4,7 @@
 
 | เรื่อง | เปลี่ยน |
 |---|---|
-| ตัวเก็บ metrics ของ Windows | `install-fluentbit.ps1` ติดตั้ง **windows_exporter 0.32.1** (MSI) ฟังเฉพาะ `127.0.0.1:9182` ไม่เปิด firewall, ปิด process cmdline · Fluent Bit อ่านด้วย `prometheus_scrape` แล้วส่ง HTTPS + token · ติดตั้งไม่ได้ -> ใช้ตัวในตัว Fluent Bit อัตโนมัติ · พารามิเตอร์ใหม่ `-ExporterMsi`, `-ExporterVersion`, `-NoExporter` · `uninstall-fluentbit.ps1` ถอน exporter ด้วย (`-KeepExporter` = เก็บไว้) |
+| ตัวเก็บ metrics ของ Windows | `install-fluentbit.ps1` ติดตั้ง **windows_exporter 0.32.1** เป็น service `cm-exporter` (ไฟล์ .exe ไม่ใช้ MSI, ทดลองเก็บก่อนเลือกชุด collector) ฟังเฉพาะ `127.0.0.1:9182` ไม่เปิด firewall, ปิด process cmdline · Fluent Bit อ่านด้วย `prometheus_scrape` แล้วส่ง HTTPS + token · ติดตั้งไม่ได้ -> ใช้ตัวในตัว Fluent Bit อัตโนมัติ · พารามิเตอร์ใหม่ `-ExporterExe`, `-ExporterVersion`, `-NoExporter` · `uninstall-fluentbit.ps1` ถอน exporter ด้วย (`-KeepExporter` = เก็บไว้) |
 | ชื่อ metric | backend + sensor รองรับทั้งชื่อใหม่ (`windows_cpu_time_seconds_total`, `windows_memory_physical_total_bytes`, label `service`) และชื่อเก่า |
 | Ping | container ใหม่ `blackbox` (blackbox_exporter 0.28.0, icmp) + Prometheus job `ping` จาก `data/prometheus/ping.json` (puller สร้างจากทุกเครื่องที่มี host) -> latency / packet loss |
 | Sensor ใหม่ | Available RAM (Windows), Disk latency, Packet loss, Network latency, Service สำคัญของ Windows, Bottleneck CPU / Memory / Disk / Network |

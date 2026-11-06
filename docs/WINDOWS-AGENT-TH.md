@@ -60,7 +60,7 @@ Settings > **+ Add target**
 ## ขั้นที่ 2: ติดตั้งบนเครื่อง Windows
 
 1. กด **Download installer (zip)** แล้วคัดลอกไปที่เครื่อง Windows แตกไฟล์
-   - เครื่องออกอินเทอร์เน็ตไม่ได้: วาง `windows_exporter-0.32.1-amd64.msi`
+   - เครื่องออกอินเทอร์เน็ตไม่ได้: วาง `windows_exporter-0.32.1-amd64.exe`
      (https://github.com/prometheus-community/windows_exporter/releases/tag/v0.32.1) และ `fluent-bit-5.1.5-win64.zip` จาก
      https://packages.fluentbit.io/windows/ มาวางในโฟลเดอร์เดียวกัน
 2. ใส่ IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก แล้วกด **Make command** -> **Copy command**
@@ -98,7 +98,7 @@ Settings > **+ Add target**
 | เครื่องขึ้น Down แต่ log มา | Prometheus ไม่รับ remote write (ดู "Prometheus ของเครื่อง host" ด้านบน) |
 | central ไม่รับ log | `docker logs central-agent-gw --tail 50` |
 | สถานะ agent บน Windows | `Get-Service cm-agent` · `Restart-Service cm-agent` |
-| metrics ไม่ครบ / Unavailable | `Get-Service windows_exporter` · เปิด `http://127.0.0.1:9182/metrics` บนเครื่องนั้น · รันสคริปต์ติดตั้งซ้ำ |
+| metrics ไม่ครบ / Unavailable | `Get-Service cm-exporter` · log `C:\ProgramData\central-monitor-agent\windows_exporter.log` · เปิด `http://127.0.0.1:9182/metrics` บนเครื่องนั้น · รันสคริปต์ติดตั้งซ้ำ |
 | Packet loss 100% | Windows Firewall บล็อก ping: เปิดกฎ "File and Printer Sharing (Echo Request - ICMPv4-In)" |
 
 ถอนการติดตั้ง: `powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge]`

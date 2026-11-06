@@ -15,7 +15,7 @@
   - ต่อออกไปที่ <central>:4318 ได้ (TCP)
   - ถ้าเครื่องออกอินเทอร์เน็ตไม่ได้ วางไฟล์เหล่านี้ไว้ข้างสคริปต์
       fluent-bit-<version>-win64.zip       https://packages.fluentbit.io/windows/
-      windows_exporter-0.32.1-amd64.msi   https://github.com/prometheus-community/windows_exporter/releases/tag/v0.32.1
+      windows_exporter-0.32.1-amd64.exe   https://github.com/prometheus-community/windows_exporter/releases/tag/v0.32.1
     ไม่ต้องการ windows_exporter: ใส่ -NoExporter (ใช้ตัวเก็บในตัว Fluent Bit ข้อมูลน้อยกว่า)
 
 ติดตั้ง (PowerShell แบบ Run as Administrator)

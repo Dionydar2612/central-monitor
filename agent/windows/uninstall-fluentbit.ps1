@@ -7,6 +7,12 @@
 param([switch] $Purge, [switch] $KeepExporter)
 $ErrorActionPreference = "Stop"
 $ServiceName = "cm-agent"
+# windows_exporter ที่ติดตั้งโดยสคริปต์นี้ (service cm-exporter) ถูกลบพร้อม agent เสมอ
+if (Get-Service -Name "cm-exporter" -ErrorAction SilentlyContinue) {
+    Stop-Service "cm-exporter" -Force -ErrorAction SilentlyContinue
+    sc.exe delete "cm-exporter" | Out-Null
+    Write-Host "ลบ service cm-exporter แล้ว"
+}
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
     sc.exe delete $ServiceName | Out-Null

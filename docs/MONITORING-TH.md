@@ -22,14 +22,19 @@ Ping (ทุกเครื่องที่มี host)
 
 ## 2. ตั้งค่า windows_exporter (สคริปต์ install-fluentbit.ps1 ทำให้)
 
+ใช้ไฟล์ `windows_exporter-0.32.1-amd64.exe` (ไม่ใช้ MSI) คัดลอกไปที่ `C:\Program Files\central-monitor-agent\windows_exporter.exe`
+แล้วสร้าง Windows service **cm-exporter**:
 ```
-msiexec /i windows_exporter-0.32.1-amd64.msi /qn
-  ENABLED_COLLECTORS=cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update
-  LISTEN_ADDR=127.0.0.1 LISTEN_PORT=9182
-  EXTRA_FLAGS="--no-collector.process.cmdline" REMOVE=FirewallException
+windows_exporter.exe --web.listen-address=127.0.0.1:9182
+  --collectors.enabled=cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update
+  --no-collector.process.cmdline
+  --log.file="C:\ProgramData\central-monitor-agent\windows_exporter.log" --log.rotation.max-size=10
 ```
-- exporter ไม่ตอบใน 40 วินาที -> ลองชุดพื้นฐาน (ไม่มี `diskdrive`, `gpu`, `dmi`, `license`, `update`) -> ยังไม่ได้ -> ใช้ตัวเก็บในตัว Fluent Bit (`windows_exporter_metrics`) แทน
-- ไม่มีอินเทอร์เน็ต: วาง `windows_exporter-0.32.1-amd64.msi` ข้างสคริปต์ หรือ `-ExporterMsi <path>` · ไม่ต้องการ exporter: `-NoExporter`
+- ก่อนสร้าง service สคริปต์ทดลองเก็บ 1 ครั้ง (`--scrape.stdout`) แล้วเลือกชุด collector ที่ใช้ได้กับเครื่องนั้น:
+  ชุดเต็ม -> ชุดพื้นฐาน (ไม่มี `diskdrive`, `gpu`, `dmi`, `license`, `update`) -> ชุดเล็ก -> ไม่ได้เลย = ใช้ตัวเก็บในตัว Fluent Bit แทน
+- ถอน windows_exporter ที่เคยติดตั้งจาก MSI ออก (ใช้พอร์ต 9182 เดียวกัน) · พอร์ต 9182 ถูกโปรแกรมอื่นใช้ -> บอกชื่อโปรแกรม
+- ไม่มีอินเทอร์เน็ต: วาง `windows_exporter-0.32.1-amd64.exe` ข้างสคริปต์ หรือ `-ExporterExe <path>` · ไม่ต้องการ exporter: `-NoExporter`
+- ตรวจ: `Get-Service cm-exporter` · log `C:\ProgramData\central-monitor-agent\windows_exporter.log`
 - Fluent Bit อ่าน: `[INPUT] Name prometheus_scrape · Host 127.0.0.1 · Port 9182 · Scrape_Interval 15s`
 
 ## 3. Metrics ที่ใช้ (Windows)

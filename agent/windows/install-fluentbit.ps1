@@ -12,8 +12,9 @@
       -Logs "C:\inetpub\logs\LogFiles\*\*.log;D:\app\logs\*.log" -Channels "System,Application"
 
 .NOTES
-  - ไม่มีอินเทอร์เน็ต: วางไฟล์ fluent-bit-<version>-win64.zip และ windows_exporter-<version>-amd64.msi
-    ไว้ข้างสคริปต์ หรือระบุ -ZipPath / -ExporterMsi
+  - ไม่มีอินเทอร์เน็ต: วางไฟล์ fluent-bit-<version>-win64.zip และ windows_exporter-<version>-amd64.exe
+    ไว้ข้างสคริปต์ หรือระบุ -ZipPath / -ExporterExe
+  - windows_exporter ถูกติดตั้งเป็น service "cm-exporter" (ไม่ใช้ MSI) log: C:\ProgramData\central-monitor-agent\windows_exporter.log
   - ติดตั้ง windows_exporter ไม่ได้ -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit แทนอัตโนมัติ (ข้อมูลน้อยกว่า)
   - รันซ้ำได้ (อัปเดต config / เวอร์ชัน) ข้อมูลตำแหน่งที่อ่านแล้วถูกเก็บไว้ ไม่ส่งซ้ำ
   - ถอนการติดตั้ง: uninstall-fluentbit.ps1
@@ -31,7 +32,7 @@ param(
     [string] $CaFile = "",                                      # ใบรับรองของ central (ปริยาย: central-ca.pem ข้างสคริปต์)
     [switch] $SkipCertCheck,                                    # ไม่ตรวจใบรับรอง (ยังเข้ารหัส) ใช้เมื่อชื่อ/IP ไม่ตรงกับใบรับรอง
     [string] $ExporterVersion = "0.32.1",                       # เวอร์ชัน windows_exporter
-    [string] $ExporterMsi = "",                                 # ไฟล์ .msi ของ windows_exporter (ใช้แทนการดาวน์โหลด)
+    [string] $ExporterExe = "",                                 # ไฟล์ windows_exporter-<version>-amd64.exe (ใช้แทนการดาวน์โหลด)
     [switch] $NoExporter                                        # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
 )
 
@@ -93,17 +94,23 @@ Remove-Item $tmp -Recurse -Force
 $FluentExe = Join-Path $InstallDir "bin\fluent-bit.exe"
 
 # ---------------------------------------------------------------- 3) windows_exporter (metrics)
-# ฟังเฉพาะ 127.0.0.1 (ไม่เปิด firewall) -> มีแค่ Fluent Bit บนเครื่องนี้ที่อ่านได้
-# collector: ชุดเต็มก่อน ถ้า exporter ไม่ตอบ ลองชุดพื้นฐาน ถ้ายังไม่ได้ ใช้ตัวเก็บในตัว Fluent Bit
+# ใช้ไฟล์ .exe ของ windows_exporter แล้วสร้าง Windows service "cm-exporter" เอง (ไม่ใช้ MSI)
+#   - ฟังเฉพาะ 127.0.0.1:9182 ไม่เปิด firewall -> มีแค่ Fluent Bit บนเครื่องนี้ที่อ่านได้
+#   - ก่อนสร้าง service ทดลองเก็บ 1 ครั้ง (--scrape.stdout) เพื่อเลือกชุด collector ที่ใช้ได้กับเครื่องนี้
+#   - log ของ exporter: C:\ProgramData\central-monitor-agent\windows_exporter.log
+#   ใช้ไม่ได้เลย -> ใช้ตัวเก็บในตัว Fluent Bit แทน (ข้อมูลน้อยกว่า)
 $ExporterPort = 9182
 $ExporterUrl  = "http://127.0.0.1:$ExporterPort/metrics"
+$ExpService   = "cm-exporter"
+$ExpExe       = Join-Path $InstallDir "windows_exporter.exe"
+$ExpLog       = Join-Path $DataDir "windows_exporter.log"
 $ExpCollectorSets = @(
     "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update",
     "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time,pagefile",
     "cpu,os,memory,logical_disk,net,system,service"
 )
-$script:ExporterLastError = $null
 $UseExporter = $false
+$script:ExporterLastError = $null
 
 function Test-Exporter([int] $seconds) {
     # ไม่ผ่าน proxy ของเครื่อง (proxy องค์กรบางที่ไม่ยอมให้เรียก 127.0.0.1 ผ่าน)
@@ -120,89 +127,127 @@ function Test-Exporter([int] $seconds) {
     return $false
 }
 
-# แสดงสาเหตุที่ windows_exporter ไม่ทำงาน (สถานะ service, คำสั่งที่รัน, พอร์ต, ข้อความใน Event Log)
-function Show-ExporterDiag($msiLog) {
-    Write-Host "   --- ตรวจ windows_exporter ---" -ForegroundColor Yellow
-    if ($script:ExporterLastError) { Write-Host "   เรียก ${ExporterUrl}: $script:ExporterLastError" }
-    $svc = Get-CimInstance Win32_Service -Filter "Name='windows_exporter'" -ErrorAction SilentlyContinue
-    if ($svc) {
-        Write-Host "   service: $($svc.State) (start $($svc.StartMode))"
-        Write-Host "   command: $($svc.PathName)"
-    } else { Write-Host "   ไม่พบ service windows_exporter (MSI ติดตั้งไม่สำเร็จ ดู $msiLog)" }
-    $l = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue
-    if ($l) {
-        $l | ForEach-Object {
-            $pn = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName
-            Write-Host "   พอร์ต ${ExporterPort}: $($_.LocalAddress) โดย $pn (pid $($_.OwningProcess))"
-        }
-    } else { Write-Host "   ไม่มีโปรแกรมฟังพอร์ต $ExporterPort" }
-    Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
-        Where-Object { $_.ProviderName -match "windows_exporter" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-10) } |
-        Select-Object -First 5 | ForEach-Object { $m = ($_.Message -replace '\s+', ' '); Write-Host "   event: $($_.LevelDisplayName) $($m.Substring(0, [Math]::Min(300, $m.Length)))" }
-    if (Test-Path $msiLog) {
-        Select-String -Path $msiLog -Pattern "Return value 3|Error \d{4}" | Select-Object -First 3 |
-            ForEach-Object { Write-Host "   msi: $($_.Line.Trim())" }
-    }
-}
-
 function Get-ExporterProducts {
     $keys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
             "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "windows_exporter*" })
 }
 
+function Get-ExporterArgs([string] $set, [bool] $withFlags) {
+    $a = @("--collectors.enabled=$set")
+    if ($withFlags -and $set -match "process") { $a += "--no-collector.process.cmdline" }
+    return $a
+}
+
+# ทดลองเก็บ 1 ครั้งแล้วออก: ผ่าน = exit 0 และมี windows_exporter_build_info  (กันค้าง: รอไม่เกิน 120 วินาที)
+function Test-ExporterOnce([string[]] $expArgs) {
+    $out = Join-Path $env:TEMP "cm-exporter-test.out"
+    $err = Join-Path $env:TEMP "cm-exporter-test.err"
+    Remove-Item $out, $err -ErrorAction SilentlyContinue
+    $p = Start-Process -FilePath $ExpExe -ArgumentList ($expArgs + "--scrape.stdout") -NoNewWindow -PassThru `
+        -RedirectStandardOutput $out -RedirectStandardError $err
+    $null = $p.Handle          # PowerShell 5.1: ต้องเปิด handle ไว้ ไม่งั้นอ่าน ExitCode ไม่ได้
+    if (-not $p.WaitForExit(120000)) {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        return "หมดเวลา (เก็บนานเกิน 120 วินาที)"
+    }
+    $text = if (Test-Path $out) { Get-Content $out -Raw -ErrorAction SilentlyContinue } else { "" }
+    if ($p.ExitCode -eq 0 -and $text -match "windows_exporter_build_info") { return $null }
+    $msg = if (Test-Path $err) { (Get-Content $err -Tail 5 -ErrorAction SilentlyContinue) -join " | " } else { "" }
+    return "exit $($p.ExitCode) $msg".Trim()
+}
+
+function Show-ExporterDiag {
+    Write-Host "   --- ตรวจ windows_exporter ---" -ForegroundColor Yellow
+    if ($script:ExporterLastError) { Write-Host "   เรียก ${ExporterUrl}: $script:ExporterLastError" }
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$ExpService'" -ErrorAction SilentlyContinue
+    if ($svc) { Write-Host "   service: $($svc.State) · $($svc.PathName)" } else { Write-Host "   ไม่พบ service $ExpService" }
+    $l = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue
+    if ($l) {
+        $l | ForEach-Object {
+            $pn = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+            Write-Host "   พอร์ต ${ExporterPort}: $($_.LocalAddress) ใช้โดย $pn (pid $($_.OwningProcess))"
+        }
+    } else { Write-Host "   ไม่มีโปรแกรมฟังพอร์ต $ExporterPort" }
+    if (Test-Path $ExpLog) { Get-Content $ExpLog -Tail 8 | ForEach-Object { Write-Host "   log: $_" } }
+}
+
 if ($NoExporter) {
     Say "3/7 ข้าม windows_exporter (-NoExporter) -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit"
 } else {
-    Say "3/7 windows_exporter $ExporterVersion (ฟังเฉพาะ 127.0.0.1:$ExporterPort)"
+    Say "3/7 windows_exporter $ExporterVersion (service $ExpService ฟังเฉพาะ 127.0.0.1:$ExporterPort)"
     try {
-        if (-not $ExporterMsi) {
-            $local = Join-Path $Here "windows_exporter-$ExporterVersion-amd64.msi"
-            if (Test-Path $local) { $ExporterMsi = $local }
-        }
-        if (-not $ExporterMsi) {
-            $ExporterMsi = Join-Path $env:TEMP "windows_exporter-$ExporterVersion-amd64.msi"
-            $url = "https://github.com/prometheus-community/windows_exporter/releases/download/v$ExporterVersion/windows_exporter-$ExporterVersion-amd64.msi"
-            Say "   ดาวน์โหลด $url"
-            Invoke-WebRequest -Uri $url -OutFile $ExporterMsi -UseBasicParsing
-        }
-        if (-not (Test-Path $ExporterMsi)) { throw "ไม่พบไฟล์ $ExporterMsi" }
+        New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
-        # ตัวเดิม (ติดตั้งจาก MSI) -> ถอนก่อน เพื่อให้ตั้งค่าใหม่มีผล (เช่น เปลี่ยนให้ฟังเฉพาะ 127.0.0.1)
+        # ไฟล์ .exe: -ExporterExe > วางไว้ข้างสคริปต์ > ดาวน์โหลด
+        if (-not $ExporterExe) {
+            $local = Join-Path $Here "windows_exporter-$ExporterVersion-amd64.exe"
+            if (Test-Path $local) { $ExporterExe = $local }
+        }
+        if (-not $ExporterExe) {
+            $ExporterExe = Join-Path $env:TEMP "windows_exporter-$ExporterVersion-amd64.exe"
+            $url = "https://github.com/prometheus-community/windows_exporter/releases/download/v$ExporterVersion/windows_exporter-$ExporterVersion-amd64.exe"
+            Say "   ดาวน์โหลด $url"
+            Invoke-WebRequest -Uri $url -OutFile $ExporterExe -UseBasicParsing
+        }
+        if (-not (Test-Path $ExporterExe)) { throw "ไม่พบไฟล์ $ExporterExe" }
+        if ((Get-Item $ExporterExe).Length -lt 5MB) { throw "ไฟล์ $ExporterExe เล็กผิดปกติ (ดาวน์โหลดไม่ครบ / ถูก proxy แทนที่) ดาวน์โหลดเองด้วย browser แล้ววางข้างสคริปต์" }
+        Unblock-File $ExporterExe -ErrorAction SilentlyContinue
+
+        # หยุดตัวเดิม: service ของเราเอง + windows_exporter ที่ติดตั้งจาก MSI (ใช้พอร์ต 9182 เดียวกัน)
+        if (Get-Service $ExpService -ErrorAction SilentlyContinue) { Stop-Service $ExpService -Force -ErrorAction SilentlyContinue; Start-Sleep 2 }
         foreach ($old in Get-ExporterProducts) {
-            Warn "พบ $($old.DisplayName) $($old.DisplayVersion) เดิม -> ถอนแล้วติดตั้งใหม่แบบฟังเฉพาะ 127.0.0.1 (ถ้ามี Prometheus อื่นดึงเครื่องนี้อยู่ จะดึงไม่ได้แล้ว)"
+            Warn "พบ $($old.DisplayName) $($old.DisplayVersion) (ติดตั้งจาก MSI) -> ถอนออก (ถ้ามี Prometheus อื่นดึงเครื่องนี้อยู่ จะดึงไม่ได้แล้ว)"
             if ($old.PSChildName -match '^\{[0-9A-Fa-f-]+\}$') {
                 Start-Process msiexec.exe -ArgumentList @("/x", $old.PSChildName, "/qn", "/norestart") -Wait | Out-Null
             }
         }
-
-        $msiLog = Join-Path $env:TEMP "cm-windows-exporter-msi.log"
-        $try = 0
-        foreach ($set in $ExpCollectorSets) {
-            $try++
-            $msiArgs = @("/i", "`"$ExporterMsi`"", "/qn", "/norestart", "/l*v", "`"$msiLog`"",
-                         "ENABLED_COLLECTORS=$set", "LISTEN_ADDR=127.0.0.1", "LISTEN_PORT=$ExporterPort", "REMOVE=FirewallException")
-            # ชุดสุดท้าย: ไม่ใส่ flag เพิ่ม (กรณี flag ทำให้ exporter เริ่มไม่ได้)
-            if ($try -lt $ExpCollectorSets.Count -and $set -match "process") {
-                $msiArgs += "EXTRA_FLAGS=`"--no-collector.process.cmdline`""
-            }
-            $p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
-            if ($p.ExitCode -notin 0, 1641, 3010) {
-                Warn "msiexec exit $($p.ExitCode)"
-                Show-ExporterDiag $msiLog
-                continue
-            }
-            Start-Service windows_exporter -ErrorAction SilentlyContinue
-            if (Test-Exporter 40) { $UseExporter = $true; Write-Host "   collectors: $set"; break }
-            Warn "windows_exporter ไม่ตอบ (ชุดที่ $try/$($ExpCollectorSets.Count))"
-            Show-ExporterDiag $msiLog
-            foreach ($old in Get-ExporterProducts) {
-                if ($old.PSChildName -match '^\{[0-9A-Fa-f-]+\}$') {
-                    Start-Process msiexec.exe -ArgumentList @("/x", $old.PSChildName, "/qn", "/norestart") -Wait | Out-Null
-                }
-            }
+        if (Get-Service windows_exporter -ErrorAction SilentlyContinue) {
+            Stop-Service windows_exporter -Force -ErrorAction SilentlyContinue
+            sc.exe config windows_exporter start= disabled | Out-Null
+            Warn "ปิด service windows_exporter เดิม (ไม่ได้ติดตั้งจาก MSI) เพื่อไม่ให้ชนพอร์ต $ExporterPort"
         }
-        if (-not $UseExporter) { throw "windows_exporter ไม่ตอบที่ $ExporterUrl" }
+        $busy = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($busy) {
+            $pn = (Get-Process -Id $busy.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+            throw "พอร์ต $ExporterPort ถูกใช้อยู่โดย $pn (pid $($busy.OwningProcess))"
+        }
+        Copy-Item $ExporterExe $ExpExe -Force
+
+        # เลือกชุด collector ที่เก็บได้จริงบนเครื่องนี้
+        $chosen = $null
+        foreach ($set in $ExpCollectorSets) {
+            foreach ($flags in @($true, $false)) {
+                $expArgs = Get-ExporterArgs $set $flags
+                # ตอนทดลองไม่ใส่ update (ถาม Windows Update นานหลายนาที ทำงานเบื้องหลังใน service อยู่แล้ว)
+                $testSet = (($set -split ",") | Where-Object { $_ -ne "update" }) -join ","
+                $why = Test-ExporterOnce (Get-ExporterArgs $testSet $flags)
+                if (-not $why) { $chosen = $expArgs; break }
+                $script:ExporterLastError = $why
+                Warn "collector ชุดนี้ใช้ไม่ได้: $why"
+                if ($set -notmatch "process") { break }
+            }
+            if ($chosen) { break }
+        }
+        if (-not $chosen) { throw "windows_exporter เก็บข้อมูลไม่ได้ ($script:ExporterLastError)" }
+        Write-Host "   collectors: $(($chosen[0]) -replace '--collectors.enabled=', '')"
+
+        # สร้าง / อัปเดต service
+        $svcArgs = @("--web.listen-address=127.0.0.1:$ExporterPort") + $chosen +
+                   @("--log.file=`"$ExpLog`"", "--log.rotation.max-size=10", "--log.rotation.max-backups=2")
+        $bin = "`"$ExpExe`" " + ($svcArgs -join " ")
+        if (Get-Service $ExpService -ErrorAction SilentlyContinue) {
+            sc.exe config $ExpService binPath= $bin start= auto | Out-Null
+        } else {
+            New-Service -Name $ExpService -BinaryPathName $bin -DisplayName "Central Monitor Exporter (windows_exporter)" `
+                -Description "เก็บ metrics ของเครื่อง ฟังเฉพาะ 127.0.0.1:$ExporterPort ให้ cm-agent ส่งต่อไปที่ Central Monitor" `
+                -StartupType Automatic | Out-Null
+        }
+        sc.exe failure $ExpService reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
+        if (Test-Path $ExpLog) { Move-Item $ExpLog "$ExpLog.old" -Force -ErrorAction SilentlyContinue }
+        Start-Service $ExpService
+        if (-not (Test-Exporter 40)) { Show-ExporterDiag; throw "service $ExpService ไม่ตอบที่ $ExporterUrl" }
+        $UseExporter = $true
         $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
                   Select-Object -ExpandProperty LocalAddress -Unique
         if ($listen | Where-Object { $_ -notin "127.0.0.1", "::1" }) {
@@ -210,6 +255,10 @@ if ($NoExporter) {
         }
     } catch {
         Warn "ใช้ windows_exporter ไม่ได้: $($_.Exception.Message) -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit แทน (ข้อมูลน้อยกว่า)"
+        if (Get-Service $ExpService -ErrorAction SilentlyContinue) {
+            Stop-Service $ExpService -Force -ErrorAction SilentlyContinue
+            sc.exe config $ExpService start= disabled | Out-Null
+        }
         $UseExporter = $false
     }
 }
