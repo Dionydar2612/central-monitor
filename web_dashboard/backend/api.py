@@ -208,7 +208,7 @@ _AUDIT_RULES = [
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
      ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
-    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "dashboard_url")),
+    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
@@ -468,10 +468,10 @@ def notify_settings_put():
 
 @app.post("/api/notify-settings/test")
 def notify_settings_test():
-    """ส่งการ์ดทดสอบไปที่ Teams  body: {webhook_url?, dashboard_url?} (ไม่ใส่ = ใช้ที่บันทึกไว้)"""
+    """ส่งการ์ดทดสอบไปที่ Teams  body: {webhook_url?} (ไม่ใส่ = ใช้ที่บันทึกไว้)"""
     body = request.get_json(silent=True) or {}
     try:
-        ok, msg = notify_service.send_test(body.get("webhook_url") or None, body.get("dashboard_url") or None)
+        ok, msg = notify_service.send_test(body.get("webhook_url") or None)
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)

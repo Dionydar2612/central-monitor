@@ -3,7 +3,7 @@ notify_service.py - ตั้งค่าการแจ้งเตือน Mi
 =====================================================================================
 
 เก็บใน config/puller.yaml -> notify.teams  (ตัวส่งจริง: start_push_log/puller/notify.py ใน central-puller)
-    enabled, webhook_url, levels [down, error, warning, recovered, checks], dashboard_url
+    enabled, webhook_url, levels [down, error, warning, recovered, checks]
 
 webhook URL เป็นความลับ (ใครมี URL ก็โพสต์เข้าช่องได้)
     GET  ไม่ส่ง URL เต็มกลับไป แสดงแค่ host + 6 ตัวท้าย
@@ -39,7 +39,7 @@ def get_settings():
     url = str(t.get("webhook_url") or "")
     levels = t.get("levels") if isinstance(t.get("levels"), list) else list(LEVELS)
     return {"enabled": t.get("enabled", True) is not False and bool(url), "url_set": bool(url), "url_hint": _hint(url),
-            "levels": [str(x) for x in levels], "dashboard_url": str(t.get("dashboard_url") or ""),
+            "levels": [str(x) for x in levels],
             "all_levels": list(LEVELS)}
 
 
@@ -73,11 +73,6 @@ def update_settings(payload):
         if bad:
             errors["levels"] = f"ไม่รู้จัก: {', '.join(map(str, bad))}"
         vals["levels"] = [x for x in LEVELS if x in lv]
-    if "dashboard_url" in payload:
-        d = str(payload["dashboard_url"] or "").strip().rstrip("/")
-        if d and urllib.parse.urlsplit(d).scheme not in ("http", "https"):
-            errors["dashboard_url"] = "ต้องขึ้นต้นด้วย http:// หรือ https://"
-        vals["dashboard_url"] = d
     if errors:
         return False, {"error": "ค่าไม่ถูกต้อง", "fields": errors}
 
@@ -102,7 +97,7 @@ def update_settings(payload):
     return True, get_settings()
 
 
-def send_test(webhook_url=None, dashboard_url=None):
+def send_test(webhook_url=None):
     """ส่งการ์ดทดสอบ (ใช้ URL ที่ส่งมา หรือที่บันทึกไว้) -> (ok, ข้อความ)"""
     y = targets_service._yaml()
     t = _teams(targets_service._load_doc(y))
@@ -112,7 +107,6 @@ def send_test(webhook_url=None, dashboard_url=None):
         return False, errors["webhook_url"]
     if not url:
         return False, "ยังไม่ได้ใส่ webhook URL"
-    dash = str(dashboard_url or t.get("dashboard_url") or "").rstrip("/")
     card = {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4",
         "msteams": {"width": "Full"},
@@ -125,8 +119,6 @@ def send_test(webhook_url=None, dashboard_url=None):
              "text": "จากนี้ช่องนี้จะได้รับการ์ดเมื่อเครื่อง Down, disk เต็ม, service สำคัญหยุด ฯลฯ ตามระดับที่เลือกไว้"},
         ],
     }
-    if dash:
-        card["actions"] = [{"type": "Action.OpenUrl", "title": "Open dashboard", "url": dash}]
     payload = {"type": "message", "attachments": [
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
     req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST",

@@ -22,7 +22,6 @@ puller.yaml
         enabled: true
         webhook_url: https://....      # เป็นความลับ (ใครมี URL ก็ส่งข้อความเข้าช่องได้)
         levels: [down, error, warning, recovered, checks]
-        dashboard_url: https://central.example.local:8090   # ปุ่ม "Open dashboard" บนการ์ด
 
 ส่งใน thread แยก (ไม่ทำให้รอบตรวจ sensor ช้า) ลองใหม่ 3 ครั้ง ส่งไม่สำเร็จ -> บันทึกใน System log
 """
@@ -60,7 +59,7 @@ def settings(config=None):
     if not isinstance(levels, list):
         levels = list(ALL_LEVELS)
     return {"enabled": t.get("enabled", True) is not False and url.startswith("https://"), "url": url,
-            "levels": {str(x) for x in levels}, "dashboard_url": str(t.get("dashboard_url") or "").rstrip("/")}
+            "levels": {str(x) for x in levels}}
 
 
 def _now_text():
@@ -80,7 +79,7 @@ BOTTLENECK_TH = {"cpu": "คอขวด CPU (งานรอคิว)", "memor
                  "disk": "คอขวด Disk (ตอบช้า คิวยาว)", "network": "คอขวด Network"}
 
 
-def build_card(title, level, lines, footer="", link=None, link_title="เปิด dashboard"):
+def build_card(title, level, lines, footer=""):
     """Adaptive Card 1.4 แบบสั้น: หัวเรื่อง 1 บรรทัด + รายการละ 1 บรรทัด + บรรทัดเล็กท้าย
     (ใช้ได้ทั้ง Teams Workflows webhook และ Incoming Webhook)"""
     body = [{"type": "Container", "style": STYLE.get(level, "default"), "bleed": True,
@@ -91,8 +90,6 @@ def build_card(title, level, lines, footer="", link=None, link_title="เปิ�
         body.append({"type": "TextBlock", "text": footer, "isSubtle": True, "size": "Small", "wrap": True, "spacing": "Medium"})
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
             "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": title, "body": body}
-    if link:
-        card["actions"] = [{"type": "Action.OpenUrl", "title": link_title, "url": link}]
     return {"type": "message", "summary": title, "attachments": [
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
 
@@ -273,8 +270,7 @@ def sensor_events(events, config=None):
         title = f"{ICON.get(worst, '')} {web} · {short_text(*items[0], with_limit=len(items) == 1)}{more}"
         group = items[0][1].get("group")
         footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
-        link = f"{s['dashboard_url']}/?web={urllib.parse.quote(web)}" if s["dashboard_url"] else None
-        _enqueue(s["url"], build_card(title, worst, lines if len(items) > 1 else [], footer, link), f"{web} {worst}")
+        _enqueue(s["url"], build_card(title, worst, lines if len(items) > 1 else [], footer), f"{web} {worst}")
 
 
 def check_event(name, url, old, new, result, group="", config=None):
@@ -297,5 +293,4 @@ def check_event(name, url, old, new, result, group="", config=None):
     title = f"{ICON.get(level, '')} {text}"
     lines = [url]
     footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
-    link = f"{s['dashboard_url']}/events" if s["dashboard_url"] else None
-    _enqueue(s["url"], build_card(title, level, lines, footer, link), f"check {name} {new}")
+    _enqueue(s["url"], build_card(title, level, lines, footer), f"check {name} {new}")

@@ -652,7 +652,6 @@ function renderNotify(d) {
     $("n_on").checked = !!d.enabled || !d.url_set;
     $("n_url").value = "";
     $("n_hint").textContent = d.url_set ? `บันทึกไว้แล้ว: ${d.url_hint}` : "ยังไม่ได้ตั้ง";
-    $("n_dash").value = d.dashboard_url || location.origin;
     const box = $("n_levels"); box.textContent = "";
     (d.all_levels || Object.keys(N_LABEL)).forEach(k => box.append(
         el("label", { class: "st-check" }, el("input", Object.assign({ type: "checkbox", value: k }, (d.levels || []).includes(k) ? { checked: "" } : {})), " " + (N_LABEL[k] || k))));
@@ -668,7 +667,7 @@ function notifyErrors(e) {
 async function saveNotify(extra) {
     notifyErrors(null);
     const body = Object.assign({
-        enabled: $("n_on").checked, dashboard_url: $("n_dash").value.trim(),
+        enabled: $("n_on").checked,
         levels: [...$("n_levels").querySelectorAll("input:checked")].map(i => i.value),
     }, $("n_url").value.trim() ? { webhook_url: $("n_url").value.trim() } : {}, extra || {});
     $("n_save").disabled = true;
@@ -679,7 +678,7 @@ async function saveNotify(extra) {
 async function testNotify() {
     $("n_test").disabled = true; say("n_msg", "กำลังส่งการ์ดทดสอบ...", "");
     try {
-        const d = await api("POST", "/api/notify-settings/test", { webhook_url: $("n_url").value.trim() || undefined, dashboard_url: $("n_dash").value.trim() || undefined });
+        const d = await api("POST", "/api/notify-settings/test", { webhook_url: $("n_url").value.trim() || undefined });
         say("n_msg", `ส่งแล้ว (${d.message}) · ดูที่ช่อง Teams${$("n_url").value.trim() ? " · อย่าลืมกด Save" : ""}`, "ok");
     } catch (e) { say("n_msg", "ส่งไม่สำเร็จ: " + e.message, "bad"); }
     finally { $("n_test").disabled = false; }

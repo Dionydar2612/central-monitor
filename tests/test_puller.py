@@ -190,8 +190,7 @@ class Scheduler(unittest.TestCase):
 
 
 class TeamsNotify(unittest.TestCase):
-    CFG = {"notify": {"teams": {"webhook_url": "https://example.webhook.office.com/x", "levels": ["down", "error", "recovered"],
-                                "dashboard_url": "https://central:8090"}}}
+    CFG = {"notify": {"teams": {"webhook_url": "https://example.webhook.office.com/x", "levels": ["down", "error", "recovered"]}}}
 
     def test_sensor_cards(self):
         sent = []
@@ -215,7 +214,7 @@ class TeamsNotify(unittest.TestCase):
         self.assertEqual(card["body"][0]["items"][0]["text"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")
         self.assertEqual(sent[0][1]["summary"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")   # ข้อความในหน้าแจ้งเตือน
         self.assertEqual(card["body"][0]["style"], "attention")
-        self.assertEqual(card["actions"][0]["url"], "https://central:8090/?web=win-01")
+        self.assertNotIn("actions", card)                                # ไม่มีปุ่มลิงก์
         self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["style"], "good")
         self.assertEqual(sent[1][1]["summary"], "🟢 lx-01 · CPU กลับปกติ (12%) · เป็นอยู่ 10m")
 
