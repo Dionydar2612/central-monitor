@@ -53,6 +53,23 @@ processors:
           - set(attributes["log.file.name"], Concat(["agent", body["cm_web"], body["source"], body["file"]], "__"))
           - set(severity_text, body["level"])
           - set(body, body["message"])
+      # แบบที่ 2: Fluent Bit ส่ง message เป็น body และฟิลด์อื่นเป็น attributes
+      - context: log
+        conditions:
+          - attributes["cm_web"] != nil
+        statements:
+          - set(resource.attributes["log.source"], attributes["source"])
+          - set(resource.attributes["cm.web"], attributes["cm_web"])
+          - set(resource.attributes["service.name"], "central-agent")
+          - set(attributes["log.file.name"], Concat(["agent", attributes["cm_web"], attributes["source"], attributes["file"]], "__"))
+          - set(severity_text, attributes["level"])
+          - set(body, attributes["message"]) where attributes["message"] != nil
+          - delete_matching_keys(attributes, "^(cm_web|source|file|level|message)$")
+    # สัญญาณ "ยังทำงาน" ใช้เวลาที่ central ได้รับ (นาฬิกาเครื่อง Windows คลาดไม่ทำให้ Prometheus ปฏิเสธ)
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(time, Now())
 
   # log ที่ไม่ได้มาจาก cm-agent.lua (ไม่มีชื่อเครื่อง) -> ทิ้ง
   filter/agents:
@@ -77,6 +94,12 @@ exporters:
     logs_index_fallback: logs-central
     logs_index_time_format: yyyy.MM.dd.HH
 
+  # แสดงข้อมูลดิบที่ agent ส่งมา (3 ชุดแรก แล้วทุก ๆ 500 ชุด) ดูด้วย: docker logs central-agent-gw
+  debug/raw:
+    verbosity: detailed
+    sampling_initial: 3
+    sampling_thereafter: 500
+
   prometheusremotewrite:
     endpoint: ${env:PROMETHEUS_RW_URL}
     resource_to_telemetry_conversion:
@@ -95,5 +118,8 @@ service:
       exporters: [opensearch]
     metrics/agents:
       receivers: [otlp/agents]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, transform/agents, batch]
       exporters: [prometheusremotewrite]
+    logs/raw:
+      receivers: [otlp/agents]
+      exporters: [debug/raw]
