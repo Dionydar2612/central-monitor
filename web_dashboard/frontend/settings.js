@@ -645,6 +645,46 @@ function resetAlerts() {
     say("al_msg", "ใส่ค่าเริ่มต้นแล้ว กด Save alerts เพื่อบันทึก", "");
 }
 
+/* ---------- Notifications: Microsoft Teams (/api/notify-settings) ---------- */
+const N_LABEL = { down: "เครื่อง Down", error: "Error (disk เต็ม, service หยุด, ...)", warning: "Warning",
+    recovered: "กลับมาปกติ (Recovered)", checks: "Web / SSL check" };
+function renderNotify(d) {
+    $("n_on").checked = !!d.enabled || !d.url_set;
+    $("n_url").value = "";
+    $("n_hint").textContent = d.url_set ? `บันทึกไว้แล้ว: ${d.url_hint}` : "ยังไม่ได้ตั้ง";
+    $("n_dash").value = d.dashboard_url || location.origin;
+    const box = $("n_levels"); box.textContent = "";
+    (d.all_levels || Object.keys(N_LABEL)).forEach(k => box.append(
+        el("label", { class: "st-check" }, el("input", Object.assign({ type: "checkbox", value: k }, (d.levels || []).includes(k) ? { checked: "" } : {})), " " + (N_LABEL[k] || k))));
+}
+async function loadNotify() {
+    try { renderNotify(await api("GET", "/api/notify-settings")); }
+    catch (e) { if (e.message !== "auth") say("n_msg", "โหลดค่าไม่สำเร็จ: " + e.message, "bad"); }
+}
+function notifyErrors(e) {
+    document.querySelectorAll("[data-n]").forEach(f => { f.classList.remove("has-err"); const x = f.querySelector(".st-err"); if (x) x.textContent = ""; });
+    Object.entries((e && e.fields) || {}).forEach(([k, m]) => { const f = document.querySelector(`[data-n="${k}"]`); if (f) { f.classList.add("has-err"); f.querySelector(".st-err").textContent = m; } });
+}
+async function saveNotify(extra) {
+    notifyErrors(null);
+    const body = Object.assign({
+        enabled: $("n_on").checked, dashboard_url: $("n_dash").value.trim(),
+        levels: [...$("n_levels").querySelectorAll("input:checked")].map(i => i.value),
+    }, $("n_url").value.trim() ? { webhook_url: $("n_url").value.trim() } : {}, extra || {});
+    $("n_save").disabled = true;
+    try { renderNotify(await api("PUT", "/api/notify-settings", body)); say("n_msg", "บันทึกแล้ว · puller ใช้ค่าใหม่ในรอบตรวจถัดไป (~30 วินาที)", "ok"); }
+    catch (e) { notifyErrors(e); say("n_msg", "บันทึกไม่สำเร็จ: " + e.message, "bad"); }
+    finally { $("n_save").disabled = false; }
+}
+async function testNotify() {
+    $("n_test").disabled = true; say("n_msg", "กำลังส่งการ์ดทดสอบ...", "");
+    try {
+        const d = await api("POST", "/api/notify-settings/test", { webhook_url: $("n_url").value.trim() || undefined, dashboard_url: $("n_dash").value.trim() || undefined });
+        say("n_msg", `ส่งแล้ว (${d.message}) · ดูที่ช่อง Teams${$("n_url").value.trim() ? " · อย่าลืมกด Save" : ""}`, "ok");
+    } catch (e) { say("n_msg", "ส่งไม่สำเร็จ: " + e.message, "bad"); }
+    finally { $("n_test").disabled = false; }
+}
+
 async function loadUser() {
     try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; } catch (e) { /* api() พาไป /login เอง */ }
 }
@@ -680,6 +720,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $("r_save").onclick = saveRetention;
     $("al_save").onclick = saveAlerts;
     $("al_reset").onclick = resetAlerts;
+    $("n_save").onclick = () => saveNotify();
+    $("n_test").onclick = testNotify;
+    $("n_clear").onclick = () => { if (confirm("ลบ webhook URL? (หยุดส่งแจ้งเตือนไป Teams)")) saveNotify({ webhook_url: "-", enabled: false }); };
     $("f_type").addEventListener("change", e => setType(e.target.value));
     $("agMake").onclick = makeAgentCommand;
     $("agCopy").onclick = async () => {
@@ -688,6 +731,6 @@ document.addEventListener("DOMContentLoaded", () => {
         $("agCopyMsg").textContent = "คัดลอกแล้ว"; setTimeout(() => { $("agCopyMsg").textContent = ""; }, 2500);
     };
     ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
-    loadUser(); loadTargets(); loadUsers(); loadRetention(); loadAlerts();
+    loadUser(); loadTargets(); loadUsers(); loadRetention(); loadAlerts(); loadNotify();
     if (SHOW_CHECKS) loadChecks();
 });

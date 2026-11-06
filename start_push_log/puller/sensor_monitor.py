@@ -53,6 +53,7 @@ from datetime import datetime
 
 from config import CHECKPOINT_FILE, STATE_DIR, SYSTEM_DIR, load_config, parse_interval
 from events import append_events
+import notify
 
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
@@ -774,6 +775,10 @@ def run_once(previous):
     if closed or not os.path.exists(INCIDENTS_FILE):
         _save_incidents(closed, opts["retention"], now)
     append_events(events)
+    try:
+        notify.sensor_events(events, config)          # การ์ดแจ้งเตือน Microsoft Teams (ถ้าตั้งไว้)
+    except Exception as e:
+        print(f"[NOTIFY ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
 
 

@@ -1,3 +1,10 @@
+# เพิ่มเติม (6 พ.ย. 2026): แจ้งเตือน Microsoft Teams
+- Settings > **Notifications (Microsoft Teams)**: วาง webhook URL (Teams Workflows) เลือกระดับ (Down / Error / Warning / Recovered / Web-SSL check) ทดสอบส่งได้
+- ส่งการ์ด Adaptive Card ครั้งเดียวต่อการเปลี่ยนสถานะ รวมหลายเรื่องของเครื่องเดียวเป็นการ์ดเดียว มีปุ่มเปิด dashboard
+- รายละเอียด: `docs/NOTIFY-TH.md`
+
+---
+
 # สรุปการเปลี่ยนแปลง (6 พ.ย. 2026): Windows Monitoring & Bottleneck Detection
 
 รายละเอียดเต็ม: `docs/MONITORING-TH.md`

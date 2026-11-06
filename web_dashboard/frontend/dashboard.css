@@ -1209,3 +1209,4 @@ td.bad{color:#e5484d}
 .syshead{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
 .syshead small{display:block;color:var(--mut);font-size:12.5px}.syshead b{display:block;font-size:18px;font-weight:600;margin-top:2px;word-break:break-word}
 .syshead em{display:block;font-style:normal;color:var(--mut);font-size:12.5px;margin-top:2px}
+.nlv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:4px}

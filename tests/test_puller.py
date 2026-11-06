@@ -24,6 +24,7 @@ import log_filter         # noqa: E402
 import log_levels         # noqa: E402
 import system_info        # noqa: E402
 import web_checks         # noqa: E402
+import notify             # noqa: E402
 
 
 class SensorGrade(unittest.TestCase):
@@ -185,6 +186,40 @@ class Scheduler(unittest.TestCase):
         s.run_once(cfg, {}, snapshot=False)
         self.assertLess(time.time() - started, 0.6)          # 4 เครื่องพร้อมกัน ไม่ใช่ทีละเครื่อง
         self.assertEqual(sorted(calls), ["w0", "w1", "w2", "w3"])
+
+
+
+class TeamsNotify(unittest.TestCase):
+    CFG = {"notify": {"teams": {"webhook_url": "https://example.webhook.office.com/x", "levels": ["down", "error", "recovered"],
+                                "dashboard_url": "https://central:8090"}}}
+
+    def test_sensor_cards(self):
+        sent = []
+        orig = notify._enqueue
+        notify._enqueue = lambda url, payload, what: sent.append((url, payload, what))
+        try:
+            notify.sensor_events([
+                {"web": "win-01", "group": "TQ", "sensor": "Availability", "from": "ok", "to": "down", "level": "down",
+                 "message": "win-01 · Availability: OK → Down · agent is not sending data"},
+                {"web": "win-01", "group": "TQ", "sensor": "Disk Usage: C:", "from": "ok", "to": "warning", "level": "warning",
+                 "message": "win-01 · Disk Usage: C:: OK → Warning"},                       # warning ไม่ได้เลือก -> ไม่ส่ง
+                {"web": "lx-01", "group": "", "sensor": "CPU average 5m", "from": "error", "to": "ok", "level": "recovered",
+                 "duration": 600, "message": "lx-01 · CPU average 5m: Recovered → OK after 10m"},
+            ], self.CFG)
+        finally:
+            notify._enqueue = orig
+        self.assertEqual(len(sent), 2)                                   # 1 การ์ดต่อเครื่อง
+        card = sent[0][1]["attachments"][0]["content"]
+        self.assertEqual(sent[0][1]["type"], "message")
+        self.assertEqual(card["type"], "AdaptiveCard")
+        self.assertIn("Availability DOWN", card["body"][0]["items"][0]["text"])
+        self.assertEqual(card["body"][0]["style"], "attention")
+        self.assertEqual(card["actions"][0]["url"], "https://central:8090/?web=win-01")
+        self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["style"], "good")
+
+    def test_disabled_without_url(self):
+        self.assertFalse(notify.settings({"notify": {"teams": {"webhook_url": ""}}})["enabled"])
+        self.assertFalse(notify.settings({})["enabled"])
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from config import STATE_DIR, load_config
+import notify
 
 RESULTS_FILE = os.path.join(STATE_DIR, "checks.json")
 HISTORY_FILE = os.path.join(STATE_DIR, "checks-history.json")
@@ -214,10 +215,34 @@ def _safe(c):
                            "checked_at": _iso(time.time())}
 
 
+def _notify_change(c, r, notified, streak):
+    """แจ้ง Microsoft Teams เมื่อสถานะเปลี่ยนและเห็นซ้ำ 2 รอบติด (กันเว็บสะดุดครั้งเดียว)"""
+    name, st = c["name"], r.get("status")
+    if st == notified.get(name):
+        streak.pop(name, None)
+        return
+    prev_st, cnt = streak.get(name, (st, 0))
+    cnt = cnt + 1 if prev_st == st else 1
+    streak[name] = (st, cnt)
+    if cnt < 2:
+        return
+    old = notified.get(name)
+    notified[name] = st
+    streak.pop(name, None)
+    if old is None and st == "up":
+        return                                # check ใหม่ที่ปกติ ไม่ต้องแจ้ง
+    try:
+        notify.check_event(name, c.get("url"), old, st, r, c.get("group") or "")
+    except Exception as e:
+        print(f"[NOTIFY ERROR] check {name}: {e!r}")
+
+
 def _loop():
     last_run = {}
     history = _read_json(HISTORY_FILE) or {}
     results = (_read_json(RESULTS_FILE) or {}).get("checks", {})
+    notified = {n: r.get("status") for n, r in results.items()}    # สถานะล่าสุดที่แจ้งไปแล้ว (เริ่มใหม่ไม่แจ้งซ้ำ)
+    streak = {}
 
     while True:
         try:
@@ -230,8 +255,10 @@ def _loop():
 
             changed = False
             if due:
+                by_name = {c["name"]: c for c in due}
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                     for name, r in pool.map(_safe, due):
+                        _notify_change(by_name[name], r, notified, streak)
                         last_run[name] = now
                         h = [x for x in history.get(name, []) if x[0] >= now - HISTORY_SECONDS]
                         h.append([int(now), r["status"] != "down", r.get("ms")])

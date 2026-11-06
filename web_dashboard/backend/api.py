@@ -79,6 +79,7 @@ import users_service
 import retention_service
 import agent_service
 import alert_settings_service
+import notify_service
 import host_details
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
@@ -170,7 +171,7 @@ def _required_role(method, path):
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
     if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention",
-                                                                     "/api/alert-settings")):
+                                                                     "/api/alert-settings", "/api/notify-settings")):
         return "admin"
     if path.startswith("/api/checks"):
         return "viewer" if method == "GET" else "admin"
@@ -207,6 +208,8 @@ _AUDIT_RULES = [
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
      ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
+    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "dashboard_url")),
+    ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
 ]
@@ -443,6 +446,35 @@ def alert_settings_put():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (200 if ok else 400)
+
+
+@app.get("/api/notify-settings")
+def notify_settings_get():
+    """การแจ้งเตือน Microsoft Teams (admin) ไม่ส่ง webhook URL เต็มกลับไป"""
+    try:
+        return jsonify(notify_service.get_settings())
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.put("/api/notify-settings")
+def notify_settings_put():
+    try:
+        ok, out = notify_service.update_settings(request.get_json(silent=True) or {})
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (200 if ok else 400)
+
+
+@app.post("/api/notify-settings/test")
+def notify_settings_test():
+    """ส่งการ์ดทดสอบไปที่ Teams  body: {webhook_url?, dashboard_url?} (ไม่ใส่ = ใช้ที่บันทึกไว้)"""
+    body = request.get_json(silent=True) or {}
+    try:
+        ok, msg = notify_service.send_test(body.get("webhook_url") or None, body.get("dashboard_url") or None)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)
 
 
 # ============================================================
