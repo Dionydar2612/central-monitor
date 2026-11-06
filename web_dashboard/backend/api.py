@@ -78,6 +78,8 @@ import sensors_service
 import users_service
 import retention_service
 import agent_service
+import alert_settings_service
+import host_details
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
@@ -167,7 +169,8 @@ def _required_role(method, path):
         return "operator"
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
-    if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention")):
+    if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention",
+                                                                     "/api/alert-settings")):
         return "admin"
     if path.startswith("/api/checks"):
         return "viewer" if method == "GET" else "admin"
@@ -202,6 +205,8 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/users$"), "user.add", ("username", "role")),
     ("PUT", re.compile(r"^/api/retention$"), "settings.retention",
      ("log_retention", "incident_retention", "system_history_retention")),
+    ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
+     ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
 ]
@@ -422,6 +427,75 @@ def web_status():
     return jsonify(result)
 
 
+@app.get("/api/alert-settings")
+def alert_settings_get():
+    """เกณฑ์แจ้งเตือนทั้งระบบ (Linux / Windows), ระยะเวลาก่อนแจ้งเตือน, service สำคัญ (admin)"""
+    try:
+        return jsonify(alert_settings_service.get_settings())
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.put("/api/alert-settings")
+def alert_settings_put():
+    try:
+        ok, out = alert_settings_service.update_settings(request.get_json(silent=True) or {})
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (200 if ok else 400)
+
+
+# ============================================================
+# Machine details (แท็บ Performance / Hardware / System / Bottleneck)
+# ============================================================
+
+_HOST_CACHE = {}        # (kind, web) -> (หมดอายุเมื่อ, data)
+HOST_TTL = {"performance": 15, "hardware": 300, "system": 60}
+
+
+def _host_cached(kind, web, fn):
+    now = time.time()
+    hit = _HOST_CACHE.get((kind, web))
+    if hit and hit[0] > now:
+        return hit[1]
+    data = fn()
+    if len(_HOST_CACHE) > 2000:
+        _HOST_CACHE.clear()
+    _HOST_CACHE[(kind, web)] = (now + HOST_TTL[kind], data)
+    return data
+
+
+def _known_target(web):
+    if web == "central":
+        return {"name": "central"}
+    return next((t for t in load_web_targets() if t.get("name") == web), None)
+
+
+@app.get("/api/host/<web>/<kind>")
+def host_detail(web, kind):
+    """kind = performance | hardware | system | bottleneck   ค่าที่ไม่มี = null + รายการ unsupported"""
+    target = _known_target(web)
+    if target is None:
+        return jsonify({"error": "not found"}), 404
+    if kind == "bottleneck":
+        rows = [s for s in sensors_service.get_sensors(web=web)["sensors"] if s.get("kind") == "bottleneck"]
+        return jsonify({"web": web, "bottlenecks": rows,
+                        "options": sensors_service.load_sensors().get("options")})
+    fns = {"performance": lambda: host_details.performance(web),
+           "hardware": lambda: host_details.hardware(web),
+           "system": lambda: host_details.system(web, target)}
+    if kind not in fns:
+        return jsonify({"error": "unknown kind"}), 404
+    try:
+        data = _host_cached(kind, web, fns[kind])
+    except Exception as e:
+        print(f"[HOST] {kind} {web}: {e!r}")
+        return jsonify({"error": f"อ่านข้อมูลจาก Prometheus ไม่ได้: {e}"}), 502
+    if data is None:
+        return jsonify({"error": "ไม่มีการตั้งค่า metrics ของเครื่องนี้"}), 404
+    return jsonify(data)
+
+
 @app.get("/api/overview")
 def overview():
     """ตาราง Server Status ด้านบนของ dashboard (ดู overview_service.py)"""
@@ -451,7 +525,9 @@ def live_processes():
         procs = get_windows_processes(_labels(get_web_prometheus_config(web)))
         data = {"time": datetime.now(timezone.utc).isoformat(),
                 "memory_top": sorted([p for p in procs if p.get("memory") is not None],
-                                     key=lambda p: p["memory"], reverse=True)[:10]}
+                                     key=lambda p: p["memory"], reverse=True)[:10],
+                "io_top": sorted([p for p in procs if p.get("io_mb") is not None],
+                                 key=lambda p: p["io_mb"], reverse=True)[:10]}
         _LIVE_CACHE[web] = (now + LIVE_TTL, 200, data)
         return jsonify(data), 200
 

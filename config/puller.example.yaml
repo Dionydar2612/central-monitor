@@ -37,11 +37,20 @@ retry:
   delay_seconds: 10           # พักกี่วินาทีระหว่างครั้ง
 
 # การเก็บข้อมูลบน server กลาง
+# ตั้งจากหน้าเว็บได้ที่ Settings > Alerts (รายละเอียด: docs/MONITORING-TH.md)
 sensors:
-  confirm_checks: 2   # สถานะเปลี่ยนเมื่อเห็นค่าใหม่ติดกันกี่รอบ (รอบละ 30 วิ: 2 = ~1 นาที) กันค่ากระตุกครั้งเดียว
+  confirm_checks: 6   # แจ้งเตือนเมื่อเกินเกณฑ์ต่อเนื่องกี่รอบ (รอบละ 30 วิ: 6 = 3 นาที) กันค่ากระตุก
                       #   1 = เปลี่ยนทันที (ไวสุด แต่เด้งบ่อย)
+  # critical_services: [WinDefend, wuauserv, TermService, Dnscache, Dhcp, EventLog]   # service สำคัญของ Windows
+  # bottleneck: true  # ตรวจคอขวด CPU / Memory / Disk / Network (หลายค่าพร้อมกัน)
   hysteresis: 2       # จุดที่ต้องลดลงต่ำกว่าเกณฑ์ก่อนกลับเป็น OK (Warning 80% -> OK เมื่อ < 78%) กันเด้งไปมา
                       # หมายเหตุ: memory/disk ใช้ค่าสูงสุดใน 1 นาทีล่าสุด (เก็บ spike สั้นๆ ที่เกิดระหว่างรอบตรวจ)
+
+# เกณฑ์ทั้งระบบ (warning / error) ไม่ใส่ = ค่าปริยาย
+#   thresholds:          Linux    cpu 75/90 · memory 80/90 · disk 80/90 · disk_latency 20/50 ms · packet_loss 1/5 % · net_latency 100/250 ms
+#   thresholds_windows:  Windows  cpu 80/95 · memory 80/95 · disk 80/90 · mem_available 20/10 % (ต่ำ = แย่) · อื่น ๆ เท่า Linux
+# thresholds_windows:
+#   cpu: {warning: 80, error: 95}
 
 storage:
   buffer_retention: 2h        # ไฟล์ใน data/buffer เก่ากว่านี้ถูกลบ (cleanup-buffer.py)

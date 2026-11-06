@@ -733,6 +733,7 @@ const S = {
     live: null, liveAt: 0, liveBusy: false, liveErr: null,   // process ต่อ core + top memory วัดสด (/api/live-processes)
     pullInterval: 3600,                    // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
+    ovOs: "", ovState: "", sort: null,     // ตัวกรอง OS / สถานะ + การเรียงตาราง ({key, dir})
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
     showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
@@ -923,19 +924,49 @@ function pillsHtml(counts) {
         `<span class="gpill ${k}" title="${BUCKET_PILL[k][1]}"><i>${BUCKET_PILL[k][0]}</i>${counts[k]}</span>`).join("");
 }
 
+/* เรียงแถวเครื่องตามหัวคอลัมน์ที่คลิก (S.sort = {key, dir}) ค่าว่างอยู่ท้ายเสมอ */
+const STATE_RANK = { DOWN: 4, PROBLEM: 3, WARNING: 2, HEALTHY: 1, PAUSED: 0 };
+function sortServers(list) {
+    const { key, dir } = S.sort || {};
+    if (!key) return list;
+    const val = w => key === "state" ? STATE_RANK[w.state] ?? -1 : key === "web" || key === "os" || key === "host"
+        ? String(w[key] || "").toLowerCase() : (hasValue(w[key]) ? Number(w[key]) : null);
+    return [...list].sort((a, b) => {
+        const x = val(a), y = val(b);
+        if (x === null && y === null) return 0;
+        if (x === null) return 1;
+        if (y === null) return -1;
+        return (x < y ? -1 : x > y ? 1 : 0) * (dir === "asc" ? 1 : -1);
+    });
+}
+
 function serverRows(list, cur) {
     const cell = (key, v) => {
         const ok = hasValue(v) && Number.isFinite(Number(v));
         return `<td class="ovv ${ok ? level(key, v) || "ok" : ""}">${ok ? Number(v).toFixed(1) : "-"}</td>`;
     };
+    const netCell = w => {
+        const parts = [];
+        if (hasValue(w.net)) parts.push(`${formatNumber(w.net)} MB/s`);
+        const loss = Number(w.packet_loss), cls = !hasValue(w.packet_loss) ? "" : loss >= 5 ? "cr" : loss >= 1 ? "wr" : "ok";
+        const ping = hasValue(w.ping_ms) ? `${Math.round(w.ping_ms)} ms` : "";
+        const sub = [ping, hasValue(w.packet_loss) ? `${loss.toFixed(loss < 1 && loss > 0 ? 1 : 0)}% loss` : ""].filter(Boolean).join(" · ");
+        return `<td class="ovnet">${parts.join("") || "-"}${sub ? `<small class="${cls}" title="ping จาก central (5 นาทีล่าสุด)">${sub}</small>` : ""}</td>`;
+    };
+    const th = (key, label) => {
+        const on = S.sort && S.sort.key === key;
+        return `<th data-sort="${key}" class="sortable${on ? " on" : ""}" aria-sort="${on ? (S.sort.dir === "asc" ? "ascending" : "descending") : "none"}">${label}${on ? (S.sort.dir === "asc" ? " ▲" : " ▼") : ""}</th>`;
+    };
     const op = canOperate();
-    return `<table class="ovtbl"><thead><tr><th>Name</th><th>IP</th><th>Status</th><th>CPU avg 5m</th><th>Memory %</th><th>Disk %</th><th>Last pull</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
-        list.map(w => {
+    return `<table class="ovtbl"><thead><tr>${th("web", "Name")}${th("os", "OS")}${th("host", "IP")}${th("state", "Status")}${th("cpu", "CPU avg 5m")}${th("memory", "Memory %")}${th("disk", "Disk %")}${th("net", "Network")}${th("alerts", "Alerts")}<th>Last pull</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
+        sortServers(list).map(w => {
             const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
-            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b>${w.os === "windows" ? ` <span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent (Fluent Bit)">Win</span>` : ""}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+            const os = w.os === "windows" ? `<span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent">Win</span>` : `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
+            const al = Number(w.alerts) || 0;
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}<td class="ovv ${w.paused ? "" : al ? "cr" : "ok"}"${why}>${w.paused ? "-" : al}</td><td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
 
@@ -957,15 +988,25 @@ function checkRows(list) {
         }).join("") + `</tbody></table>`;
 }
 
+function treeServers(n) { return [...n.servers, ...[...n.kids.values()].flatMap(treeServers)]; }
+function groupAvgHtml(n) {
+    const rows = treeServers(n), avg = k => { const v = rows.map(x => x[k]).filter(hasValue).map(Number); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+    const part = (label, k) => { const v = avg(k); return v === null ? "" : `<span class="${level(k, v) || "ok"}">${label} ${v.toFixed(0)}%</span>`; };
+    const html = part("CPU", "cpu") + part("RAM", "memory") + part("Disk", "disk");
+    return html ? `<span class="gavg" title="ค่าเฉลี่ยของเครื่องที่ online ในกลุ่ม">${html}</span>` : "";
+}
+
 function groupHtml(n, cur, depth, forceOpen) {
     const open = forceOpen || !S.closed.has(n.path);
     const body = !open ? "" :
         `<div class="gbody">${n.servers.length ? `<div class="tblw">${serverRows(n.servers, cur)}</div>` : ""}${n.checks.length ? `<div class="tblw">${checkRows(n.checks)}</div>` : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
     const items = n.servers.length + n.checks.length;
-    return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
+    return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}${groupAvgHtml(n)}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
 }
 
 function matchesFilter(x, f, isCheck) {
+    if (!isCheck && S.ovOs && (x.os === "windows" ? "windows" : "linux") !== S.ovOs) return false;
+    if (!isCheck && S.ovState && x.state !== S.ovState) return false;
     if (!f) return true;
     const hay = isCheck ? [x.name, x.url, x.group] : [x.web, x.host, x.instance, x.group, x.state];
     return hay.some(v => String(v || "").toLowerCase().includes(f));
@@ -991,14 +1032,19 @@ function renderMachines(ov) {
     const cb = c => checks.filter(x => x.status === c).length;
     const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
     const okCount = webs.filter(w => w.state === "HEALTHY").length;
+    const pct = (k, v) => hasValue(v) ? `<span class="${level(k, v) || "ok"}">${Number(v).toFixed(1)}%</span>` : "-";
     q("#ovTiles").innerHTML =
-        tile("Total", ov.total, "tot", "machines") +
-        tile("OK", okCount, "up", hasValue(ov.up) ? `${ov.up} up` : "") +
-        tile("Warning", (ov.warning || 0), "nok", "≥ warning threshold") +
-        tile("Down / Problem", (ov.down || 0) + (ov.problem || 0), "dn", `${ov.down || 0} down · ${ov.problem || 0} problem`) +
-        tile("Paused", ov.paused || 0, "ps", "") +
+        tile("Total", ov.total, "tot", hasValue(ov.windows) ? `${ov.linux || 0} Linux · ${ov.windows || 0} Windows` : "machines") +
+        tile("Up", ov.up || 0, "up", `${okCount} OK`) +
+        tile("Down", ov.down || 0, "dn", "no data / not responding") +
+        tile("Warning", ov.warning || 0, "nok", "≥ warning threshold") +
+        tile("Critical", ov.problem || 0, "dn", "≥ error threshold") +
+        tile("Paused", ov.paused || 0, "ps", "not monitored") +
+        tile("Avg CPU", pct("cpu", ov.avg_cpu), "avg", "online machines") +
+        tile("Avg RAM", pct("memory", ov.avg_memory), "avg", "online machines") +
+        tile("Avg Disk", pct("disk", ov.avg_disk), "avg", "fullest drive") +
         (SHOW_CHECKS ? tile("Web checks", checks.length, "chk", checks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "");
-    q("#ovTiles").classList.toggle("five", !SHOW_CHECKS);
+    q("#ovTiles").classList.add("many");
 
     const f = (S.ovq || "").trim().toLowerCase();
     const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
@@ -1639,6 +1685,7 @@ function renderAckBar() {
 /* ปิดรายละเอียดเครื่อง (กลับไปเห็นแค่ WEB status + Logs) */
 function closeDetail() {
     S.web = null; S.hist = null; S.summary = null; S.metrics = null; S.marks = []; S.markGroups = []; S.live = null;
+    if (window.CMPanes) CMPanes.reset();
     togglePick(false); hideMarkMenu();
     q("#detail").hidden = true; q("#meta").hidden = true;
     q("#curWrap").hidden = true; q("#curHint").hidden = false;
@@ -1921,6 +1968,7 @@ async function loadAll() {
         renderLists();
         loadLive(false);
         await loadHist();
+        if (window.CMPanes) CMPanes.refresh(false);
         const st = String(summary.status || "").toLowerCase(), cs = summary.current_state;
         if (st === "offline") setSystemStatus(`${S.web} is DOWN`, "red");
         else if (cs === "PROBLEM") setSystemStatus("Problem detected", "red");
@@ -2051,6 +2099,15 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     q("#mach").addEventListener("click", e => {
         if (e.target.closest("a")) return;
+        const sh = e.target.closest("th[data-sort]");
+        if (sh) {
+            /* คลิกซ้ำวน: เรียงปริยาย (ตัวเลขมาก->น้อย, ชื่อ ก->ฮ) -> กลับด้าน -> ไม่เรียง */
+            const key = sh.dataset.sort, def = ["web", "os", "host"].includes(key) ? "asc" : "desc";
+            if (!S.sort || S.sort.key !== key) S.sort = { key, dir: def };
+            else if (S.sort.dir === def) S.sort = { key, dir: def === "asc" ? "desc" : "asc" };
+            else S.sort = null;
+            renderMachines(); return;
+        }
         const pb = e.target.closest("button[data-pause]");
         if (pb) { e.stopPropagation(); togglePause(pb); return; }
         const gh = e.target.closest("[data-group]");
@@ -2063,6 +2120,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (b.dataset.web === S.web) { closeDetail(); return; }       /* คลิกเครื่องเดิมซ้ำ = ปิดรายละเอียด */
         togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.live = null; S.liveErr = null;
         S.web = b.dataset.web; S.hist = null;
+        if (window.CMPanes) CMPanes.reset();
         setUrlWeb(S.web);
         renderMachines(); loadAll().then(() => q("#detail").scrollIntoView({ behavior: "smooth", block: "start" }));
     });
@@ -2089,6 +2147,8 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ackSel").addEventListener("click", () => ackLogs(true));
     q("#unackSel").addEventListener("click", () => ackLogs(false));
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
+    q("#ovOs").addEventListener("change", e => { S.ovOs = e.target.value; renderMachines(); });
+    q("#ovState").addEventListener("change", e => { S.ovState = e.target.value; renderMachines(); });
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {
         const all = [...(S.ov && S.ov.servers || []), ...(SHOW_CHECKS && S.ov && S.ov.checks || [])];

@@ -1,7 +1,9 @@
 ﻿<#
 .SYNOPSIS
   ติดตั้ง Central Monitor Agent (Fluent Bit) บนเครื่อง Windows
-  ส่ง ERROR/WARN จาก Event Log + ไฟล์ log และสัญญาณ "ยังทำงานอยู่" ไปที่ central (OTLP/HTTPS + token)
+  ส่ง ERROR/WARN จาก Event Log + ไฟล์ log, metrics ของเครื่อง และสัญญาณ "ยังทำงานอยู่" ไปที่ central (OTLP/HTTPS + token)
+  metrics เก็บด้วย windows_exporter ตัวจริง (ฟังเฉพาะ 127.0.0.1:9182 ไม่เปิดพอร์ตออกนอกเครื่อง)
+  Fluent Bit อ่านจาก 127.0.0.1 แล้วส่งต่อแบบเข้ารหัส -> ไม่มีใครในวง network ดึง/ดักข้อมูลจากเครื่องนี้ได้
 
 .EXAMPLE
   # รันใน PowerShell แบบ Administrator (คำสั่งเต็มคัดลอกได้จากหน้า Settings ของ central)
@@ -10,7 +12,9 @@
       -Logs "C:\inetpub\logs\LogFiles\*\*.log;D:\app\logs\*.log" -Channels "System,Application"
 
 .NOTES
-  - ไม่มีอินเทอร์เน็ต: วางไฟล์ fluent-bit-<version>-win64.zip ไว้ข้างสคริปต์ หรือระบุ -ZipPath
+  - ไม่มีอินเทอร์เน็ต: วางไฟล์ fluent-bit-<version>-win64.zip และ windows_exporter-<version>-amd64.msi
+    ไว้ข้างสคริปต์ หรือระบุ -ZipPath / -ExporterMsi
+  - ติดตั้ง windows_exporter ไม่ได้ -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit แทนอัตโนมัติ (ข้อมูลน้อยกว่า)
   - รันซ้ำได้ (อัปเดต config / เวอร์ชัน) ข้อมูลตำแหน่งที่อ่านแล้วถูกเก็บไว้ ไม่ส่งซ้ำ
   - ถอนการติดตั้ง: uninstall-fluentbit.ps1
 #>
@@ -25,7 +29,10 @@ param(
     [string] $Version = "5.1.5",                                # เวอร์ชัน Fluent Bit
     [string] $ZipPath = "",                                     # ไฟล์ zip ของ Fluent Bit (ใช้แทนการดาวน์โหลด)
     [string] $CaFile = "",                                      # ใบรับรองของ central (ปริยาย: central-ca.pem ข้างสคริปต์)
-    [switch] $SkipCertCheck                                     # ไม่ตรวจใบรับรอง (ยังเข้ารหัส) ใช้เมื่อชื่อ/IP ไม่ตรงกับใบรับรอง
+    [switch] $SkipCertCheck,                                    # ไม่ตรวจใบรับรอง (ยังเข้ารหัส) ใช้เมื่อชื่อ/IP ไม่ตรงกับใบรับรอง
+    [string] $ExporterVersion = "0.32.1",                       # เวอร์ชัน windows_exporter
+    [string] $ExporterMsi = "",                                 # ไฟล์ .msi ของ windows_exporter (ใช้แทนการดาวน์โหลด)
+    [switch] $NoExporter                                        # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,14 +59,14 @@ $channelList = (@($Channels -split ',' | ForEach-Object { $_.Trim() } | Where-Ob
 Say "เครื่อง: $Name  ->  central: ${Central}:$Port"
 
 # ---------------------------------------------------------------- 1) ทดสอบว่าต่อ central ได้
-Say "1/6 ทดสอบการเชื่อมต่อ ${Central}:$Port"
+Say "1/7 ทดสอบการเชื่อมต่อ ${Central}:$Port"
 $tcp = Test-NetConnection -ComputerName $Central -Port $Port -WarningAction SilentlyContinue
 if (-not $tcp.TcpTestSucceeded) {
     Warn "ต่อ ${Central}:$Port ไม่ได้ (firewall / central ยังไม่เปิดพอร์ต) - ติดตั้งต่อได้ agent จะพักข้อมูลไว้แล้วส่งเมื่อต่อได้"
 }
 
 # ---------------------------------------------------------------- 2) Fluent Bit
-Say "2/6 เตรียม Fluent Bit $Version"
+Say "2/7 เตรียม Fluent Bit $Version"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not $ZipPath) {
     $local = Join-Path $Here "fluent-bit-$Version-win64.zip"
@@ -85,8 +92,89 @@ Copy-Item -Path (Join-Path $exe.Directory.Parent.FullName "*") -Destination $Ins
 Remove-Item $tmp -Recurse -Force
 $FluentExe = Join-Path $InstallDir "bin\fluent-bit.exe"
 
-# ---------------------------------------------------------------- 3) ใบรับรองของ central
-Say "3/6 ใบรับรองของ central"
+# ---------------------------------------------------------------- 3) windows_exporter (metrics)
+# ฟังเฉพาะ 127.0.0.1 (ไม่เปิด firewall) -> มีแค่ Fluent Bit บนเครื่องนี้ที่อ่านได้
+# collector: ชุดเต็มก่อน ถ้า exporter ไม่ตอบ ลองชุดพื้นฐาน ถ้ายังไม่ได้ ใช้ตัวเก็บในตัว Fluent Bit
+$ExporterPort = 9182
+$ExporterUrl  = "http://127.0.0.1:$ExporterPort/metrics"
+$ExpCollectorSets = @(
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu",
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time"
+)
+$UseExporter = $false
+
+function Test-Exporter([int] $seconds) {
+    $until = (Get-Date).AddSeconds($seconds)
+    do {
+        try {
+            $r = Invoke-WebRequest -Uri $ExporterUrl -UseBasicParsing -TimeoutSec 10
+            if ($r.StatusCode -eq 200 -and $r.Content -match "windows_exporter_build_info") { return $true }
+        } catch { }
+        Start-Sleep 2
+    } while ((Get-Date) -lt $until)
+    return $false
+}
+
+function Get-ExporterProducts {
+    $keys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "windows_exporter*" })
+}
+
+if ($NoExporter) {
+    Say "3/7 ข้าม windows_exporter (-NoExporter) -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit"
+} else {
+    Say "3/7 windows_exporter $ExporterVersion (ฟังเฉพาะ 127.0.0.1:$ExporterPort)"
+    try {
+        if (-not $ExporterMsi) {
+            $local = Join-Path $Here "windows_exporter-$ExporterVersion-amd64.msi"
+            if (Test-Path $local) { $ExporterMsi = $local }
+        }
+        if (-not $ExporterMsi) {
+            $ExporterMsi = Join-Path $env:TEMP "windows_exporter-$ExporterVersion-amd64.msi"
+            $url = "https://github.com/prometheus-community/windows_exporter/releases/download/v$ExporterVersion/windows_exporter-$ExporterVersion-amd64.msi"
+            Say "   ดาวน์โหลด $url"
+            Invoke-WebRequest -Uri $url -OutFile $ExporterMsi -UseBasicParsing
+        }
+        if (-not (Test-Path $ExporterMsi)) { throw "ไม่พบไฟล์ $ExporterMsi" }
+
+        # ตัวเดิม (ติดตั้งจาก MSI) -> ถอนก่อน เพื่อให้ตั้งค่าใหม่มีผล (เช่น เปลี่ยนให้ฟังเฉพาะ 127.0.0.1)
+        foreach ($old in Get-ExporterProducts) {
+            Warn "พบ $($old.DisplayName) $($old.DisplayVersion) เดิม -> ถอนแล้วติดตั้งใหม่แบบฟังเฉพาะ 127.0.0.1 (ถ้ามี Prometheus อื่นดึงเครื่องนี้อยู่ จะดึงไม่ได้แล้ว)"
+            if ($old.PSChildName -match '^\{[0-9A-Fa-f-]+\}$') {
+                Start-Process msiexec.exe -ArgumentList @("/x", $old.PSChildName, "/qn", "/norestart") -Wait | Out-Null
+            }
+        }
+
+        foreach ($set in $ExpCollectorSets) {
+            $msiLog = Join-Path $env:TEMP "cm-windows-exporter-msi.log"
+            $msiArgs = @("/i", "`"$ExporterMsi`"", "/qn", "/norestart", "/l*v", "`"$msiLog`"",
+                         "ENABLED_COLLECTORS=$set", "LISTEN_ADDR=127.0.0.1", "LISTEN_PORT=$ExporterPort",
+                         "EXTRA_FLAGS=`"--no-collector.process.cmdline`"", "REMOVE=FirewallException")
+            $p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+            if ($p.ExitCode -notin 0, 1641, 3010) { throw "msiexec exit $($p.ExitCode) (ดู $msiLog)" }
+            if (Test-Exporter 40) { $UseExporter = $true; Write-Host "   collectors: $set"; break }
+            Warn "windows_exporter ไม่ตอบด้วย collector ชุดนี้ -> ลองชุดพื้นฐาน"
+            foreach ($old in Get-ExporterProducts) {
+                if ($old.PSChildName -match '^\{[0-9A-Fa-f-]+\}$') {
+                    Start-Process msiexec.exe -ArgumentList @("/x", $old.PSChildName, "/qn", "/norestart") -Wait | Out-Null
+                }
+            }
+        }
+        if (-not $UseExporter) { throw "windows_exporter ไม่ตอบที่ $ExporterUrl" }
+        $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty LocalAddress -Unique
+        if ($listen | Where-Object { $_ -notin "127.0.0.1", "::1" }) {
+            Warn "windows_exporter ฟังที่ $($listen -join ', ') (ควรเป็น 127.0.0.1 เท่านั้น)"
+        }
+    } catch {
+        Warn "ใช้ windows_exporter ไม่ได้: $($_.Exception.Message) -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit แทน (ข้อมูลน้อยกว่า)"
+        $UseExporter = $false
+    }
+}
+
+# ---------------------------------------------------------------- 4) ใบรับรองของ central
+Say "4/7 ใบรับรองของ central"
 New-Item -ItemType Directory -Force -Path $DataDir, (Join-Path $DataDir "buffer") | Out-Null
 if (-not $CaFile) { $CaFile = Join-Path $Here "central-ca.pem" }
 $CaDest = Join-Path $DataDir "central-ca.pem"
@@ -96,8 +184,8 @@ if (Test-Path $CaFile) {
     throw "ไม่พบ central-ca.pem (ดาวน์โหลดชุดติดตั้งจากหน้า Settings) หรือใช้ -SkipCertCheck"
 }
 
-# ---------------------------------------------------------------- 4) Lua: เลือกเฉพาะ ERROR/WARN + จัดรูปแบบ
-Say "4/6 เขียน config"
+# ---------------------------------------------------------------- 5) Lua: เลือกเฉพาะ ERROR/WARN + จัดรูปแบบ
+Say "5/7 เขียน config"
 $lua = @'
 -- cm-agent.lua : ตัด INFO ทิ้ง แล้วจัดรูปแบบให้ central  {cm_web, source, file, level, message}
 -- message = "<เวลา UTC> [LEVEL] ..." (central อ่านระดับจาก [LEVEL] หลังเวลา เหมือน log ของเครื่อง Linux)
@@ -204,7 +292,7 @@ $lua = $lua.Replace("__CM_WEB__", $Name)
 $LuaFile = Join-Path $DataDir "cm-agent.lua"
 [IO.File]::WriteAllText($LuaFile, $lua, (New-Object Text.UTF8Encoding($false)))
 
-# ---------------------------------------------------------------- 5) fluent-bit.conf
+# ---------------------------------------------------------------- 6) fluent-bit.conf
 $tls = if ($SkipCertCheck) { "    Tls.verify       Off" } else { "    Tls.verify       On`r`n    Tls.ca_file      $CaDest" }
 if (-not $SkipCertCheck -and $Central -notmatch '^[0-9.]+$') { $tls += "`r`n    Tls.vhost        $Central" }
 
@@ -284,7 +372,26 @@ $conf += @"
     Tag              cm.hb
     Scrape_Interval  30
 
-# CPU / Memory / Disk / Network / Service / Process ของเครื่อง (ชื่อแบบ windows_exporter)
+__CM_WIN_INPUT__
+"@
+if ($UseExporter) {
+    # windows_exporter ตัวจริง (127.0.0.1 เท่านั้น)
+    $winInput = @"
+# CPU / Memory / Disk / Network / Service / Process / Hardware ของเครื่อง จาก windows_exporter (127.0.0.1)
+[INPUT]
+    Name             prometheus_scrape
+    Tag              cm.win
+    Host             127.0.0.1
+    Port             $ExporterPort
+    Metrics_Path     /metrics
+    Scrape_Interval  15s
+
+
+"@
+} else {
+    # ตัวเก็บในตัว Fluent Bit (สำรอง)
+    $winInput = @"
+# CPU / Memory / Disk / Network / Service / Process ของเครื่อง (ตัวเก็บในตัว Fluent Bit - สำรอง)
 [INPUT]
     Name             windows_exporter_metrics
     Tag              cm.win
@@ -293,6 +400,8 @@ $conf += @"
 
 
 "@
+}
+$conf = $conf.Replace("__CM_WIN_INPUT__", $winInput)
 $conf += (Output "cm.event" "eventlog" "") + "`r`n"
 if ($logPaths.Count -gt 0) { $conf += (Output "cm.file" "application" "") + "`r`n" }
 $conf += (Output "cm.hb" "agent" "    add_label        cm_web $Name") + "`r`n"
@@ -322,8 +431,8 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw "config ไม่ผ่าน (ดูข้อความด้านบน)" }
 }
 
-# ---------------------------------------------------------------- 6) Windows service
-Say "5/6 ติดตั้ง Windows service '$ServiceName'"
+# ---------------------------------------------------------------- 7) Windows service
+Say "6/7 ติดตั้ง Windows service '$ServiceName'"
 $bin = "`"$FluentExe`" -c `"$ConfFile`""
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     sc.exe config $ServiceName binPath= $bin start= auto | Out-Null
@@ -337,10 +446,10 @@ $agentLog = Join-Path $DataDir "fluent-bit.log"
 if (Test-Path $agentLog) { Move-Item $agentLog "$agentLog.old" -Force }
 Start-Service $ServiceName
 
-Say "6/6 ตรวจสถานะ"
+Say "7/7 ตรวจสถานะ"
 Start-Sleep 8
 $s = Get-Service $ServiceName
-$wemErr = (Test-Path $agentLog) -and (Select-String -Path $agentLog -Pattern "windows_exporter_metrics.*(error|unknown|invalid)|\[error\].*collector" -Quiet)
+$wemErr = (-not $UseExporter) -and (Test-Path $agentLog) -and (Select-String -Path $agentLog -Pattern "windows_exporter_metrics.*(error|unknown|invalid)|\[error\].*collector" -Quiet)
 if ($s.Status -ne "Running" -or $wemErr) {
     Warn "collector บางตัวใช้กับ Fluent Bit $Version ไม่ได้ -> ใช้ชุดปริยาย (อาจไม่มีรายการ process)"
     Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
@@ -351,6 +460,11 @@ if ($s.Status -ne "Running" -or $wemErr) {
     $s = Get-Service $ServiceName
 }
 Write-Host "   service: $($s.Status)"
+if ($UseExporter) {
+    Write-Host "   metrics: windows_exporter $ExporterVersion (127.0.0.1:$ExporterPort) -> Fluent Bit -> central"
+} else {
+    Write-Host "   metrics: ตัวเก็บในตัว Fluent Bit (ไม่มี windows_exporter: บางหน้าจะขึ้น Unsupported)"
+}
 $logFile = Join-Path $DataDir "fluent-bit.log"
 if (Test-Path $logFile) {
     $bad = Select-String -Path $logFile -Pattern "\[error\]|\[ warn\]" | Select-Object -Last 5

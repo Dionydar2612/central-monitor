@@ -8,6 +8,7 @@ Fluent Bit (service: cm-agent)  ──HTTPS :4318──▶  central-agent-gw ─
   Event Log (Critical/Error/Warning)  + token                      └──▶ Prometheus ──▶ สถานะ / Last seen
   ไฟล์ log (เฉพาะ ERROR/WARN)
   สัญญาณ "ยังทำงาน" ทุก 30 วินาที
+  metrics จาก windows_exporter (ฟังเฉพาะ 127.0.0.1:9182) ทุก 15 วินาที
 ```
 
 ได้อะไร
@@ -16,6 +17,7 @@ Fluent Bit (service: cm-agent)  ──HTTPS :4318──▶  central-agent-gw ─
 - CPU / Memory / Disk (แยกไดรฟ์ C: D:) / Disk I/O / Network / กราฟ System Load
 - Service (running / stopped) และ Process ที่ใช้ CPU / RAM สูงสุด
 - sensor + แจ้งสถานะตามเกณฑ์ + Incident history เหมือนเครื่อง Linux
+- Performance / Hardware / System / Bottleneck / Service สำคัญ (รายละเอียด metrics / เกณฑ์ / ข้อจำกัด: `docs/MONITORING-TH.md`)
 
 ต่างจาก Linux: ไม่มี Load average (แท็บ Load = processor queue length) · CPU breakdown "iowait" = interrupt + DPC
 · Load INFO log ใช้ไม่ได้ (ไม่มี SSH) · นาฬิกาเครื่อง Windows ต้องตรง (เวลาของ log มาจากเครื่อง)
@@ -58,14 +60,18 @@ Settings > **+ Add target**
 ## ขั้นที่ 2: ติดตั้งบนเครื่อง Windows
 
 1. กด **Download installer (zip)** แล้วคัดลอกไปที่เครื่อง Windows แตกไฟล์
-   - เครื่องออกอินเทอร์เน็ตไม่ได้: ดาวน์โหลด `fluent-bit-5.1.5-win64.zip` จาก
+   - เครื่องออกอินเทอร์เน็ตไม่ได้: วาง `windows_exporter-0.32.1-amd64.msi`
+     (https://github.com/prometheus-community/windows_exporter/releases/tag/v0.32.1) และ `fluent-bit-5.1.5-win64.zip` จาก
      https://packages.fluentbit.io/windows/ มาวางในโฟลเดอร์เดียวกัน
 2. ใส่ IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก แล้วกด **Make command** -> **Copy command**
 3. บนเครื่อง Windows: เปิด PowerShell แบบ **Run as Administrator** ในโฟลเดอร์ที่แตก แล้ววางคำสั่ง
    ```
    powershell -ExecutionPolicy Bypass -File .\install-fluentbit.ps1 -Central 10.0.0.5 -Token <token> -Name win-app-01 -Channels "System,Application"
    ```
-   สคริปต์จะ: ทดสอบพอร์ต -> ติดตั้ง Fluent Bit -> เขียน config -> ตรวจ config -> สร้าง service `cm-agent` -> เริ่มทำงาน
+   สคริปต์จะ: ทดสอบพอร์ต -> ติดตั้ง Fluent Bit -> ติดตั้ง windows_exporter (127.0.0.1 เท่านั้น) -> เขียน config
+   -> ตรวจ config -> สร้าง service `cm-agent` -> เริ่มทำงาน
+   ติดตั้ง windows_exporter ไม่ได้ -> ใช้ตัวเก็บในตัว Fluent Bit แทน (ข้อมูลน้อยกว่า บางช่องขึ้น Unavailable)
+   ใส่ Host (IP) ของเครื่องในหน้า Settings ด้วย ถ้าต้องการ ping / packet loss (และเปิด ICMP Echo ใน Windows Firewall)
 
 ## ขั้นที่ 3: ตรวจผล
 
@@ -92,6 +98,8 @@ Settings > **+ Add target**
 | เครื่องขึ้น Down แต่ log มา | Prometheus ไม่รับ remote write (ดู "Prometheus ของเครื่อง host" ด้านบน) |
 | central ไม่รับ log | `docker logs central-agent-gw --tail 50` |
 | สถานะ agent บน Windows | `Get-Service cm-agent` · `Restart-Service cm-agent` |
+| metrics ไม่ครบ / Unavailable | `Get-Service windows_exporter` · เปิด `http://127.0.0.1:9182/metrics` บนเครื่องนั้น · รันสคริปต์ติดตั้งซ้ำ |
+| Packet loss 100% | Windows Firewall บล็อก ping: เปิดกฎ "File and Printer Sharing (Echo Request - ICMPv4-In)" |
 
 ถอนการติดตั้ง: `powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge]`
 

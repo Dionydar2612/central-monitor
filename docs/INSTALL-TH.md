@@ -201,6 +201,12 @@ Metrics ที่ระบบใช้ทั้งหมดเป็นของ
 
 ---
 
+
+> **Ping / packet loss (โหมด external)**: container `blackbox` มากับโหมด bundled เท่านั้น
+> ถ้าใช้ Prometheus ภายนอก ให้รัน blackbox_exporter (ตั้งค่าตาม `metrics/blackbox/blackbox.yml`) แล้วเพิ่ม job `ping`
+> แบบเดียวกับใน `metrics/prometheus/prometheus.yml` โดยชี้ `file_sd_configs` ไปที่ `data/prometheus/ping.json` และ `replacement` เป็นที่อยู่ของ blackbox_exporter
+> ไม่เพิ่ม = หน้าเว็บแสดง ping เป็น Unavailable (ส่วนอื่นทำงานปกติ)
+
 ## 6. เตรียมเว็บเซิร์ฟเวอร์ปลายทาง
 
 ทำบน **เว็บเซิร์ฟเวอร์แต่ละเครื่อง**

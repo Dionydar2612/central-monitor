@@ -195,7 +195,8 @@ def _history_query(sensor, labels):
         return f"(1 - node_filesystem_avail_bytes{{{l}}} / node_filesystem_size_bytes{{{l}}}) * 100"
     if kind == "availability":
         return f"up{{{labels}}} * 100"
-    return None
+    # sensor ชนิดใหม่ (disk_latency, packet_loss, net_latency, mem_available ...) เก็บ PromQL ที่ใช้ไว้เอง
+    return sensor.get("query") or None
 
 
 def _series(sensor, seconds, points=120):

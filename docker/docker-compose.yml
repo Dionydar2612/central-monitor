@@ -361,6 +361,7 @@ services:
     depends_on:
       - node-exporter
       - central-puller
+      - blackbox
     networks:
       - central-net
     extra_hosts:
@@ -396,6 +397,27 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
+
+  # ---------------------------------------------------------------
+  # blackbox : ping (ICMP) เครื่องทุกเครื่องให้ Prometheus (job "ping")
+  #   -> latency / packet loss ในหน้า Machine details และ sensor Packet loss / Network latency
+  #   ต้องใช้ NET_RAW เพื่อส่ง ICMP  ไม่เปิดพอร์ตออก host
+  # ---------------------------------------------------------------
+  blackbox:
+    profiles: ["bundled-prometheus"]
+    image: prom/blackbox-exporter:v0.28.0
+    container_name: central-blackbox
+    hostname: blackbox
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    cap_add:
+      - NET_RAW
+    networks:
+      - central-net
+    volumes:
+      - ../metrics/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    restart: unless-stopped
+    logging: *default-logging
 
   # ---------------------------------------------------------------
   # cadvisor : metrics ของ container (ปิดไว้เป็นค่าเริ่มต้น เพราะต้องใช้ privileged

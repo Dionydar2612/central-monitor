@@ -38,6 +38,45 @@ class SensorGrade(unittest.TestCase):
         self.assertEqual(g(87, self.TH, prev="error", hyst=2), "warning")
         self.assertEqual(g(None, self.TH), "unknown")
 
+    def test_low_is_bad(self):
+        """Available RAM: ยิ่งต่ำยิ่งแย่ (warning 20 / error 10)"""
+        g, th = sensor_monitor._grade, {"warning": 20, "error": 10}
+        self.assertEqual(g(50, th, low=True), "ok")
+        self.assertEqual(g(15, th, low=True), "warning")
+        self.assertEqual(g(9, th, low=True), "error")
+        self.assertEqual(g(21, th, prev="warning", hyst=2, low=True), "warning")   # ยังไม่เกิน 22
+        self.assertEqual(g(23, th, prev="warning", hyst=2, low=True), "ok")
+
+
+class Bottleneck(unittest.TestCase):
+    def sig(self, *a, **k):
+        return sensor_monitor._signal(*a, **k)
+
+    def test_rules(self):
+        b = sensor_monitor._bottleneck
+        # 2 สัญญาณเกิน -> bottleneck, ระดับ error ถ้ามีตัวใดถึง error
+        st, d = b("cpu", [self.sig("CPU", 97, "%", 80, 95), self.sig("Queue", 3, "", 2)])
+        self.assertEqual((st, d["state"]), ("error", "bottleneck"))
+        st, d = b("cpu", [self.sig("CPU", 85, "%", 80, 95), self.sig("Queue", 3, "", 2)])
+        self.assertEqual((st, d["state"]), ("warning", "bottleneck"))
+        # สัญญาณเดียว -> trend (ไม่แจ้งเตือน)
+        st, d = b("cpu", [self.sig("CPU", 97, "%", 80, 95), self.sig("Queue", 0.5, "", 2)])
+        self.assertEqual((st, d["state"]), ("ok", "trend"))
+        # ค่าที่วัดสิ่งเดียวกันนับเป็นสัญญาณเดียว
+        st, d = b("memory", [self.sig("Mem", 92, "%", 80, 95, same="ram"),
+                             self.sig("Avail", 8, "%", 20, 10, low=True, same="ram")])
+        self.assertEqual(d["state"], "trend")
+        # ไม่มีข้อมูล -> ไม่สร้าง sensor
+        self.assertIsNone(b("disk", [None, self.sig("x", None, "", 1)]))
+
+    def test_windows_defaults(self):
+        lx, win = sensor_monitor._thresholds({"thresholds_windows": {"cpu": {"warning": 70}}})
+        self.assertEqual(lx["cpu"], {"warning": 75, "error": 90})
+        self.assertEqual(win["cpu"], {"warning": 70.0, "error": 95})
+        self.assertEqual(win["mem_available"], {"warning": 20, "error": 10})
+        self.assertEqual(sensor_monitor._options({})["confirm"], 6)          # 3 นาที
+        self.assertTrue(sensor_monitor._is_windows_target({"type": "agent"}))
+
     def test_duration_text(self):
         self.assertTrue(sensor_monitor._fmt_duration(125))
 

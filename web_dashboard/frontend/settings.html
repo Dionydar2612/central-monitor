@@ -48,14 +48,22 @@
 </div>
 
 <div class="st-h3">เกณฑ์แจ้งสถานะเฉพาะเครื่องนี้ (ไม่บังคับ)</div>
-<div style="color:var(--mut);font-size:13px">เว้นว่าง = ใช้ค่าทั้งระบบ (puller.yaml -> thresholds) · ใช้กับเครื่องที่ค่าสูงเป็นปกติ เช่น DB ที่ disk 85% ตลอด</div>
+<div style="color:var(--mut);font-size:13px">เว้นว่าง = ใช้ค่าทั้งระบบของ OS นั้น (การ์ด Alerts ด้านล่าง) · ใช้กับเครื่องที่ค่าสูงเป็นปกติ เช่น DB ที่ disk 85% ตลอด</div>
 <div class="st-grid th-grid">
-<div class="st-f" data-f="thresholds.cpu.warning"><label for="th_cpu_warning">CPU average 5m warning %</label><input id="th_cpu_warning" inputmode="decimal" placeholder="75 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.cpu.error"><label for="th_cpu_error">CPU average 5m error %</label><input id="th_cpu_error" inputmode="decimal" placeholder="90 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.memory.warning"><label for="th_memory_warning">Memory warning %</label><input id="th_memory_warning" inputmode="decimal" placeholder="80 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.memory.error"><label for="th_memory_error">Memory error %</label><input id="th_memory_error" inputmode="decimal" placeholder="90 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.disk.warning"><label for="th_disk_warning">Disk (ทุก mount point) warning %</label><input id="th_disk_warning" inputmode="decimal" placeholder="80 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.disk.error"><label for="th_disk_error">Disk (ทุก mount point) error %</label><input id="th_disk_error" inputmode="decimal" placeholder="90 (ค่าทั้งระบบ)"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.cpu.warning"><label for="th_cpu_warning">CPU average 5m warning %</label><input id="th_cpu_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.cpu.error"><label for="th_cpu_error">CPU average 5m error %</label><input id="th_cpu_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.memory.warning"><label for="th_memory_warning">Memory warning %</label><input id="th_memory_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.memory.error"><label for="th_memory_error">Memory error %</label><input id="th_memory_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.disk.warning"><label for="th_disk_warning">Disk (ทุก mount point) warning %</label><input id="th_disk_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.disk.error"><label for="th_disk_error">Disk (ทุก mount point) error %</label><input id="th_disk_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.disk_latency.warning"><label for="th_disk_latency_warning">Disk latency warning ms</label><input id="th_disk_latency_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.disk_latency.error"><label for="th_disk_latency_error">Disk latency error ms</label><input id="th_disk_latency_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.packet_loss.warning"><label for="th_packet_loss_warning">Packet loss warning %</label><input id="th_packet_loss_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.packet_loss.error"><label for="th_packet_loss_error">Packet loss error %</label><input id="th_packet_loss_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.net_latency.warning"><label for="th_net_latency_warning">Ping latency warning ms</label><input id="th_net_latency_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f" data-f="thresholds.net_latency.error"><label for="th_net_latency_error">Ping latency error ms</label><input id="th_net_latency_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f agent-only" data-f="thresholds.mem_available.warning" hidden><label for="th_mem_available_warning">Available RAM warning % (ต่ำกว่า)</label><input id="th_mem_available_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
+<div class="st-f agent-only" data-f="thresholds.mem_available.error" hidden><label for="th_mem_available_error">Available RAM error % (ต่ำกว่า)</label><input id="th_mem_available_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
 </div>
 
 <!-- Windows (agent): เครื่องส่งข้อมูลเองผ่าน Fluent Bit -> central-agent-gw :4318 (agent/windows/install-fluentbit.ps1) -->
@@ -64,6 +72,7 @@
 <div style="color:var(--mut);font-size:13px">ส่งเฉพาะ ERROR / WARN (Event Log: Critical / Error / Warning) · IIS (path มี inetpub) ส่งเฉพาะ HTTP 5xx</div>
 <div class="st-grid">
 <div class="st-f" data-f="agent.channels"><label for="a_channels">Event Log channels (คั่นด้วย ,)</label><input id="a_channels" autocomplete="off" value="System, Application" placeholder="System, Application"><small>เช่น Microsoft-Windows-Sysmon/Operational</small><div class="st-err"></div></div>
+<div class="st-f" data-f="critical_services"><label for="a_crit">Service สำคัญ (คั่นด้วย ,)</label><input id="a_crit" autocomplete="off" placeholder="เว้นว่าง = ค่าทั้งระบบ"><small>แจ้งเตือนเมื่อหยุดทั้งที่ตั้งเป็น Automatic · ใส่ - = ไม่ตรวจ</small><div class="st-err"></div></div>
 <div class="st-f" data-f="agent.logs" style="grid-column:span 2"><label for="a_logs">ไฟล์ log (บรรทัดละ 1 path · wildcard ได้)</label><textarea id="a_logs" class="st-code" rows="3" placeholder="C:\inetpub\logs\LogFiles\*\*.log&#10;D:\app\logs\*.log"></textarea><div class="st-err"></div></div>
 </div>
 <div class="st-h3">ติดตั้ง agent บนเครื่อง Windows</div>
@@ -158,6 +167,20 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-f"><label>&nbsp;</label><button class="st-btn primary" id="userAdd" type="button">Add user</button></div>
 </div>
 <div class="st-msg" id="userMsg" role="status"></div>
+</section>
+<!-- การแจ้งเตือน (/api/alert-settings): puller.yaml -> sensors / thresholds (Linux) / thresholds_windows (Windows) -->
+<section class="card svc">
+<div class="top"><h2>Alerts</h2></div>
+<div style="color:var(--mut);font-size:13px">ใช้กับทุกเครื่อง (ตั้งเฉพาะเครื่องได้ในฟอร์มของเครื่อง) · puller ใช้ค่าใหม่ในรอบตรวจถัดไป (~30 วินาที) ไม่ต้องรีสตาร์ต</div>
+<div class="st-grid">
+<div class="st-f" data-al="alert_minutes"><label for="al_min">แจ้งเตือนเมื่อเกินเกณฑ์ต่อเนื่อง (นาที)</label><input id="al_min" type="number" min="0.5" max="60" step="0.5" inputmode="decimal"><small>ค่ากระตุกสั้นกว่านี้ไม่แจ้ง · ตรวจทุก 30 วินาที · ค่าเริ่มต้น 3 นาที</small><div class="st-err"></div></div>
+<div class="st-f" data-al="hysteresis"><label for="al_hyst">Hysteresis (หน่วยเดียวกับเกณฑ์)</label><input id="al_hyst" type="number" min="0" max="20" step="0.5" inputmode="decimal"><small>ต้องลดต่ำกว่าเกณฑ์ - ค่านี้ก่อนกลับเป็น OK (กันเด้งไปมา)</small><div class="st-err"></div></div>
+<div class="st-f" data-al="bottleneck"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="al_bn"> ตรวจ Bottleneck (CPU / Memory / Disk / Network)</label></div>
+<div class="st-f" data-al="critical_services" style="grid-column:span 2"><label for="al_crit">Service สำคัญของ Windows (คั่นด้วย ,)</label><input id="al_crit" autocomplete="off"><small>แจ้ง Error เมื่อหยุดทั้งที่ตั้ง start mode เป็น Automatic · service ที่ไม่มีบนเครื่องจะถูกข้าม</small><div class="st-err"></div></div>
+</div>
+<div class="tblw"><table class="st-tbl altbl"><thead><tr><th>เกณฑ์</th><th>Linux warning</th><th>Linux error</th><th>Windows warning</th><th>Windows error</th></tr></thead><tbody id="alRows"></tbody></table></div>
+<div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="al_save" type="button">Save alerts</button><button class="st-btn" id="al_reset" type="button">ใช้ค่าเริ่มต้น</button></div>
+<div class="st-msg" id="al_msg" role="status"></div>
 </section>
 <!-- อายุการเก็บข้อมูล (/api/retention): log ใน OpenSearch (ISM), ประวัติปัญหา + สถานะเครื่องย้อนหลัง (puller.yaml storage) -->
 <section class="card svc">

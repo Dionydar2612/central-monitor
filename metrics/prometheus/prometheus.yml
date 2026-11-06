@@ -34,6 +34,28 @@ scrape_configs:
           - /etc/prometheus/targets/web-nodes.json
 
   # -------------------------------------------------------------------
+  # Ping (ICMP) ทุกเครื่องที่มี host -> latency / packet loss
+  #   รายชื่อ: data/prometheus/ping.json (puller สร้างจาก puller.yaml, label cm_target)
+  #   Prometheus ไม่ ping เอง แต่ถาม blackbox_exporter (container blackbox) ให้ ping แทน
+  #   ผล: probe_success (1/0), probe_icmp_duration_seconds{phase="rtt"}
+  #   packet loss % = (1 - avg_over_time(probe_success[5m])) * 100  (1 ping ทุก 15 วินาที)
+  # -------------------------------------------------------------------
+  - job_name: ping
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/ping.json
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: ping_host
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # -------------------------------------------------------------------
   # เครื่องที่รัน central-monitor เอง (container node-exporter ใน stack นี้)
   #   dashboard อ่านเครื่องนี้ด้วย job=$CENTRAL_NODE_JOB instance=$CENTRAL_NODE_INSTANCE
   #   (ปริยาย: central / node-exporter:9100 ตั้งใน docker/.env)

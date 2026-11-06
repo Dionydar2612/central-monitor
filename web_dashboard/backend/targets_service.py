@@ -89,11 +89,19 @@ def clean_group(value, errors, field="group"):
     return group
 
 
-THRESHOLD_KINDS = ("cpu", "memory", "disk")
+THRESHOLD_KINDS = ("cpu", "memory", "disk", "disk_latency", "packet_loss", "net_latency", "mem_available")
+# (ต่ำสุด, สูงสุด, หน่วย)  mem_available = RAM ว่างเหลือ % (ยิ่งต่ำยิ่งแย่ -> warning ต้องมากกว่า error)
+THRESHOLD_RANGES = {
+    "cpu": (1, 100, "%"), "memory": (1, 100, "%"), "disk": (1, 100, "%"),
+    "disk_latency": (1, 10000, "ms"), "packet_loss": (0.1, 100, "%"), "net_latency": (1, 10000, "ms"),
+    "mem_available": (1, 99, "%"),
+}
+LOW_IS_BAD = ("mem_available",)
+SERVICE_RE = re.compile(r"^[A-Za-z0-9_.$@ -]{1,80}$")
 
 
-def clean_thresholds(value, errors):
-    """เกณฑ์เฉพาะเครื่อง {cpu: {warning, error}, ...} ช่องว่าง = ใช้ค่าทั้งระบบ  คืน dict (อาจว่าง)"""
+def clean_thresholds(value, errors, prefix="thresholds"):
+    """เกณฑ์ {cpu: {warning, error}, ...} ช่องว่าง = ใช้ค่าทั้งระบบ  คืน dict (อาจว่าง)"""
     out = {}
     if not isinstance(value, dict):
         return out
@@ -101,6 +109,7 @@ def clean_thresholds(value, errors):
         item = value.get(kind) or {}
         if not isinstance(item, dict):
             continue
+        lo, hi, unit = THRESHOLD_RANGES[kind]
         clean = {}
         for lv in ("warning", "error"):
             v = item.get(lv)
@@ -109,16 +118,41 @@ def clean_thresholds(value, errors):
             try:
                 v = float(v)
             except (TypeError, ValueError):
-                errors[f"thresholds.{kind}.{lv}"] = "ต้องเป็นตัวเลข 1-100"
+                errors[f"{prefix}.{kind}.{lv}"] = f"ต้องเป็นตัวเลข {lo:g}-{hi:g}"
                 continue
-            if not 1 <= v <= 100:
-                errors[f"thresholds.{kind}.{lv}"] = "ต้องอยู่ระหว่าง 1-100"
+            if not lo <= v <= hi:
+                errors[f"{prefix}.{kind}.{lv}"] = f"ต้องอยู่ระหว่าง {lo:g}-{hi:g} {unit}"
                 continue
             clean[lv] = int(v) if v.is_integer() else v
-        if "warning" in clean and "error" in clean and clean["warning"] >= clean["error"]:
-            errors[f"thresholds.{kind}.warning"] = "warning ต้องน้อยกว่า error"
+        if "warning" in clean and "error" in clean:
+            if kind in LOW_IS_BAD and clean["warning"] <= clean["error"]:
+                errors[f"{prefix}.{kind}.warning"] = "RAM ว่าง: warning ต้องมากกว่า error (เช่น 20 / 10)"
+            elif kind not in LOW_IS_BAD and clean["warning"] >= clean["error"]:
+                errors[f"{prefix}.{kind}.warning"] = "warning ต้องน้อยกว่า error"
         if clean:
             out[kind] = clean
+    return out
+
+
+def clean_services(value, errors, field="critical_services"):
+    """รายชื่อ service (list หรือข้อความคั่นด้วย , / ขึ้นบรรทัด)  None = ใช้ค่าทั้งระบบ"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [x for x in re.split(r"[,\n]", value)]
+    if not isinstance(value, list):
+        errors[field] = "ต้องเป็นรายชื่อ service"
+        return None
+    out = []
+    for x in value[:50]:
+        x = str(x or "").strip()
+        if not x:
+            continue
+        if not SERVICE_RE.match(x):
+            errors[field] = f"ชื่อ service ไม่ถูกต้อง: {x[:40]}"
+            continue
+        if x.lower() not in [o.lower() for o in out]:
+            out.append(x)
     return out
 
 
@@ -195,10 +229,12 @@ def validate_agent_target(data, existing_names, editing=None):
     group = clean_group(data.get("group"), errors)
     paused = bool(data.get("paused", False))
     thresholds = clean_thresholds(data.get("thresholds"), errors)
+    crit = data.get("critical_services")
+    crit = clean_services(crit, errors) if crit not in (None, "") else None
     if errors:
         raise ValidationError(errors)
     return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "paused": paused,
-            "thresholds": thresholds, "agent": {"logs": logs, "channels": channels}}
+            "thresholds": thresholds, "critical_services": crit, "agent": {"logs": logs, "channels": channels}}
 
 
 def is_agent(t):
@@ -354,6 +390,10 @@ def _to_node(t):
             node["paused"] = True
         if t.get("thresholds"):
             node["thresholds"] = _thresholds_node(t["thresholds"])
+        if t.get("critical_services") is not None:
+            cs = CommentedSeq(t["critical_services"])
+            cs.fa.set_flow_style()
+            node["critical_services"] = cs
         node["agent"] = _agent_node(t)
         return node
     node["host"] = t["host"]
@@ -376,7 +416,7 @@ def _to_node(t):
 def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
     if is_agent(t) or is_agent(node):
-        for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent"):
+        for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent", "critical_services"):
             if key in node:
                 del node[key]
         for k, v in _to_node(t).items():
@@ -581,6 +621,7 @@ def _view(t):
         return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
                 "group": t.get("group") or "", "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
                 "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"]},
+                "critical_services": t.get("critical_services"),
                 "watch_services": t.get("watch_services") or []}
     ssh = t.get("ssh") or {}
     port = ssh.get("port", 22)

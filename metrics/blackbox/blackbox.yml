@@ -1,0 +1,11 @@
+# =====================================================================
+# blackbox.yml - ตั้งค่า blackbox_exporter (container blackbox)
+# ใช้กับ job "ping" ใน metrics/prometheus/prometheus.yml
+# =====================================================================
+modules:
+  icmp:
+    prober: icmp
+    timeout: 5s            # ไม่ตอบใน 5 วินาที = ping หาย (นับเป็น packet loss)
+    icmp:
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: true

@@ -1158,3 +1158,50 @@ td.bad{color:#e5484d}
 #formCard [hidden]{display:none!important}
 #agStatus.ok{color:var(--good)}#agStatus.wr{color:#c98a00}
 .ostag{display:inline-block;font-size:10px;font-weight:700;padding:0 5px;border-radius:4px;background:#0078d4;color:#fff;vertical-align:1px;margin-left:4px}
+
+/* ---- 9. WEB status: คอลัมน์ใหม่ / เรียง / ตัวกรอง / ค่าเฉลี่ยกลุ่ม ---- */
+.mach .ovtiles.many{grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
+.ovtile.avg b{font-size:26px}.ovtile.avg b span.ok{color:#0a9a60}.ovtile.avg b span.wr{color:#c27c00}.ovtile.avg b span.cr{color:#e5484d}
+.ovtools select{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:7px 8px;font:inherit;font-size:13px}
+.ovtbl th.sortable{cursor:pointer;user-select:none;white-space:nowrap}.ovtbl th.sortable:hover,.ovtbl th.sortable.on{color:var(--blue)}
+.ovnet{white-space:nowrap;font-variant-numeric:tabular-nums}.ovnet small{display:block;font-size:11px;color:var(--mut)}
+.ovnet small.wr{color:#c27c00}.ovnet small.cr{color:#e5484d}
+.ostag.lx{background:#4b5563}
+.gavg{display:inline-flex;gap:8px;font-size:12px;color:var(--mut);margin-left:10px}.gavg .ok{color:#0a9a60}.gavg .wr{color:#c27c00}.gavg .cr{color:#e5484d}
+@media(max-width:600px){.gavg{display:none}}
+
+/* ---- 10. รายละเอียดเครื่อง: แท็บ + แผงข้อมูล (machine.js) ---- */
+.dtabs{display:flex;gap:4px;flex-wrap:wrap;margin:16px 0 0;border-bottom:1px solid var(--line)}
+.dtabs button{border:0;background:none;color:var(--mut);font:500 14px inherit;font-family:inherit;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.dtabs button[aria-selected="true"]{color:var(--blue);border-bottom-color:var(--blue)}
+.dtabs button:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.dpane{margin-top:16px}.dpane>.grid.one{grid-template-columns:1fr}.dpane .two{margin-top:0}
+.pn:empty{display:none}.pn>.card,.pn>.grid{margin-bottom:16px}
+.pgrid2{grid-template-columns:1fr 1fr}.pgrid2>div>.card+.card{margin-top:16px}
+@media(max-width:900px){.pgrid2{grid-template-columns:1fr}}
+.pcard .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.kv{display:grid;grid-template-columns:minmax(120px,40%) 1fr;gap:6px 14px;margin:0;font-size:13.5px}
+.kv dt{color:var(--mut)}.kv dd{margin:0;font-variant-numeric:tabular-nums;word-break:break-word}
+.kv b.ok,.ptbl .ok{color:#0a9a60}.kv b.wr,.ptbl .wr{color:#c27c00}.kv b.cr,.ptbl .cr{color:#e5484d}
+.na{display:inline-block;font-size:11px;font-weight:600;color:var(--mut);background:var(--chip);border-radius:4px;padding:0 6px}
+.ptbl{width:100%;border-collapse:collapse;font-size:13px}.ptbl th{text-align:left;color:var(--mut);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.ptbl td{padding:6px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;vertical-align:top}
+.ptbl td small{color:var(--mut)}.ptbl td.msg{color:var(--mut);min-width:220px}.ptbl tr.hit td:first-child{font-weight:600}
+.pbar{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.pbar u{display:block;width:60px;height:6px;border-radius:3px;background:var(--chip);overflow:hidden;text-decoration:none}
+.pbar u i{display:block;height:100%;background:var(--blue)}.pbar em{font-style:normal}
+.pbar.wr u i{background:#f5a524}.pbar.cr u i{background:#e5484d}
+.cores{display:flex;gap:3px;align-items:flex-end;height:46px;margin-top:12px;padding-top:4px}
+.core{flex:1;max-width:22px;height:100%;background:var(--chip);border-radius:3px;display:flex;align-items:flex-end;overflow:hidden}
+.core i{display:block;width:100%;background:var(--blue)}.core.wr i{background:#f5a524}.core.cr i{background:#e5484d}
+.pnote{color:var(--mut);font-size:12.5px;margin:0 0 12px}
+.bnhead{display:flex;gap:8px;align-items:center;margin-bottom:8px}.bnmeta{color:var(--mut);font-size:12.5px;margin-left:auto}
+.advice{margin-top:10px;font-size:13px;background:var(--chip);border-radius:8px;padding:10px 12px;line-height:1.5}
+.unsup{margin:0;padding-left:0;list-style:none;font-size:13px;display:grid;gap:8px}
+.svcard .svcs{max-height:560px}
+/* Settings > Alerts: ตารางเกณฑ์ Linux / Windows */
+.altbl{width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px}
+.altbl th{text-align:left;color:var(--mut);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line)}
+.altbl td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.altbl input{width:100%;max-width:120px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit}
+.altbl td.has-err input{border-color:#e5484d}.altbl .st-err{color:#e5484d;font-size:12px}

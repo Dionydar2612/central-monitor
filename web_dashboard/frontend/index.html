@@ -46,20 +46,33 @@
 <section class="card mach">
 <div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px"><span id="curWrap" hidden>Showing <b id="cur" style="color:var(--ink)">-</b> · <button type="button" class="linkbtn" id="closeDetail">Close details</button> · </span><span id="curHint">click a machine to see its details</span> · auto refresh 10 seconds</span></div>
 <div class="ovtiles" id="ovTiles"></div>
-<div class="ovtools"><input type="search" id="ovFind" placeholder="Filter by name, IP, group or URL..." aria-label="Filter machines and checks" autocomplete="off"><button type="button" class="svbtn" id="ovExpand">Expand all</button><button type="button" class="svbtn" id="ovCollapse">Collapse all</button></div>
+<div class="ovtools"><input type="search" id="ovFind" placeholder="Filter by name, IP, group or URL..." aria-label="Filter machines and checks" autocomplete="off"><select id="ovOs" aria-label="Filter by OS"><option value="">All OS</option><option value="linux">Linux</option><option value="windows">Windows</option></select><select id="ovState" aria-label="Filter by status"><option value="">All status</option><option value="HEALTHY">OK</option><option value="WARNING">Warning</option><option value="PROBLEM">Critical</option><option value="DOWN">Down</option><option value="PAUSED">Paused</option></select><button type="button" class="svbtn" id="ovExpand">Expand all</button><button type="button" class="svbtn" id="ovCollapse">Collapse all</button></div>
 <div class="gtree" id="mach"></div>
 <div class="mm" id="meta" hidden></div>
 </section>
 
-<!-- รายละเอียดเครื่องที่เลือก: ซ่อน (และไม่โหลด) จนกว่าจะคลิกเครื่องใน WEB status -->
+<!-- รายละเอียดเครื่องที่เลือก: ซ่อน (และไม่โหลด) จนกว่าจะคลิกเครื่องใน WEB status
+     แบ่ง 8 แท็บ (#dTabs, machine.js): Overview / Performance / Bottleneck / Processes / Services / Hardware / System / Alerts & Events
+     แต่ละแท็บ = <div class="dpane" data-pane="..."> แท็บที่ไม่ได้เปิดจะไม่โหลดข้อมูล -->
 <div id="detail" hidden>
+<div class="dtabs" id="dTabs" role="tablist" aria-label="Machine details">
+<button type="button" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+<button type="button" role="tab" data-tab="performance" aria-selected="false">Performance</button>
+<button type="button" role="tab" data-tab="bottleneck" aria-selected="false">Bottleneck</button>
+<button type="button" role="tab" data-tab="processes" aria-selected="false">Processes</button>
+<button type="button" role="tab" data-tab="services" aria-selected="false">Services</button>
+<button type="button" role="tab" data-tab="hardware" aria-selected="false">Hardware</button>
+<button type="button" role="tab" data-tab="system" aria-selected="false">System</button>
+<button type="button" role="tab" data-tab="alerts" aria-selected="false">Alerts &amp; Events</button>
+</div>
+<div class="dpane" data-pane="overview">
 
 <!-- KPI 4 ใบ: CPU average 5m / Memory Usage % / Disk Usage % (Per Mount Point) / Disk I/O utilization (%)
      (ค่าปัจจุบัน + เส้นกราฟเล็ก จาก /api/metrics/history ; รายการ mount point จาก /api/metrics -> disk_mounts) -->
 <div class="grid kpis" id="kpis"></div>
 
-<!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) และรายการ Service (#sv: จาก snapshot ของ puller) -->
-<div class="grid main">
+<!-- กราฟใหญ่ System Load (#load: CPU + Memory ตามช่วงเวลา) -->
+<div class="grid one">
 <section class="card">
 <div class="top"><h2>System Load</h2><div class="chopt"><button type="button" class="svbtn" id="zoomReset" hidden>Reset zoom</button></div></div>
 <div class="chbar"><div class="tabs" id="chTabs" role="group" aria-label="Chart metric"></div><div class="lgd" id="lgd"></div></div>
@@ -71,7 +84,14 @@
 <div class="chnote" id="chNote"></div>
 <div class="chhint">Hover for values · drag to zoom · click a dot to open the log</div>
 </section>
-<section class="card">
+</div>
+</div>
+<div class="dpane" data-pane="performance" hidden><div id="pnPerf" class="pn"></div></div>
+<div class="dpane" data-pane="bottleneck" hidden><div id="pnBn" class="pn"></div></div>
+<!-- รายการ Service (#sv: Linux จาก snapshot ของ puller / Windows จาก windows_exporter) -->
+<div class="dpane" data-pane="services" hidden>
+<div class="grid one">
+<section class="card svcard">
 <div class="top"><h2>Service</h2><div class="svh"><span class="cnt" id="svCnt"></span><button type="button" class="svbtn" id="svEdit" aria-expanded="false" aria-controls="svPick">Select</button></div></div>
 <!-- ตัวเลือก service ที่จะแสดง (บันทึกที่ puller.yaml -> targets[].watch_services ผ่าน /api/targets/<web>/services) -->
 <div class="svpick" id="svPick" hidden>
@@ -84,15 +104,24 @@
 <div class="svcs" id="sv"></div>
 </section>
 </div>
+</div>
 
 <!-- ตาราง process ที่กิน CPU (#svc) จาก snapshot ของ puller และ Memory (#mem: วัดสดผ่าน puller ถ้าได้ ไม่งั้น snapshot) -->
+<div class="dpane" data-pane="processes" hidden>
+<div id="pnProc" class="pn"></div>
 <div class="grid two">
 <section class="card"><h2>CPU process</h2><div class="asof" id="cpuAsOf"></div><div class="tblw scroll procscroll"><table><thead><tr><th>Process</th><th>PID</th><th style="width:44%">CPU</th></tr></thead><tbody id="svc"></tbody></table></div></section>
 <section class="card"><h2>Memory Usage by Process</h2><div class="tblw scroll procscroll"><table class="memtbl"><thead><tr><th>Process</th><th>PID</th><th style="width:48%">Memory</th></tr></thead><tbody id="mem"></tbody></table></div></section>
 </div>
 
+</div>
+<div class="dpane" data-pane="hardware" hidden><div id="pnHw" class="pn"></div></div>
+<div class="dpane" data-pane="system" hidden>
+<div id="pnSys" class="pn"></div>
 <!-- System events จาก journalctl (#ev) ซ่อนไว้เมื่อไม่มีเหตุการณ์ -->
 <section class="card svc" id="evCard" hidden><div class="top"><h2>System events</h2><span class="cnt" id="evCnt"></span></div><div class="evl scroll" id="ev"></div></section>
+</div>
+<div class="dpane" data-pane="alerts" hidden><div id="pnAl" class="pn"></div></div>
 </div>
 
 <!-- ตาราง Logs (#plog): log ของเครื่องที่เลือก คลิกแถวเพื่อเปิดหน้าต่างรายละเอียด (showProblemModal) -->
@@ -108,5 +137,6 @@
 <!-- ตรรกะทั้งหมดของหน้านี้ -->
 <script src="/badges.js"></script>
 <script src="/dashboard.js"></script>
+<script src="/machine.js"></script>
 </body>
 </html>

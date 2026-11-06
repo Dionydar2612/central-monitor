@@ -12,7 +12,7 @@
 const $ = id => document.getElementById(id);
 const S = { targets: [], publicKey: null, editing: null, scanned: [], hostKeyKnown: false, checks: [], editingCheck: null, me: null };
 
-const TH_KINDS = ["cpu", "memory", "disk"];
+const TH_KINDS = ["cpu", "memory", "disk", "disk_latency", "packet_loss", "net_latency", "mem_available"];
 
 /* ---------- ตัวช่วย ---------- */
 
@@ -179,6 +179,7 @@ function openForm(t) {
     $("agCentral").value = agentCentralGuess();
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
     $("a_logs").value = t && t.agent ? (t.agent.logs || []).join("\n") : "";
+    $("a_crit").value = t && Array.isArray(t.critical_services) ? (t.critical_services.length ? t.critical_services.join(", ") : "-") : "";
     if (t && t.type === "agent") {
         $("formTitle").textContent = `Edit target: ${t.name}`;
         $("f_name").value = t.name; $("f_name").disabled = true;
@@ -245,6 +246,8 @@ function readForm() {
             paused: $("f_paused").checked,
             host: $("f_host").value.trim(),
             thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
+            /* ว่าง = ค่าทั้งระบบ (null) · "-" = ไม่ตรวจ ([]) */
+            critical_services: $("a_crit").value.trim() === "" ? null : $("a_crit").value.trim() === "-" ? [] : $("a_crit").value.split(",").map(s => s.trim()).filter(Boolean),
             agent: {
                 logs: $("a_logs").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
                 channels: $("a_channels").value.split(",").map(s => s.trim()).filter(Boolean),
@@ -588,6 +591,60 @@ async function saveRetention() {
     } finally { $("r_save").disabled = false; }
 }
 
+/* ---------- Alerts (/api/alert-settings) ---------- */
+let AL = null;
+const AL_LABEL = {
+    cpu: "CPU %", memory: "Memory used %", disk: "Disk used %", disk_latency: "Disk latency (ms)",
+    packet_loss: "Packet loss (ping) %", net_latency: "Ping latency (ms)", mem_available: "Available RAM % (ต่ำกว่า = แจ้ง)",
+};
+function alInput(id, v) { return el("input", { id, type: "number", step: "any", min: "0", inputmode: "decimal", value: v ?? "" }); }
+function renderAlerts(d) {
+    $("al_min").value = d.alert_minutes; $("al_hyst").value = d.hysteresis; $("al_bn").checked = !!d.bottleneck;
+    $("al_crit").value = (d.critical_services || []).join(", ");
+    const tb = $("alRows"); tb.textContent = "";
+    (d.kinds || Object.keys(AL_LABEL)).forEach(k => {
+        const lx = (d.thresholds || {})[k] || {}, wn = (d.thresholds_windows || {})[k] || {};
+        const cell = (os, lv, v) => el("td", { "data-al": `${os}.${k}.${lv}` }, alInput(`al_${os}_${k}_${lv}`, v), el("div", { class: "st-err" }));
+        const tr = el("tr", {}, el("td", {}, AL_LABEL[k] || k),
+            k === "mem_available" ? el("td", { colspan: "2", class: "st-mut" }, "Windows เท่านั้น (Linux ดูที่ Memory used %)") : [cell("thresholds", "warning", lx.warning), cell("thresholds", "error", lx.error)],
+            cell("thresholds_windows", "warning", wn.warning), cell("thresholds_windows", "error", wn.error));
+        tb.append(tr);
+    });
+}
+async function loadAlerts() {
+    try { AL = await api("GET", "/api/alert-settings"); renderAlerts(AL); }
+    catch (e) { if (e.message !== "auth") say("al_msg", "โหลดค่าไม่สำเร็จ: " + e.message, "bad"); }
+}
+async function saveAlerts() {
+    document.querySelectorAll("[data-al]").forEach(f => { f.classList.remove("has-err"); const er = f.querySelector(".st-err"); if (er) er.textContent = ""; });
+    const th = os => Object.fromEntries((AL.kinds || []).filter(k => $(`al_${os}_${k}_warning`)).map(k =>
+        [k, { warning: $(`al_${os}_${k}_warning`).value.trim(), error: $(`al_${os}_${k}_error`).value.trim() }]));
+    const body = {
+        alert_minutes: $("al_min").value.trim(), hysteresis: $("al_hyst").value.trim(), bottleneck: $("al_bn").checked,
+        critical_services: $("al_crit").value.split(",").map(s => s.trim()).filter(Boolean),
+        thresholds: th("thresholds"), thresholds_windows: th("thresholds_windows"),
+    };
+    $("al_save").disabled = true;
+    try {
+        AL = await api("PUT", "/api/alert-settings", body);
+        renderAlerts(AL);
+        say("al_msg", `บันทึกแล้ว · แจ้งเตือนเมื่อเกินต่อเนื่อง ${AL.alert_minutes} นาที (${AL.confirm_checks} รอบตรวจ)`, "ok");
+    } catch (e) {
+        const left = [];
+        if (e.fields) Object.entries(e.fields).forEach(([k, m]) => {
+            const f = document.querySelector(`[data-al="${CSS.escape(k)}"]`);
+            if (f) { f.classList.add("has-err"); const er = f.querySelector(".st-err"); if (er) er.textContent = m; } else left.push(m);
+        });
+        say("al_msg", "บันทึกไม่สำเร็จ: " + e.message + (left.length ? " · " + left.join(" · ") : ""), "bad");
+    } finally { $("al_save").disabled = false; }
+}
+function resetAlerts() {
+    if (!AL || !AL.defaults) return;
+    renderAlerts({ ...AL, alert_minutes: AL.defaults.alert_minutes, hysteresis: 2, bottleneck: true,
+        critical_services: AL.defaults.critical_services, thresholds: AL.defaults.thresholds, thresholds_windows: AL.defaults.thresholds_windows });
+    say("al_msg", "ใส่ค่าเริ่มต้นแล้ว กด Save alerts เพื่อบันทึก", "");
+}
+
 async function loadUser() {
     try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; } catch (e) { /* api() พาไป /login เอง */ }
 }
@@ -621,6 +678,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const SHOW_CHECKS = false;
     $("checksCard").hidden = !SHOW_CHECKS;
     $("r_save").onclick = saveRetention;
+    $("al_save").onclick = saveAlerts;
+    $("al_reset").onclick = resetAlerts;
     $("f_type").addEventListener("change", e => setType(e.target.value));
     $("agMake").onclick = makeAgentCommand;
     $("agCopy").onclick = async () => {
@@ -629,6 +688,6 @@ document.addEventListener("DOMContentLoaded", () => {
         $("agCopyMsg").textContent = "คัดลอกแล้ว"; setTimeout(() => { $("agCopyMsg").textContent = ""; }, 2500);
     };
     ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
-    loadUser(); loadTargets(); loadUsers(); loadRetention();
+    loadUser(); loadTargets(); loadUsers(); loadRetention(); loadAlerts();
     if (SHOW_CHECKS) loadChecks();
 });

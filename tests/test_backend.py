@@ -59,6 +59,25 @@ class Backend(unittest.TestCase):
         log = open(os.path.join(self.tmp, "state", "audit.log"), encoding="utf-8").read()
         self.assertNotIn("password1", log)
 
+    def test_alert_settings(self):
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        d = c.get("/api/alert-settings").json
+        self.assertEqual(d["alert_minutes"], 3.0)
+        self.assertEqual(d["thresholds_windows"]["cpu"], {"warning": 80, "error": 95})
+        bad = c.put("/api/alert-settings", json={"alert_minutes": 0,
+                                                 "thresholds_windows": {"mem_available": {"warning": 5, "error": 10}}})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("thresholds_windows.mem_available.warning", bad.json["fields"])
+        ok = c.put("/api/alert-settings", json={"alert_minutes": 5, "critical_services": ["WinDefend", "Spooler"],
+                                                "thresholds_windows": {"cpu": {"warning": 85, "error": 96}}})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json["confirm_checks"], 10)
+        self.assertEqual(ok.json["critical_services"], ["WinDefend", "Spooler"])
+        self.assertEqual(c.get("/api/host/nope/system").status_code, 404)
+        acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
+        self.assertIn("settings.alerts", acts)
+
     def test_password_hash(self):
         import users_service as u
         h = u.hash_password("secret-pass")

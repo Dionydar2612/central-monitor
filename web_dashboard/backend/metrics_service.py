@@ -151,13 +151,32 @@ LINUX_PROMQL = {
 }
 
 # ---------------------------------------------------------------------------
-# Windows (agent: Fluent Bit windows_exporter_metrics -> remote write) ชื่อ metric แบบ windows_exporter
+# Windows (agent: windows_exporter 127.0.0.1:9182 -> Fluent Bit -> remote write) ชื่อ metric แบบ windows_exporter
+#   รองรับทั้งชื่อใหม่ (windows_exporter >= 0.31) และชื่อเก่า (ตัวเก็บในตัว Fluent Bit / exporter รุ่นเก่า)
+#     CPU     windows_cpu_time_seconds_total  | windows_cpu_time_total
+#     RAM     windows_memory_physical_total_bytes | windows_cs_physical_memory_bytes
+#             windows_memory_available_bytes      | windows_os_physical_memory_free_bytes
 #   ไดรฟ์ = volume (C:, D:) ตัด HarddiskVolumeN (พาร์ทิชันระบบที่ไม่มีอักษรไดรฟ์) และ _Total
 #   cpu_iowait ไม่มีบน Windows -> ใช้เวลา interrupt + DPC (งานของ driver/ฮาร์ดแวร์) แทน
 #   load average ไม่มีบน Windows -> load1 = processor queue length (จำนวนงานที่รอ CPU)
 # ---------------------------------------------------------------------------
 _WIN_VOL = 'volume!~"HarddiskVolume.*|_Total"'
 _WIN_NIC = 'nic!~"(?i).*(isatap|loopback|teredo|pseudo).*"'
+
+
+def win_cpu(l, mode=None):
+    """selector ของเวลา CPU (ชื่อใหม่/เก่า)"""
+    m = f',mode="{mode}"' if mode and "|" not in mode else (f',mode=~"{mode}"' if mode else "")
+    return f'{{__name__=~"windows_cpu_time(_seconds)?_total",{l}{m}}}'
+
+
+def win_mem_total(l):
+    return f'max({{__name__=~"windows_memory_physical_total_bytes|windows_cs_physical_memory_bytes",{l}}})'
+
+
+def win_mem_available(l):
+    return (f"(max(windows_memory_available_bytes{{{l}}}) or max(windows_memory_physical_free_bytes{{{l}}})"
+            f" or max(windows_os_physical_memory_free_bytes{{{l}}}))")
 
 
 def _win_disk_used_pct(l):
@@ -172,14 +191,12 @@ def _none(l):
 
 
 WIN_PROMQL = {
-    "cpu": lambda l: f'100 - (avg(rate(windows_cpu_time_total{{{l},mode="idle"}}[5m])) * 100)',
+    "cpu": lambda l: f'100 - (avg(rate({win_cpu(l, "idle")}[5m])) * 100)',
     "cpu_core": lambda l: (
-        f'label_replace(100 - (avg by(core) (rate(windows_cpu_time_total{{{l},mode="idle"}}[5m])) * 100),'
+        f'label_replace(100 - (avg by(core) (rate({win_cpu(l, "idle")}[5m])) * 100),'
         f' "cpu", "$1", "core", "(?:.*,)?([0-9]+)")'
     ),
-    "memory": lambda l: (
-        f"(1 - max(windows_os_physical_memory_free_bytes{{{l}}}) / max(windows_cs_physical_memory_bytes{{{l}}})) * 100"
-    ),
+    "memory": lambda l: f"(1 - {win_mem_available(l)} / {win_mem_total(l)}) * 100",
     "disk": lambda l: f"max({_win_disk_used_pct(l)})",
     "disk_mount": _win_disk_used_pct,
     "disk_read": lambda l: f"sum(rate(windows_logical_disk_read_bytes_total{{{l},{_WIN_VOL}}}[5m])) / 1024 / 1024",
@@ -189,17 +206,17 @@ WIN_PROMQL = {
         f"sum(rate(windows_logical_disk_write_bytes_total{{{l},{_WIN_VOL}}}[5m]))) / 1024 / 1024"
     ),
     "io_util": lambda l: (
-        f"clamp_min(max(100 - rate(windows_logical_disk_idle_seconds_total{{{l},{_WIN_VOL}}}[5m]) * 100), 0)"
+        f"clamp_min(max(100 - clamp_max(rate(windows_logical_disk_idle_seconds_total{{{l},{_WIN_VOL}}}[5m]), 1) * 100), 0)"
     ),
     "net_rx": lambda l: f"sum(rate(windows_net_bytes_received_total{{{l},{_WIN_NIC}}}[5m])) / 1024 / 1024",
     "net_tx": lambda l: f"sum(rate(windows_net_bytes_sent_total{{{l},{_WIN_NIC}}}[5m])) / 1024 / 1024",
-    "cpu_user": lambda l: f'avg(rate(windows_cpu_time_total{{{l},mode="user"}}[5m])) * 100',
-    "cpu_system": lambda l: f'avg(rate(windows_cpu_time_total{{{l},mode="privileged"}}[5m])) * 100',
-    "cpu_iowait": lambda l: f'sum(avg by(mode) (rate(windows_cpu_time_total{{{l},mode=~"interrupt|dpc"}}[5m]))) * 100',
+    "cpu_user": lambda l: f'avg(rate({win_cpu(l, "user")}[5m])) * 100',
+    "cpu_system": lambda l: f'avg(rate({win_cpu(l, "privileged")}[5m])) * 100',
+    "cpu_iowait": lambda l: f'sum(avg by(mode) (rate({win_cpu(l, "interrupt|dpc")}[5m]))) * 100',
     "load1": lambda l: f"max(windows_system_processor_queue_length{{{l}}})",
     "load5": _none,
     "load15": _none,
-    "cores": lambda l: f'count(windows_cpu_time_total{{{l},mode="idle"}})',
+    "cores": lambda l: f'count(count by(core) ({win_cpu(l, "idle")}))',
 }
 
 
@@ -274,34 +291,52 @@ def get_cpu_per_core(labels):
 # ---------------------------------------------------------------------------
 
 def get_windows_services(labels):
-    """[{name, status}] จาก windows_service_state (ค่า 1 = สถานะปัจจุบันของ service)"""
+    """[{name, status, start_mode, display_name}] จาก windows_service_state (ค่า 1 = สถานะปัจจุบัน)
+    label ชื่อ service: "service" (windows_exporter >= 0.30) หรือ "name" (รุ่นเก่า / ตัวในตัว Fluent Bit)"""
     out = {}
     for metric, value in prom_vector(f"windows_service_state{{{labels}}} == 1"):
-        name = metric.get("name")
+        name = metric.get("service") or metric.get("name")
         if name:
-            out[name] = str(metric.get("state") or "unknown").replace(" ", "-")
-    return [{"name": n, "status": s} for n, s in sorted(out.items(), key=lambda x: x[0].lower())]
+            out[name] = {"name": name, "status": str(metric.get("state") or "unknown").replace(" ", "-")}
+    for metric, value in prom_vector(f"windows_service_start_mode{{{labels}}} == 1"):
+        name = metric.get("service") or metric.get("name")
+        if name in out:
+            out[name]["start_mode"] = metric.get("start_mode")
+    for metric, value in prom_vector(f"windows_service_info{{{labels}}}"):
+        name = metric.get("service") or metric.get("name")
+        if name in out:
+            out[name]["display_name"] = metric.get("display_name")
+            out[name]["run_as"] = metric.get("run_as")
+    return sorted(out.values(), key=lambda x: x["name"].lower())
 
 
 def get_windows_processes(labels, limit=15):
-    """[{name, pid, cpu %, memory %, rss_mb}] process ที่ใช้ CPU / RAM สูงสุด (windows_process_*)"""
+    """[{name, pid, cpu %, memory %, rss_mb, io_mb}] process ที่ใช้ CPU / RAM / Disk I/O สูงสุด (windows_process_*)"""
     skip = 'process!~"_Total|Idle"'
-    cores = f'scalar(count(windows_cpu_time_total{{{labels},mode="idle"}}))'
-    cpu = prom_vector(f"topk({limit}, sum by(process, process_id) "
-                      f"(rate(windows_process_cpu_time_total{{{labels},{skip}}}[2m])) * 100 / {cores})")
+    sel = f"{{__name__=~\"windows_process_cpu_time(_seconds)?_total\",{labels},{skip}}}"
+    cores = f"scalar({WIN_PROMQL['cores'](labels)})"
+    cpu = prom_vector(f"topk({limit}, sum by(process, process_id) (rate({sel}[2m])) * 100 / {cores})")
     mem = prom_vector(f"topk({limit}, sum by(process, process_id) "
                       f"(windows_process_working_set_private_bytes{{{labels},{skip}}}))")
-    total = prom_value(f"max(windows_cs_physical_memory_bytes{{{labels}}})")
+    io = prom_vector(f"topk({limit}, sum by(process, process_id) "
+                     f"(rate(windows_process_io_bytes_total{{{labels},{skip},mode=~\"read|write\"}}[2m])))")
+    total = prom_value(win_mem_total(labels))
     rows = {}
+
+    def row(metric):
+        key = (metric.get("process"), metric.get("process_id"))
+        return rows.setdefault(key, {"name": key[0], "pid": key[1]})
+
     for metric, value in cpu:
-        key = (metric.get("process"), metric.get("process_id"))
-        rows.setdefault(key, {"name": key[0], "pid": key[1]})["cpu"] = round(value, 2) if _finite(value) else None
+        row(metric)["cpu"] = round(value, 2) if _finite(value) else None
     for metric, value in mem:
-        key = (metric.get("process"), metric.get("process_id"))
-        r = rows.setdefault(key, {"name": key[0], "pid": key[1]})
+        r = row(metric)
         if _finite(value):
             r["rss_mb"] = round(value / 1048576, 1)
             r["memory"] = round(value / total * 100, 2) if total else None
+    for metric, value in io:
+        if _finite(value):
+            row(metric)["io_mb"] = round(value / 1048576, 2)
     return list(rows.values())
 
 

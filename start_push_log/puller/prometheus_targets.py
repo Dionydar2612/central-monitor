@@ -19,6 +19,9 @@ prometheus_targets.py - สร้างรายชื่อเครื่อ�
     - เรียกจาก scheduler.py ก่อนเริ่มดึงทุกรอบ (หรือรันเดี่ยว: python3 prometheus_targets.py)
     - อ่าน  : config/puller.yaml  (targets[].name และ targets[].prometheus.{job,instance})
     - เขียน : data/prometheus/web-nodes.json
+              data/prometheus/ping.json   (ทุกเครื่องที่มี host รวม Windows agent)
+              -> job "ping" ส่งให้ blackbox_exporter ping (ICMP) วัด latency / packet loss
+                 label cm_target="<ชื่อเครื่อง>"
               -> Prometheus (metrics/prometheus/prometheus.yml, job "web-nodes")
                  อ่านไฟล์นี้ผ่าน file_sd_configs และรีโหลดเองเมื่อไฟล์เปลี่ยน
     - ใช้เฉพาะโหมด bundled Prometheus; โหมด external ให้ตั้ง scrape เองตาม
@@ -35,6 +38,15 @@ from config import CONFIG_FILE
 TARGET_FILE = os.environ.get(
     "CENTRAL_PROMETHEUS_TARGET_FILE", "/data/prometheus/web-nodes.json"
 )
+PING_FILE = os.path.join(os.path.dirname(TARGET_FILE), "ping.json")
+
+
+def _atomic_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
 
 
 def generate_targets():
@@ -44,8 +56,12 @@ def generate_targets():
 
     environment = config.get("site", {}).get("environment", "production")
     targets = []
+    pings = []
 
     for web in config.get("targets", []):
+        host = str(web.get("host") or "").strip()
+        if web.get("name") and host and not web.get("paused"):
+            pings.append({"targets": [host], "labels": {"cm_target": web["name"], "environment": environment}})
         if str(web.get("type") or "ssh") == "agent":
             continue          # agent ส่ง metrics เข้ามาเอง (remote write)
         name = web.get("name")
@@ -63,16 +79,10 @@ def generate_targets():
             "labels": {"job": job, "web": name, "environment": environment},
         })
 
-    os.makedirs(os.path.dirname(TARGET_FILE), exist_ok=True)
+    _atomic_json(TARGET_FILE, targets)
+    _atomic_json(PING_FILE, pings)
 
-    tmp_file = TARGET_FILE + ".tmp"
-
-    with open(tmp_file, "w") as f:
-        json.dump(targets, f, indent=2)
-
-    os.replace(tmp_file, TARGET_FILE)
-
-    print(f"[PROMETHEUS] Generated {len(targets)} targets")
+    print(f"[PROMETHEUS] Generated {len(targets)} targets, {len(pings)} ping targets")
 
 
 if __name__ == "__main__":

@@ -184,6 +184,10 @@ if [ -n "$WAS_RUNNING" ]; then
   ( cd docker && $DOCKER compose up -d --force-recreate --no-deps central-api central-puller )
   # ใบรับรองของ agent อาจเปลี่ยน -> คัดลอกใหม่แล้วเริ่ม gateway ใหม่
   ( cd docker && $DOCKER compose up -d --force-recreate buffer-init central-agent-gw ) || true
+  # prometheus.yml อาจเปลี่ยน (เช่น job ping ใหม่) -> Prometheus อ่าน config ใหม่เฉพาะตอนเริ่ม
+  if [ -n "$( cd docker && $DOCKER compose ps -q prometheus 2>/dev/null || true )" ]; then
+    ( cd docker && $DOCKER compose restart prometheus ) || true
+  fi
 fi
 
 # --- 7) ISM policy ---------------------------------------------------

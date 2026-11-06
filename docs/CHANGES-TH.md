@@ -1,3 +1,23 @@
+# สรุปการเปลี่ยนแปลง (6 พ.ย. 2026): Windows Monitoring & Bottleneck Detection
+
+รายละเอียดเต็ม: `docs/MONITORING-TH.md`
+
+| เรื่อง | เปลี่ยน |
+|---|---|
+| ตัวเก็บ metrics ของ Windows | `install-fluentbit.ps1` ติดตั้ง **windows_exporter 0.32.1** (MSI) ฟังเฉพาะ `127.0.0.1:9182` ไม่เปิด firewall, ปิด process cmdline · Fluent Bit อ่านด้วย `prometheus_scrape` แล้วส่ง HTTPS + token · ติดตั้งไม่ได้ -> ใช้ตัวในตัว Fluent Bit อัตโนมัติ · พารามิเตอร์ใหม่ `-ExporterMsi`, `-ExporterVersion`, `-NoExporter` · `uninstall-fluentbit.ps1` ถอน exporter ด้วย (`-KeepExporter` = เก็บไว้) |
+| ชื่อ metric | backend + sensor รองรับทั้งชื่อใหม่ (`windows_cpu_time_seconds_total`, `windows_memory_physical_total_bytes`, label `service`) และชื่อเก่า |
+| Ping | container ใหม่ `blackbox` (blackbox_exporter 0.28.0, icmp) + Prometheus job `ping` จาก `data/prometheus/ping.json` (puller สร้างจากทุกเครื่องที่มี host) -> latency / packet loss |
+| Sensor ใหม่ | Available RAM (Windows), Disk latency, Packet loss, Network latency, Service สำคัญของ Windows, Bottleneck CPU / Memory / Disk / Network |
+| เกณฑ์ | Windows ใช้ค่าตามสเปก (CPU 80/95, RAM 80/95, Disk 80/90, RAM ว่าง 20/10, latency 20/50 ms, loss 1/5 %, ping 100/250 ms) · Linux คงค่าเดิม · `thresholds_windows:` ใหม่ใน puller.yaml |
+| ระยะเวลาก่อนแจ้งเตือน | ค่าเริ่มต้น **3 นาที** (`sensors.confirm_checks: 6`) ปรับได้ที่ Settings > Alerts |
+| Settings > Alerts | การ์ดใหม่: นาทีก่อนแจ้งเตือน, hysteresis, เปิด/ปิด bottleneck, service สำคัญ, ตารางเกณฑ์ Linux / Windows (`GET/PUT /api/alert-settings`, admin, บันทึก Activity log) · ฟอร์มเครื่องมีเกณฑ์ชนิดใหม่ + service สำคัญเฉพาะเครื่อง |
+| WEB status | ไทล์ Up / Down / Warning / Critical + ค่าเฉลี่ย CPU / RAM / Disk · ค่าเฉลี่ยต่อกลุ่ม · คอลัมน์ OS / Network / Alerts · คลิกหัวคอลัมน์เพื่อเรียง · ตัวกรอง OS / สถานะ · ถาม Prometheus แบบรวม (จำนวน query ไม่ขึ้นกับจำนวนเครื่อง) |
+| รายละเอียดเครื่อง | 8 แท็บ: Overview, Performance, Bottleneck, Processes, Services, Hardware, System, Alerts & Events (`machine.js`, `host_details.py`, `GET /api/host/<เครื่อง>/<แท็บ>`) · ค่าที่ไม่มี = Unavailable, ที่อ่านไม่ได้ = Unsupported |
+
+**ต้องทำหลังอัปเดต**: `cm-update` ที่ central (สร้าง container blackbox) แล้วรันคำสั่งติดตั้ง agent ซ้ำบนเครื่อง Windows ทุกเครื่อง
+
+---
+
 # เพิ่มเติม: Acknowledge log
 - ตาราง Logs: ติ๊กเลือกแถว (หรือเลือกทั้งหมด) -> **Acknowledge selected** + โน้ต (operator ขึ้นไป)
   log ที่รับทราบแล้วถูกซ่อนจากตาราง, ตัวเลข All/Error/Warn, Problem logs, Errors 15m และจุดบนกราฟ (ยังอยู่ใน OpenSearch ตามอายุเดิม)
