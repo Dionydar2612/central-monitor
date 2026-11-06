@@ -99,20 +99,50 @@ $ExporterPort = 9182
 $ExporterUrl  = "http://127.0.0.1:$ExporterPort/metrics"
 $ExpCollectorSets = @(
     "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update",
-    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time,pagefile"
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time,pagefile",
+    "cpu,os,memory,logical_disk,net,system,service"
 )
+$script:ExporterLastError = $null
 $UseExporter = $false
 
 function Test-Exporter([int] $seconds) {
+    # ไม่ผ่าน proxy ของเครื่อง (proxy องค์กรบางที่ไม่ยอมให้เรียก 127.0.0.1 ผ่าน)
     $until = (Get-Date).AddSeconds($seconds)
     do {
         try {
-            $r = Invoke-WebRequest -Uri $ExporterUrl -UseBasicParsing -TimeoutSec 10
-            if ($r.StatusCode -eq 200 -and $r.Content -match "windows_exporter_build_info") { return $true }
-        } catch { }
+            $wc = New-Object System.Net.WebClient
+            $wc.Proxy = New-Object System.Net.WebProxy
+            $txt = $wc.DownloadString($ExporterUrl)
+            if ($txt -match "windows_exporter_build_info") { return $true }
+        } catch { $script:ExporterLastError = $_.Exception.Message }
         Start-Sleep 2
     } while ((Get-Date) -lt $until)
     return $false
+}
+
+# แสดงสาเหตุที่ windows_exporter ไม่ทำงาน (สถานะ service, คำสั่งที่รัน, พอร์ต, ข้อความใน Event Log)
+function Show-ExporterDiag($msiLog) {
+    Write-Host "   --- ตรวจ windows_exporter ---" -ForegroundColor Yellow
+    if ($script:ExporterLastError) { Write-Host "   เรียก ${ExporterUrl}: $script:ExporterLastError" }
+    $svc = Get-CimInstance Win32_Service -Filter "Name='windows_exporter'" -ErrorAction SilentlyContinue
+    if ($svc) {
+        Write-Host "   service: $($svc.State) (start $($svc.StartMode))"
+        Write-Host "   command: $($svc.PathName)"
+    } else { Write-Host "   ไม่พบ service windows_exporter (MSI ติดตั้งไม่สำเร็จ ดู $msiLog)" }
+    $l = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue
+    if ($l) {
+        $l | ForEach-Object {
+            $pn = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+            Write-Host "   พอร์ต ${ExporterPort}: $($_.LocalAddress) โดย $pn (pid $($_.OwningProcess))"
+        }
+    } else { Write-Host "   ไม่มีโปรแกรมฟังพอร์ต $ExporterPort" }
+    Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProviderName -match "windows_exporter" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-10) } |
+        Select-Object -First 5 | ForEach-Object { $m = ($_.Message -replace '\s+', ' '); Write-Host "   event: $($_.LevelDisplayName) $($m.Substring(0, [Math]::Min(300, $m.Length)))" }
+    if (Test-Path $msiLog) {
+        Select-String -Path $msiLog -Pattern "Return value 3|Error \d{4}" | Select-Object -First 3 |
+            ForEach-Object { Write-Host "   msi: $($_.Line.Trim())" }
+    }
 }
 
 function Get-ExporterProducts {
@@ -146,15 +176,26 @@ if ($NoExporter) {
             }
         }
 
+        $msiLog = Join-Path $env:TEMP "cm-windows-exporter-msi.log"
+        $try = 0
         foreach ($set in $ExpCollectorSets) {
-            $msiLog = Join-Path $env:TEMP "cm-windows-exporter-msi.log"
+            $try++
             $msiArgs = @("/i", "`"$ExporterMsi`"", "/qn", "/norestart", "/l*v", "`"$msiLog`"",
-                         "ENABLED_COLLECTORS=$set", "LISTEN_ADDR=127.0.0.1", "LISTEN_PORT=$ExporterPort",
-                         "EXTRA_FLAGS=`"--no-collector.process.cmdline`"", "REMOVE=FirewallException")
+                         "ENABLED_COLLECTORS=$set", "LISTEN_ADDR=127.0.0.1", "LISTEN_PORT=$ExporterPort", "REMOVE=FirewallException")
+            # ชุดสุดท้าย: ไม่ใส่ flag เพิ่ม (กรณี flag ทำให้ exporter เริ่มไม่ได้)
+            if ($try -lt $ExpCollectorSets.Count -and $set -match "process") {
+                $msiArgs += "EXTRA_FLAGS=`"--no-collector.process.cmdline`""
+            }
             $p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
-            if ($p.ExitCode -notin 0, 1641, 3010) { throw "msiexec exit $($p.ExitCode) (ดู $msiLog)" }
+            if ($p.ExitCode -notin 0, 1641, 3010) {
+                Warn "msiexec exit $($p.ExitCode)"
+                Show-ExporterDiag $msiLog
+                continue
+            }
+            Start-Service windows_exporter -ErrorAction SilentlyContinue
             if (Test-Exporter 40) { $UseExporter = $true; Write-Host "   collectors: $set"; break }
-            Warn "windows_exporter ไม่ตอบด้วย collector ชุดนี้ -> ลองชุดพื้นฐาน"
+            Warn "windows_exporter ไม่ตอบ (ชุดที่ $try/$($ExpCollectorSets.Count))"
+            Show-ExporterDiag $msiLog
             foreach ($old in Get-ExporterProducts) {
                 if ($old.PSChildName -match '^\{[0-9A-Fa-f-]+\}$') {
                     Start-Process msiexec.exe -ArgumentList @("/x", $old.PSChildName, "/qn", "/norestart") -Wait | Out-Null
