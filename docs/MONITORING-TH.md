@@ -24,11 +24,11 @@ Ping (ทุกเครื่องที่มี host)
 
 ```
 msiexec /i windows_exporter-0.32.1-amd64.msi /qn
-  ENABLED_COLLECTORS=cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu
+  ENABLED_COLLECTORS=cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update
   LISTEN_ADDR=127.0.0.1 LISTEN_PORT=9182
   EXTRA_FLAGS="--no-collector.process.cmdline" REMOVE=FirewallException
 ```
-- exporter ไม่ตอบใน 40 วินาที -> ลองชุดพื้นฐาน (ไม่มี `diskdrive`, `gpu`) -> ยังไม่ได้ -> ใช้ตัวเก็บในตัว Fluent Bit (`windows_exporter_metrics`) แทน
+- exporter ไม่ตอบใน 40 วินาที -> ลองชุดพื้นฐาน (ไม่มี `diskdrive`, `gpu`, `dmi`, `license`, `update`) -> ยังไม่ได้ -> ใช้ตัวเก็บในตัว Fluent Bit (`windows_exporter_metrics`) แทน
 - ไม่มีอินเทอร์เน็ต: วาง `windows_exporter-0.32.1-amd64.msi` ข้างสคริปต์ หรือ `-ExporterMsi <path>` · ไม่ต้องการ exporter: `-NoExporter`
 - Fluent Bit อ่าน: `[INPUT] Name prometheus_scrape · Host 127.0.0.1 · Port 9182 · Scrape_Interval 15s`
 
@@ -54,7 +54,9 @@ msiexec /i windows_exporter-0.32.1-amd64.msi /qn
 | Service | `windows_service_state{service,state}`, `windows_service_start_mode`, `windows_service_info` | รายการ service, service สำคัญ |
 | Process | `windows_process_cpu_time_seconds_total`, `windows_process_working_set_private_bytes`, `windows_process_io_bytes_total` | top CPU / RAM / Disk I/O |
 | System | `windows_os_hostname`, `windows_os_info`, `windows_os_install_time_timestamp_seconds`, `windows_system_boot_time_timestamp`, `windows_time_timezone`, `windows_time_computed_time_offset_seconds`, `windows_time_clock_sync_source` | แท็บ System |
-| Hardware | `windows_cpu_info`, `windows_cpu_info_core`, `windows_cpu_info_logical_processor`, `windows_cpu_core_frequency_hertz`, `windows_gpu_temperature_celsius`, `windows_gpu_fan_speed_rpm` | แท็บ Hardware |
+| Hardware | `windows_dmi_info` (ผู้ผลิต / รุ่น / serial / BIOS / เมนบอร์ด), `windows_cpu_info_l2/l3_cache_size_bytes`, `windows_pagefile_*`, `windows_cpu_info`, `windows_cpu_info_core`, `windows_cpu_info_logical_processor`, `windows_cpu_core_frequency_hertz`, `windows_gpu_temperature_celsius`, `windows_gpu_fan_speed_rpm` | แท็บ Hardware |
+| System (เพิ่ม) | `windows_license_status`, `windows_update_pending_info`, `windows_update_last_installation_success_timestamp_seconds`, `windows_time_sync_source_info`, `windows_net_nic_address_info` | แท็บ System |
+| ชื่อเก่า (Fluent Bit ในตัว) | `windows_cs_hostname`, `windows_cs_logical_processors`, `windows_os_timezone`, `windows_system_system_up_time`, `windows_system_processor_queue`, `windows_paging_file_*` | ใช้แทนเมื่อยังไม่มี windows_exporter |
 | Agent | `fluentbit_uptime{cm_web}`, `windows_exporter_build_info`, `windows_exporter_collector_success` | Online/Down, collector ที่ล้มเหลว |
 | Ping | `probe_success`, `probe_icmp_duration_seconds{phase="rtt"}` (label `cm_target`) | latency, packet loss |
 

@@ -175,7 +175,7 @@ def _win_exprs(l):
         "disk_latency_vec": f'label_replace({busy_t} / {ops} * 1000 and {ops} >= 1, "mountpoint", "$1", "volume", "(.*)")',
         "disk_queue": f"max(windows_logical_disk_requests_queued{{{vol}}})",
         "disk_busy": f"max(100 - clamp_max(rate(windows_logical_disk_idle_seconds_total{{{vol}}}[5m]), 1) * 100)",
-        "cpu_queue_per_core": f"max(windows_system_processor_queue_length{{{l}}}) / {cores}",
+        "cpu_queue_per_core": f'max({{__name__=~"windows_system_processor_queue(_length)?",{l}}}) / {cores}',
         "pages_in": f"sum(rate(windows_memory_swap_pages_read_total{{{l}}}[5m]))",
         "commit_pct": f"max(windows_memory_committed_bytes{{{l}}}) / max(windows_memory_commit_limit_bytes{{{l}}}) * 100",
         "net_util": (f"max((rate(windows_net_bytes_received_total{{{nic}}}[5m]) > rate(windows_net_bytes_sent_total{{{nic}}}[5m])"

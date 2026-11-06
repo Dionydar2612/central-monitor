@@ -98,8 +98,8 @@ $FluentExe = Join-Path $InstallDir "bin\fluent-bit.exe"
 $ExporterPort = 9182
 $ExporterUrl  = "http://127.0.0.1:$ExporterPort/metrics"
 $ExpCollectorSets = @(
-    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu",
-    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time"
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update",
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time,pagefile"
 )
 $UseExporter = $false
 

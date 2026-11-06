@@ -102,7 +102,7 @@ def _win_performance(l):
         "cpu_privileged": f'avg(rate({win_cpu(l, "privileged")}[5m])) * 100',
         "cpu_interrupt": f'sum(avg by(mode) (rate({win_cpu(l, "interrupt|dpc")}[5m]))) * 100',
         "cores": f'count(count by(core) ({win_cpu(l, "idle")}))',
-        "queue": f"max(windows_system_processor_queue_length{{{l}}})",
+        "queue": f'max({{__name__=~"windows_system_processor_queue(_length)?",{l}}})',
         "ctx": f"sum(rate(windows_system_context_switches_total{{{l}}}[5m]))",
         "procs": f"max(windows_system_processes{{{l}}})",
         "threads": f"max(windows_system_threads{{{l}}})",
@@ -349,67 +349,107 @@ def _unsupported(item, reason):
     return {"item": item, "reason": reason}
 
 
+def _first(rows):
+    return (rows or [({}, 0)])[0][0]
+
+
+def _val(rows):
+    vals = [v for _, v in rows or [] if _finite(v)]
+    return vals[0] if vals else None
+
+
+def _clean(v):
+    """ค่าจาก SMBIOS ที่เป็น placeholder -> None"""
+    v = (v or "").strip()
+    return None if not v or v.lower() in ("not specified", "default string", "to be filled by o.e.m.", "none",
+                                          "system serial number", "0", "n/a") else v
+
+
 def _win_hardware(l):
+    # ชื่อ metric: windows_exporter (ใหม่) และตัวเก็บในตัว Fluent Bit (เก่า: windows_cs_*, windows_paging_file_*)
     r = _run({
+        "*dmi": f"windows_dmi_info{{{l}}}",
         "*cpu": f"windows_cpu_info{{{l}}}",
         "*cores": f"windows_cpu_info_core{{{l}}}",
         "*logical": f"windows_cpu_info_logical_processor{{{l}}}",
-        "*freq": f"avg by(core) (windows_cpu_core_frequency_hertz{{{l}}})",
+        "logical_old": f"max(windows_cs_logical_processors{{{l}}})",
+        "*l2": f"windows_cpu_info_l2_cache_size_bytes{{{l}}}",
+        "*l3": f"windows_cpu_info_l3_cache_size_bytes{{{l}}}",
+        "freq": f"avg(windows_cpu_core_frequency_hertz{{{l}}})",
+        "cores_rate": f'count(count by(core) ({win_cpu(l, "idle")}))',
         "mem": win_mem_total(l),
+        "page_limit": f"sum(windows_pagefile_limit_bytes{{{l}}}) or sum(windows_paging_file_limit_megabytes{{{l}}}) * 1048576",
+        "page_free": f"sum(windows_pagefile_free_bytes{{{l}}}) or sum(windows_paging_file_free_megabytes{{{l}}}) * 1048576",
         "*drive": f"windows_diskdrive_info{{{l}}}",
         "*drive_size": f"windows_diskdrive_size_bytes{{{l}}}",
         "*drive_status": f"windows_diskdrive_status{{{l}}} == 1",
-        "*vol": f"windows_logical_disk_info{{{l},{_WIN_VOL}}}",
+        "*drive_parts": f"windows_diskdrive_partitions{{{l}}}",
+        "*vol_info": f"windows_logical_disk_info{{{l},{_WIN_VOL}}}",
         "*vol_size": f"windows_logical_disk_size_bytes{{{l},{_WIN_VOL}}}",
+        "*vol_free": f"windows_logical_disk_free_bytes{{{l},{_WIN_VOL}}}",
         "*nic": f"windows_net_nic_info{{{l}}}",
         "*nic_bw": f"windows_net_current_bandwidth_bytes{{{l},{_WIN_NIC}}}",
         "*nic_st": f"windows_net_nic_operation_status{{{l}}} == 1",
         "*gpu_temp": f"windows_gpu_temperature_celsius{{{l}}}",
         "*gpu_fan": f"windows_gpu_fan_speed_rpm{{{l}}}",
-        "*gpu_info": f"windows_gpu_info{{{l}}}",
         "*thermal": f"windows_thermalzone_temperature_celsius{{{l}}}",
         "exporter": f"count(windows_exporter_build_info{{{l}}})",
     })
-    cpus = [{"name": m.get("name"), "description": m.get("description"), "socket": m.get("device_id")}
-            for m, _ in r["*cpu"]]
+    dmi = _first(r["*dmi"])
+    system = {
+        "manufacturer": _clean(dmi.get("system_vendor")),
+        "model": _clean(dmi.get("product_name")),
+        "family": _clean(dmi.get("product_family")),
+        "serial": _clean(dmi.get("product_serial")),
+        "uuid": _clean(dmi.get("product_uuid")),
+        "board": " ".join(x for x in (_clean(dmi.get("board_vendor")), _clean(dmi.get("board_name"))) if x) or None,
+        "bios": " ".join(x for x in (_clean(dmi.get("bios_vendor")), _clean(dmi.get("bios_version"))) if x) or None,
+        "bios_date": _clean(dmi.get("bios_date")),
+    }
+    l2, l3 = _by(r["*l2"], "device_id", nd=0), _by(r["*l3"], "device_id", nd=0)
+    cpus = []
+    for m, _ in r["*cpu"]:
+        dev = m.get("device_id") or m.get("deviceid")
+        # Fluent Bit ในตัว: l2_cache_size / l3_cache_size เป็น KB ใน label
+        l2b = l2.get(dev) or (float(m["l2_cache_size"]) * 1024 if str(m.get("l2_cache_size") or "").isdigit() else None)
+        l3b = l3.get(dev) or (float(m["l3_cache_size"]) * 1024 if str(m.get("l3_cache_size") or "").isdigit() else None)
+        cpus.append({"socket": dev, "name": (m.get("name") or "").strip() or None,
+                     "description": m.get("description"), "l2_bytes": l2b or None, "l3_bytes": l3b or None})
     cores = sum(v for _, v in r["*cores"]) or None
-    logical = sum(v for _, v in r["*logical"]) or None
-    freq = [v for _, v in r["*freq"] if _finite(v)]
+    logical = sum(v for _, v in r["*logical"]) or r["logical_old"] or r["cores_rate"]
     dsize = _by(r["*drive_size"], "device_id", nd=0)
     dstat = {m.get("device_id"): m.get("status") for m, _ in r["*drive_status"]}
-    drives = [{"device": m.get("device_id"), "model": m.get("model") or m.get("caption"),
-               "size_bytes": dsize.get(m.get("device_id")), "status": dstat.get(m.get("device_id"))}
-              for m, _ in r["*drive"]]
-    vsize = _by(r["*vol_size"], "volume", nd=0)
-    vols = [{"volume": m.get("volume"), "label": m.get("volume_name"), "filesystem": m.get("filesystem"),
-             "type": m.get("type"), "size_bytes": vsize.get(m.get("volume"))} for m, _ in r["*vol"]]
+    dparts = _by(r["*drive_parts"], "device_id", nd=0)
+    drives = [{"device": str(m.get("device_id") or "").replace("\\\\.\\", ""), "model": m.get("model") or m.get("caption"),
+               "size_bytes": dsize.get(m.get("device_id")), "partitions": dparts.get(m.get("device_id")),
+               "status": dstat.get(m.get("device_id"))} for m, _ in r["*drive"]]
+    vinfo = {m.get("volume"): m for m, _ in r["*vol_info"]}
+    vsize, vfree = _by(r["*vol_size"], "volume", nd=0), _by(r["*vol_free"], "volume", nd=0)
+    vols = [{"volume": v, "label": (vinfo.get(v) or {}).get("volume_name") or None,
+             "filesystem": (vinfo.get(v) or {}).get("filesystem") or None, "type": (vinfo.get(v) or {}).get("type") or None,
+             "size_bytes": vsize.get(v), "free_bytes": vfree.get(v)} for v in sorted(vsize)]
     bw = _by(r["*nic_bw"], "nic", nd=0)
     nst = {m.get("nic"): m.get("status") for m, _ in r["*nic_st"]}
-    nics = [{"nic": m.get("nic"), "name": m.get("friendly_name"), "mac": m.get("mac"),
-             "speed_mbps": _r(bw[m.get("nic")] * 8 / 1e6, 0) if bw.get(m.get("nic")) else None,
-             "status": nst.get(m.get("nic"))} for m, _ in r["*nic"]]
-    gpus = [{"device": m.get("phys") or m.get("luid"), "temperature_c": _r(v, 1)} for m, v in r["*gpu_temp"]]
-    for m, v in r["*gpu_fan"]:
-        gpus.append({"device": m.get("phys") or m.get("luid"), "fan_rpm": _r(v, 0)})
-    temps = [{"zone": m.get("zone") or m.get("instance"), "temperature_c": _r(v, 1)} for m, v in r["*thermal"]]
-    unsupported = []
-    if not temps:
-        unsupported.append(_unsupported("CPU temperature", "Windows ไม่เปิดเซนเซอร์อุณหภูมิ CPU ให้อ่านแบบมาตรฐาน "
-                                        "(ACPI thermal zone มักไม่มี/ค่าไม่จริงบน server และ VM)"))
-    if not r["*gpu_fan"]:
-        unsupported.append(_unsupported("Fan speed", "windows_exporter ไม่มีข้อมูลพัดลมของเครื่อง "
-                                        "(มีเฉพาะพัดลม GPU ถ้า driver รองรับ) ต้องใช้เครื่องมือของผู้ผลิต เช่น iLO / iDRAC"))
-    unsupported.append(_unsupported("SMART", "windows_exporter ไม่อ่านค่า SMART ใช้ได้แค่สถานะดิสก์ (diskdrive status)"))
-    if not r["exporter"]:
-        unsupported.append(_unsupported("Hardware details", "เครื่องนี้ใช้ตัวเก็บในตัว Fluent Bit (ไม่มี windows_exporter) "
-                                        "ติดตั้ง agent ใหม่ด้วยสคริปต์ล่าสุดเพื่อให้ได้ข้อมูลครบ"))
+    info = {m.get("nic"): m for m, _ in r["*nic"]}
+    names = sorted(set(info) | set(bw))
+    nics = [{"nic": n, "name": (info.get(n) or {}).get("friendly_name"), "mac": (info.get(n) or {}).get("mac"),
+             "speed_mbps": _r(bw[n] * 8 / 1e6, 0) if bw.get(n) else None, "status": nst.get(n)} for n in names]
+    sensors = [{"sensor": f"GPU {m.get('phys') or m.get('luid')}", "type": "Temperature", "value": _r(v, 1), "unit": "°C"}
+               for m, v in r["*gpu_temp"]]
+    sensors += [{"sensor": f"GPU {m.get('phys') or m.get('luid')}", "type": "Fan", "value": _r(v, 0), "unit": "rpm"}
+                for m, v in r["*gpu_fan"]]
+    sensors += [{"sensor": m.get("name") or m.get("zone") or "Thermal zone", "type": "Temperature", "value": _r(v, 1),
+                 "unit": "°C"} for m, v in r["*thermal"] if _finite(v) and v > 0]
     return {
         "os": "windows",
-        "cpu": {"models": cpus, "cores": int(cores) if cores else None, "logical_processors": int(logical) if logical else None,
-                "frequency_mhz": _r(sum(freq) / len(freq) / 1e6, 0) if freq else None},
-        "memory": {"total_bytes": r["mem"]},
-        "disk_drives": drives, "volumes": vols, "network_adapters": nics,
-        "gpus": gpus, "temperatures": temps, "unsupported": unsupported,
+        "exporter": bool(r["exporter"]),
+        "system": system,
+        "cpu": {"models": cpus, "sockets": len(cpus) or None, "cores": int(cores) if cores else None,
+                "logical_processors": int(logical) if logical else None,
+                "frequency_mhz": _r(r["freq"] / 1e6, 0) if r["freq"] else None},
+        "memory": {"total_bytes": r["mem"], "pagefile_bytes": r["page_limit"],
+                   "pagefile_used_bytes": r["page_limit"] - r["page_free"] if r["page_limit"] and r["page_free"] is not None else None},
+        "disk_drives": drives, "volumes": vols, "network_adapters": nics, "sensors": sensors,
     }
 
 
@@ -470,38 +510,58 @@ def hardware(web):
 # ---------------------------------------------------------------------------
 
 def _win_system(l):
+    # ชื่อ metric: windows_exporter (ใหม่) และตัวเก็บในตัว Fluent Bit (เก่า: windows_cs_hostname, windows_os_timezone,
+    # windows_system_system_up_time)
     r = _run({
-        "*host": f"windows_os_hostname{{{l}}}",
+        "*host": f"windows_os_hostname{{{l}}} or windows_cs_hostname{{{l}}}",
         "*os": f"windows_os_info{{{l}}}",
         "install": f"max(windows_os_install_time_timestamp_seconds{{{l}}})",
-        "boot": f"max(windows_system_boot_time_timestamp{{{l}}}) or max(windows_system_boot_time_timestamp_seconds{{{l}}})",
-        "now": f"max(windows_time_current_timestamp_seconds{{{l}}})",
+        "boot": (f"max(windows_system_boot_time_timestamp{{{l}}}) or max(windows_system_boot_time_timestamp_seconds{{{l}}})"
+                 f" or (time() - max(windows_system_system_up_time{{{l}}}))"),
         "offset": f"max(windows_time_computed_time_offset_seconds{{{l}}})",
-        "*tz": f"windows_time_timezone{{{l}}}",
+        "*tz": f"windows_time_timezone{{{l}}} or windows_os_timezone{{{l}}}",
         "*sync": f"windows_time_clock_sync_source{{{l}}} == 1",
+        "*ntp": f"windows_time_sync_source_info{{{l}}}",
+        "last_sync": f"max(windows_time_sync_last_success_timestamp_seconds{{{l}}})",
+        "*lic": f"windows_license_status{{{l}}} == 1",
+        "upd_pending": f"count(windows_update_pending_info{{{l}}})",
+        "upd_scraped": f"max(windows_update_scrape_timestamp_seconds{{{l}}})",
+        "upd_install": f"max(windows_update_last_installation_success_timestamp_seconds{{{l}}})",
+        "users": f"max(windows_os_users{{{l}}})",
+        "procs": f"max(windows_system_processes{{{l}}}) or max(windows_os_processes{{{l}}})",
+        "threads": f"max(windows_system_threads{{{l}}})",
         "*addr": f"windows_net_nic_address_info{{{l},{_WIN_NIC}}}",
+        "*mac": f"windows_net_nic_info{{{l}}}",
         "*exp": f"windows_exporter_build_info{{{l}}}",
         "*coll_fail": f"windows_exporter_collector_success{{{l}}} == 0",
         "*fb": f'{{__name__=~"fluentbit_build_info|fluentbit_uptime.*",{l}}}',
     })
-    host = (r["*host"] or [({}, 0)])[0][0]
-    osi = (r["*os"] or [({}, 0)])[0][0]
-    exp = (r["*exp"] or [({}, 0)])[0][0]
+    host, osi, exp = _first(r["*host"]), _first(r["*os"]), _first(r["*exp"])
     fb_version = next((m.get("version") for m, _ in r["*fb"] if m.get("version")), None)
+    macs = {m.get("nic"): (m.get("friendly_name"), m.get("mac")) for m, _ in r["*mac"]}
     addresses = sorted({(m.get("nic"), m.get("address"), m.get("family")) for m, _ in r["*addr"]
-                        if m.get("address") and not str(m.get("address")).startswith(("fe80", "169.254"))})
+                        if m.get("address") and not str(m.get("address")).startswith(("fe80", "169.254"))},
+                       key=lambda x: (x[0] or "", x[2] != "ipv4", x[1]))
+    build = osi.get("build_number")
     boot = r["boot"]
+    upd_known = r["upd_scraped"] is not None
     return {
         "os": "windows",
-        "hostname": host.get("hostname"), "domain": host.get("domain"), "fqdn": host.get("fqdn"),
+        "hostname": host.get("hostname"), "domain": host.get("domain") or None, "fqdn": host.get("fqdn") or None,
         "os_name": osi.get("product"), "os_version": osi.get("version"),
-        "build": f"{osi.get('build_number')}.{osi.get('revision')}" if osi.get("build_number") else None,
+        "build": f"{build}.{osi['revision']}" if build and osi.get("revision") else build,
         "installation_type": osi.get("installation_type"),
         "install_time": r["install"], "boot_time": boot, "uptime_seconds": time.time() - boot if boot else None,
         "timezone": next((m.get("timezone") for m, _ in r["*tz"]), None),
         "clock_offset_seconds": _r(r["offset"], 3),
-        "clock_source": next((m.get("type") for m, _ in r["*sync"]), None),
-        "ip_addresses": [{"nic": n, "address": a, "family": f} for n, a, f in addresses],
+        "clock_source": next((m.get("source") for m, _ in r["*ntp"]), None) or next((m.get("type") for m, _ in r["*sync"]), None),
+        "last_time_sync": r["last_sync"],
+        "license": next((m.get("state") for m, _ in r["*lic"]), None),
+        "updates_pending": int(r["upd_pending"] or 0) if upd_known else None,
+        "updates_last_install": r["upd_install"],
+        "users": _r(r["users"], 0), "processes": _r(r["procs"], 0), "threads": _r(r["threads"], 0),
+        "ip_addresses": [{"nic": (macs.get(n) or (None,))[0] or n, "address": a, "family": f,
+                          "mac": (macs.get(n) or (None, None))[1]} for n, a, f in addresses],
         "agent": {"collector": "windows_exporter " + exp.get("version") if exp.get("version") else "Fluent Bit (built-in)",
                   "fluent_bit": fb_version,
                   "failed_collectors": sorted({m.get("collector") for m, _ in r["*coll_fail"] if m.get("collector")})},

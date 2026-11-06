@@ -1205,3 +1205,7 @@ td.bad{color:#e5484d}
 .altbl td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .altbl input{width:100%;max-width:120px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit}
 .altbl td.has-err input{border-color:#e5484d}.altbl .st-err{color:#e5484d;font-size:12px}
+/* แท็บ System: แถบสรุปด้านบน */
+.syshead{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.syshead small{display:block;color:var(--mut);font-size:12.5px}.syshead b{display:block;font-size:18px;font-weight:600;margin-top:2px;word-break:break-word}
+.syshead em{display:block;font-style:normal;color:var(--mut);font-size:12.5px;margin-top:2px}

@@ -150,61 +150,91 @@
         }).join("") + `</div>`;
     }
 
+    /* เครื่องที่ยังใช้ตัวเก็บในตัว Fluent Bit (ไม่มี windows_exporter) ข้อมูลจะน้อย -> บอกวิธีแก้ */
+    const OLD_AGENT = `<div class="advice">เครื่องนี้ยังใช้ตัวเก็บ metrics ในตัว Fluent Bit จึงมีข้อมูลน้อย ·
+        รันคำสั่งติดตั้ง agent ใหม่ (Settings &gt; เครื่องนี้ &gt; Install command) เพื่อใช้ windows_exporter
+        แล้วจะเห็นผู้ผลิต / รุ่น / BIOS / ดิสก์ / การ์ดเครือข่าย / IP / Windows Update ครบ</div>`;
+
     /* ---------------- Hardware ---------------- */
     function renderHardware(d) {
-        const c = d.cpu || {};
-        const cpu = card("CPU", kv([
-            ["Model", (c.models || []).length ? c.models.map(x => esc(x.name || "-")).join("<br>") : NA()],
-            ["Cores", num(c.cores, 0)], ["Logical processors", num(c.logical_processors, 0)],
-            ["Frequency", hasValue(c.frequency_mhz) ? `${c.frequency_mhz} MHz` : NA()],
+        const sy = d.system || {}, c = d.cpu || {}, m = d.memory || {};
+        const t = v => v ? esc(v) : NA();
+        const system = card("System", kv([
+            ["Manufacturer", t(sy.manufacturer)], ["Model", t(sy.model)], ["Family", t(sy.family)],
+            ["Serial number", sy.serial ? `<code>${esc(sy.serial)}</code>` : NA()],
+            ["UUID", sy.uuid ? `<code>${esc(sy.uuid)}</code>` : NA()],
+            ["Motherboard", t(sy.board)], ["BIOS", t(sy.bios)], ["BIOS date", t(sy.bios_date)],
         ]));
-        const mem = card("Memory", kv([["Installed", bytes((d.memory || {}).total_bytes)]]));
-        const drives = card("Disk drives", table(["Device", "Model", "Size", "Status"],
-            (d.disk_drives || []).map(x => `<tr><td>${esc(x.device)}</td><td>${x.model ? esc(x.model) : NA()}</td><td>${bytes(x.size_bytes)}</td>
-                <td class="${x.status && x.status !== "OK" ? "cr" : ""}">${x.status ? esc(x.status) : NA()}</td></tr>`), "No disk drive data"));
-        const vols = card("Volumes", table(["Volume", "Label", "File system", "Size"],
-            (d.volumes || []).map(x => `<tr><td><b>${esc(x.volume)}</b>${x.device ? ` <small>${esc(x.device)}</small>` : ""}</td><td>${esc(x.label || "")}</td><td>${esc(x.filesystem || "-")}</td><td>${bytes(x.size_bytes)}</td></tr>`)));
-        const nics = card("Network adapters", table(["Adapter", "Name", "MAC", "Speed", "Status"],
-            (d.network_adapters || []).map(x => `<tr><td>${esc(x.nic)}</td><td>${esc(x.name || "")}</td><td><code>${esc(x.mac || "-")}</code></td>
-                <td>${hasValue(x.speed_mbps) ? `${x.speed_mbps} Mbps` : NA()}</td><td>${x.status ? esc(x.status) : NA()}</td></tr>`)));
-        const sens = [...(d.temperatures || []).map(x => `<tr><td>${esc(x.zone)}</td><td>Temperature</td><td>${num(x.temperature_c, 1, " °C")}</td></tr>`),
-            ...(d.gpus || []).filter(x => hasValue(x.temperature_c)).map(x => `<tr><td>GPU ${esc(x.device)}</td><td>Temperature</td><td>${num(x.temperature_c, 1, " °C")}</td></tr>`),
-            ...(d.gpus || []).filter(x => hasValue(x.fan_rpm)).map(x => `<tr><td>GPU ${esc(x.device)}</td><td>Fan</td><td>${num(x.fan_rpm, 0, " rpm")}</td></tr>`),
-            ...(d.fans || []).map(x => `<tr><td>${esc(x.fan)}</td><td>Fan</td><td>${num(x.rpm, 0, " rpm")}</td></tr>`)];
-        const sensors = sens.length ? card("Sensors", table(["Sensor", "Type", "Value"], sens)) : "";
-        return `<div class="grid pgrid2">${cpu}${mem}</div>${drives}${vols}${nics}${sensors}`;
+        const models = [...new Set((c.models || []).map(x => x.name).filter(Boolean))];
+        const cache = (c.models || [])[0] || {};
+        const cpu = card("Processor & memory", kv([
+            ["Processor", models.length ? models.map(esc).join("<br>") : NA()],
+            ["Sockets", num(c.sockets, 0)], ["Cores", num(c.cores, 0)], ["Logical processors", num(c.logical_processors, 0)],
+            ["Clock", hasValue(c.frequency_mhz) ? `${(c.frequency_mhz / 1000).toFixed(2)} GHz` : NA()],
+            ["L2 / L3 cache", cache.l2_bytes || cache.l3_bytes ? `${bytes(cache.l2_bytes)} / ${bytes(cache.l3_bytes)}` : NA()],
+            ["Installed memory", bytes(m.total_bytes)],
+            ["Page file", hasValue(m.pagefile_bytes) ? `${bytes(m.pagefile_bytes)}${hasValue(m.pagefile_used_bytes) ? ` (used ${bytes(m.pagefile_used_bytes)})` : ""}` : NA()],
+        ]));
+        const drives = card("Physical disks", table(["Disk", "Model", "Size", "Partitions", "Status"],
+            (d.disk_drives || []).map(x => `<tr><td><b>${esc(x.device)}</b></td><td>${x.model ? esc(x.model) : NA()}</td><td>${bytes(x.size_bytes)}</td>
+                <td>${num(x.partitions, 0)}</td><td class="${x.status && x.status !== "OK" ? "cr" : x.status ? "ok" : ""}">${x.status ? esc(x.status) : NA()}</td></tr>`)));
+        const vols = card("Volumes", table(["Drive", "Label", "File system", "Size", "Used", "Free"],
+            (d.volumes || []).map(x => {
+                const used = x.size_bytes && hasValue(x.free_bytes) ? (1 - x.free_bytes / x.size_bytes) * 100 : null;
+                return `<tr><td><b>${esc(x.volume)}</b>${x.device ? ` <small>${esc(x.device)}</small>` : ""}</td><td>${x.label ? esc(x.label) : NA()}</td>
+                    <td>${x.filesystem ? esc(x.filesystem) : NA()}</td><td>${bytes(x.size_bytes)}</td>
+                    <td>${barCell(used, lv("disk", used))}</td><td>${bytes(x.free_bytes)}</td></tr>`;
+            })));
+        const nics = card("Network adapters", table(["Name", "Adapter", "MAC", "Speed", "Status"],
+            (d.network_adapters || []).map(x => `<tr><td><b>${x.name ? esc(x.name) : esc(x.nic)}</b></td><td>${x.name ? esc(x.nic) : NA()}</td>
+                <td>${x.mac ? `<code>${esc(x.mac)}</code>` : NA()}</td><td>${hasValue(x.speed_mbps) ? (x.speed_mbps >= 1000 ? `${x.speed_mbps / 1000} Gbps` : `${x.speed_mbps} Mbps`) : NA()}</td>
+                <td class="${x.status === "up" ? "ok" : x.status ? "wr" : ""}">${x.status ? esc(x.status) : NA()}</td></tr>`)));
+        const sensRows = [...(d.sensors || []).map(x => [x.sensor, x.type, x.value, x.unit]),
+            ...(d.temperatures || []).map(x => [x.zone, "Temperature", x.temperature_c, "°C"]),
+            ...(d.fans || []).map(x => [x.fan, "Fan", x.rpm, "rpm"])]
+            .map(([a, b, v, u]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td><td>${num(v, u === "rpm" ? 0 : 1, " " + u)}</td></tr>`);
+        const sensors = sensRows.length ? card("Sensors", table(["Sensor", "Type", "Value"], sensRows)) : "";
+        return `${d.os === "windows" && d.exporter === false ? OLD_AGENT : ""}<div class="grid pgrid2">${system}${cpu}</div>${drives}${vols}${nics}${sensors}`;
     }
 
     /* ---------------- System ---------------- */
     function renderSystem(d) {
-        const a = d.agent || {};
+        const a = d.agent || {}, t = v => v ? esc(v) : NA();
         const off = d.clock_offset_seconds, offCls = hasValue(off) ? (Math.abs(off) >= 60 ? "cr" : Math.abs(off) >= 5 ? "wr" : "ok") : "";
-        const info = card("System", kv([
-            ["Hostname", d.hostname ? esc(d.hostname) : NA()],
-            ["Domain", d.domain ? esc(d.domain) : "-"],
-            d.fqdn ? ["FQDN", esc(d.fqdn)] : null,
-            ["OS", d.os_name ? esc(d.os_name) : NA()],
-            ["Version", d.os_version ? esc(d.os_version) : "-"],
-            ["Build / kernel", d.build ? esc(d.build) : NA()],
-            d.architecture ? ["Architecture", esc(d.architecture)] : null,
-            d.installation_type ? ["Installation type", esc(d.installation_type)] : null,
-            ["Installed", d.install_time ? ts(d.install_time) : "-"],
-            ["Last boot", d.boot_time ? ts(d.boot_time) : NA()],
-            ["Uptime", hasValue(d.uptime_seconds) ? dur(d.uptime_seconds) : NA()],
-            ["Time zone", d.timezone ? esc(d.timezone) : NA()],
-            ["Clock offset", hasValue(off) ? val(`${off} s`, offCls) : NA("ไม่มีข้อมูลการซิงก์เวลา")],
-            ["Time source", d.clock_source ? esc(d.clock_source) : "-"],
+        const head = `<section class="card syshead"><div><small>Hostname</small><b>${esc(d.hostname || S.web)}</b>${d.fqdn && d.fqdn !== d.hostname ? `<em>${esc(d.fqdn)}</em>` : ""}</div>
+            <div><small>Operating system</small><b>${t(d.os_name)}</b>${d.build ? `<em>build ${esc(d.build)}</em>` : ""}</div>
+            <div><small>Uptime</small><b>${hasValue(d.uptime_seconds) ? dur(d.uptime_seconds) : NA()}</b>${d.boot_time ? `<em>since ${ts(d.boot_time)}</em>` : ""}</div></section>`;
+        const os = card("Operating system", kv([
+            ["Edition", t(d.os_name)], ["Version", t(d.os_version)], ["Build", t(d.build)],
+            ["Installation type", t(d.installation_type)], ["Architecture", t(d.architecture)],
+            ["Installed on", d.install_time ? ts(d.install_time) : NA()],
+            ["Activation", d.license ? val(esc(d.license), /licensed/i.test(d.license) ? "ok" : "wr") : NA()],
+            ["Pending updates", hasValue(d.updates_pending) ? val(String(d.updates_pending), d.updates_pending ? "wr" : "ok") : NA()],
+            ["Last update installed", d.updates_last_install ? ts(d.updates_last_install) : NA()],
         ]));
-        const ips = card("IP addresses", table(["Adapter", "Address", "Family"],
-            (d.ip_addresses || []).map(x => `<tr><td>${esc(x.nic || "-")}</td><td><code>${esc(x.address)}</code></td><td>${esc(x.family || "")}</td></tr>`), "No address data"));
+        const time = card("Time", kv([
+            ["Last boot", d.boot_time ? ts(d.boot_time) : NA()],
+            ["Time zone", t(d.timezone)],
+            ["Clock offset", hasValue(off) ? val(`${off} s`, offCls) : NA()],
+            ["Time source", t(d.clock_source)],
+            ["Last time sync", d.last_time_sync ? ts(d.last_time_sync) : NA()],
+        ]));
+        const ident = card("Identity", kv([
+            ["Hostname", t(d.hostname)], ["Domain", t(d.domain)], ["FQDN", t(d.fqdn)],
+            ["Group", t(d.group)], ["Configured host", d.host ? `<code>${esc(d.host)}</code>` : NA()],
+        ]));
+        const act = card("Activity", kv([
+            ["Logged-on users", num(d.users, 0)], ["Processes", num(d.processes, 0)], ["Threads", num(d.threads, 0)],
+        ]));
+        const ips = card("IP addresses", table(["Adapter", "Address", "Family", "MAC"],
+            (d.ip_addresses || []).map(x => `<tr><td>${x.nic ? esc(x.nic) : NA()}</td><td><code>${esc(x.address)}</code></td><td>${x.family ? esc(x.family) : NA()}</td><td>${x.mac ? `<code>${esc(x.mac)}</code>` : NA()}</td></tr>`)));
         const ag = card("Monitoring", kv([
             ["Type", d.type === "agent" ? "Windows agent (Fluent Bit)" : "SSH + node_exporter"],
-            ["Group", esc(d.group || "-")], ["Configured host", esc(d.host || "-")],
-            ["Metrics collector", esc(a.collector || "-")],
-            a.fluent_bit ? ["Fluent Bit", esc(a.fluent_bit)] : null,
+            ["Metrics collector", t(a.collector)], ["Fluent Bit", t(a.fluent_bit)],
             (a.failed_collectors || []).length ? ["Failed collectors", `<b class="wr">${esc(a.failed_collectors.join(", "))}</b>`] : null,
         ]));
-        return `<div class="grid pgrid2">${info}<div>${ag}${ips}</div></div>`;
+        const old = d.os === "windows" && /built-in/.test(a.collector || "") ? OLD_AGENT : "";
+        return `${old}${head}<div class="grid pgrid2">${os}${time}</div><div class="grid pgrid2">${ident}${act}</div>${ips}${ag}`;
     }
 
     /* ---------------- Alerts & Events ---------------- */
@@ -258,7 +288,11 @@
             const hasKv = c.querySelector("dl.kv dt"), hasRows = c.querySelector("table.ptbl tbody tr"), extra = c.querySelector(".cores,.advice,.bnhead");
             if (!hasKv && !hasRows && !extra) c.remove();
         });
-        box.querySelectorAll(".grid.pgrid2").forEach(g => { if (!g.querySelector(".card")) g.remove(); });
+        box.querySelectorAll(".grid.pgrid2").forEach(g => {
+            const n = g.querySelectorAll(":scope > .card").length;
+            if (!n) g.remove(); else if (n === 1) g.classList.remove("pgrid2");
+        });
+        box.querySelectorAll(".syshead > div").forEach(x => { const b = x.querySelector("b"); if (b && b.textContent.trim() === "-") x.remove(); });
     }
 
     /* ---------------- Windows = แท็บ / Linux = หน้าแบบเดิม ---------------- */

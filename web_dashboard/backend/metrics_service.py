@@ -213,7 +213,7 @@ WIN_PROMQL = {
     "cpu_user": lambda l: f'avg(rate({win_cpu(l, "user")}[5m])) * 100',
     "cpu_system": lambda l: f'avg(rate({win_cpu(l, "privileged")}[5m])) * 100',
     "cpu_iowait": lambda l: f'sum(avg by(mode) (rate({win_cpu(l, "interrupt|dpc")}[5m]))) * 100',
-    "load1": lambda l: f"max(windows_system_processor_queue_length{{{l}}})",
+    "load1": lambda l: f'max({{__name__=~"windows_system_processor_queue(_length)?",{l}}})',
     "load5": _none,
     "load15": _none,
     "cores": lambda l: f'count(count by(core) ({win_cpu(l, "idle")}))',
