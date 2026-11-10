@@ -61,15 +61,8 @@ def settings(config=None):
         levels = list(ALL_LEVELS)
     times = t.get("summary_times")
     times = [str(x) for x in times] if isinstance(times, list) else []
-    kinds = t.get("kinds")
     return {"enabled": t.get("enabled", True) is not False and url.startswith("https://"), "url": url,
-            "levels": {str(x) for x in levels}, "summary_times": sorted({x for x in times if _hhmm(x)}),
-            # เรื่องที่ส่ง (ชนิด sensor) None = ทุกเรื่อง · เฉพาะเครื่อง / กลุ่ม (ว่าง = ทุกเครื่อง)
-            "kinds": {str(x) for x in kinds} if isinstance(kinds, list) else None,
-            "machines": {str(x) for x in t.get("machines") or []},
-            "groups": [str(x).strip("/") for x in t.get("groups") or [] if str(x).strip("/")],
-            "template_alert": str(t.get("template_alert") or "") or DEFAULT_TEMPLATE,
-            "template_recovered": str(t.get("template_recovered") or "") or DEFAULT_TEMPLATE}
+            "levels": {str(x) for x in levels}, "summary_times": sorted({x for x in times if _hhmm(x)})}
 
 
 DEFAULT_TEMPLATE = "{icon} {machine} · {text}"
@@ -84,19 +77,9 @@ def render(template, ctx):
 
 
 def wanted(e, s):
-    """เรื่องนี้ต้องส่งไหม (ชนิด / เครื่อง / กลุ่ม / กฎปิดการส่ง)
-    กฎที่สร้างเองและเปิด "ส่ง Teams" -> ส่งเสมอ (ไม่ขึ้นกับตัวกรองเรื่อง / เครื่อง / กลุ่มทั้งระบบ)"""
-    if e.get("notify") is False:
-        return False
-    if e.get("rule"):
-        return True
-    if s["kinds"] is not None and str(e.get("kind") or "") not in s["kinds"]:
-        return False
-    if s["machines"] or s["groups"]:
-        g = str(e.get("group") or "")
-        if e.get("web") not in s["machines"] and not any(g == x or g.startswith(x + "/") for x in s["groups"]):
-            return False
-    return True
+    """เรื่องนี้ต้องส่งไหม: กฎที่ปิด "ส่ง Teams" -> ไม่ส่ง
+    (เลือกเครื่อง / เรื่อง / ข้อความเอง = Settings > Custom alert rules)"""
+    return e.get("notify") is not False
 
 
 def _hhmm(x):
@@ -330,7 +313,7 @@ def sensor_events(events, config=None):
                "sensor": e.get("sensor"), "text": short_text(k, e), "value": _n(e.get("value")),
                "unit": e.get("unit") or "", "threshold": _n(lim), "level": LABEL.get(k, k), "time": _now_text(),
                "duration": _dur(e["duration"]) if e.get("duration") else ""}
-        tpl = e.get("template") or (s["template_recovered"] if k == "recovered" else s["template_alert"])
+        tpl = e.get("template") or DEFAULT_TEMPLATE         # ข้อความเฉพาะกฎ (Custom alert rules) หรือแบบปริยาย
         title = render(tpl, ctx) or render(DEFAULT_TEMPLATE, ctx)
         group = e.get("group")
         footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)

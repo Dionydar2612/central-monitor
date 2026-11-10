@@ -218,20 +218,13 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <!-- แจ้งเตือน Microsoft Teams (/api/notify-settings): puller.yaml -> notify.teams (ตัวส่ง: puller/notify.py) -->
 <section class="card svc">
 <div class="top"><h2>Notifications (Microsoft Teams)</h2></div>
-<div style="color:var(--mut);font-size:13px">ส่งการ์ดแจ้งเตือนเข้าช่อง Teams เมื่อสถานะเปลี่ยน (ครั้งเดียวต่อการเปลี่ยน ตามเวลาที่ตั้งในการ์ด Alerts) ·
+<div style="color:var(--mut);font-size:13px">ช่อง Teams หลัก + การแจ้งเตือนของ sensor ในตัว (Down, Disk, CPU ...) + สรุปรายวัน · แจ้งเตือนแบบเลือกเครื่อง / เรื่อง / ข้อความเอง ให้สร้างที่ <b>Custom alert rules</b> ·
 สร้าง URL ใน Teams: ช่องที่ต้องการ &gt; ⋯ &gt; <b>Workflows</b> &gt; <b>Send webhook alerts to a channel</b> &gt; คัดลอก URL</div>
 <div class="st-grid">
 <div class="st-f" data-n="webhook_url" style="grid-column:span 2"><label for="n_url">Webhook URL</label><input id="n_url" type="password" autocomplete="off" placeholder="https://...  (เว้นว่าง = ใช้ค่าเดิม)"><small id="n_hint"></small><div class="st-err"></div></div>
 <div class="st-f" data-n="enabled"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="n_on"> เปิดการแจ้งเตือน</label></div>
 <div class="st-f" data-n="summary_times"><label for="n_times">ส่งสรุปสถานะทุกวันเวลา</label><input id="n_times" autocomplete="off" placeholder="เช่น 08:30, 17:00 (เว้นว่าง = ไม่ส่ง)"><small>1 บรรทัดต่อเครื่อง: 🔴 Down/Error · 🟡 Warning · 🟢 ปกติ / กลับปกติ</small><div class="st-err"></div></div>
 <div class="st-f" data-n="levels" style="grid-column:span 2"><label>ส่งเมื่อ</label><div class="nlv" id="n_levels"></div><div class="st-err"></div></div>
-<div class="st-f" data-n="kinds" style="grid-column:span 3"><label>เรื่องที่ส่ง</label><div class="nlv" id="n_kinds"></div><div class="st-err"></div></div>
-<div class="st-f" data-n="machines"><label for="n_machines">เฉพาะเครื่อง (คั่นด้วย ,)</label><input id="n_machines" autocomplete="off" placeholder="เว้นว่าง = ทุกเครื่อง"><div class="st-err"></div></div>
-<div class="st-f" data-n="groups"><label for="n_groups">เฉพาะกลุ่ม (คั่นด้วย ,)</label><input id="n_groups" autocomplete="off" placeholder="เว้นว่าง = ทุกกลุ่ม" list="groupList"><div class="st-err"></div></div>
-<div class="st-f"></div>
-<div class="st-f" data-n="template_alert" style="grid-column:span 3"><label for="n_tpl_alert">ข้อความการ์ดแจ้งเตือน</label><input id="n_tpl_alert" autocomplete="off"><small id="n_tpl_alert_pv"></small><div class="st-err"></div></div>
-<div class="st-f" data-n="template_recovered" style="grid-column:span 3"><label for="n_tpl_rec">ข้อความการ์ดกลับปกติ</label><input id="n_tpl_rec" autocomplete="off"><small id="n_tpl_rec_pv"></small><div class="st-err"></div></div>
-<div class="st-f" style="grid-column:span 3"><small id="n_tpl_keys"></small></div>
 </div>
 <div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="n_save" type="button">Save notifications</button><button class="st-btn" id="n_test" type="button">Send test card</button><button class="st-btn" id="n_sumnow" type="button">ส่งสรุปตอนนี้</button><button class="st-btn" id="n_clear" type="button">ลบ webhook</button></div>
 <div class="st-msg" id="n_msg" role="status"></div>

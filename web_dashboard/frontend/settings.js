@@ -656,28 +656,6 @@ function renderNotify(d) {
     const box = $("n_levels"); box.textContent = "";
     (d.all_levels || Object.keys(N_LABEL)).forEach(k => box.append(
         el("label", { class: "st-check" }, el("input", Object.assign({ type: "checkbox", value: k }, (d.levels || []).includes(k) ? { checked: "" } : {})), " " + (N_LABEL[k] || k))));
-    const kb = $("n_kinds"); kb.textContent = "";
-    (d.all_kinds || []).forEach(k => kb.append(
-        el("label", { class: "st-check" }, el("input", Object.assign({ type: "checkbox", value: k.key }, (d.kinds || []).includes(k.key) ? { checked: "" } : {})), " " + k.label)));
-    $("n_machines").value = (d.machines || []).join(", ");
-    $("n_groups").value = (d.groups || []).join(", ");
-    N_DEFAULT_TPL = d.default_template || "{icon} {machine} · {text}";
-    $("n_tpl_alert").placeholder = $("n_tpl_rec").placeholder = N_DEFAULT_TPL;
-    $("n_tpl_alert").value = d.template_alert || "";
-    $("n_tpl_rec").value = d.template_recovered || "";
-    $("n_tpl_keys").textContent = "ใส่ได้: " + (d.template_keys || []).map(k => `{${k}}`).join(" ") + " · เว้นว่าง = แบบปริยาย";
-    tplPreview();
-}
-/* ตัวอย่างข้อความการ์ด (ข้อมูลสมมติ เพื่อดูหน้าตาเท่านั้น) */
-let N_DEFAULT_TPL = "{icon} {machine} · {text}";
-const N_SAMPLE = { alert: { icon: "🟡", machine: "host-window", group: "window", host: "10.0.0.21", sensor: "Memory Usage", text: "RAM ใช้ไป 83% (เกณฑ์ 80%)",
-    value: "83", unit: "%", threshold: "80", level: "WARNING", time: "06/11/2026 16:51", duration: "" },
-    recovered: { icon: "🟢", machine: "host-window", group: "window", host: "10.0.0.21", sensor: "Memory Usage", text: "RAM กลับปกติ (62%) · เป็นอยู่ 25m",
-    value: "62", unit: "%", threshold: "", level: "RECOVERED", time: "06/11/2026 17:16", duration: "25m" } };
-function tplRender(tpl, ctx) { return tpl.replace(/\{(\w+)\}/g, (m, k) => k in ctx ? (ctx[k] || "") : m).trim(); }
-function tplPreview() {
-    $("n_tpl_alert_pv").textContent = "ตัวอย่าง: " + tplRender($("n_tpl_alert").value.trim() || N_DEFAULT_TPL, N_SAMPLE.alert);
-    $("n_tpl_rec_pv").textContent = "ตัวอย่าง: " + tplRender($("n_tpl_rec").value.trim() || N_DEFAULT_TPL, N_SAMPLE.recovered);
 }
 async function loadNotify() {
     try { renderNotify(await api("GET", "/api/notify-settings")); }
@@ -691,9 +669,6 @@ async function saveNotify(extra) {
     notifyErrors(null);
     const body = Object.assign({
         enabled: $("n_on").checked, summary_times: $("n_times").value,
-        kinds: [...$("n_kinds").querySelectorAll("input:checked")].map(i => i.value),
-        machines: $("n_machines").value, groups: $("n_groups").value,
-        template_alert: $("n_tpl_alert").value.trim(), template_recovered: $("n_tpl_rec").value.trim(),
         levels: [...$("n_levels").querySelectorAll("input:checked")].map(i => i.value),
     }, $("n_url").value.trim() ? { webhook_url: $("n_url").value.trim() } : {}, extra || {});
     $("n_save").disabled = true;
@@ -747,7 +722,6 @@ document.addEventListener("DOMContentLoaded", () => {
     $("al_reset").onclick = resetAlerts;
     $("n_save").onclick = () => saveNotify();
     $("n_test").onclick = testNotify;
-    ["n_tpl_alert", "n_tpl_rec"].forEach(id => $(id).addEventListener("input", tplPreview));
     $("n_sumnow").onclick = async () => {
         try { const d = await api("POST", "/api/notify-settings/summary-now", {}); say("n_msg", d.message, "ok"); }
         catch (e) { say("n_msg", "ส่งไม่ได้: " + e.message, "bad"); }

@@ -25,17 +25,6 @@ import settings
 import targets_service
 
 LEVELS = ("down", "error", "warning", "recovered", "checks")
-# เรื่อง (ชนิด sensor) ที่เลือกส่งได้ - ต้องตรงกับ kind ใน puller/sensor_monitor.py
-KINDS = {
-    "availability": "เครื่อง Down", "cpu": "CPU", "memory": "RAM ใช้ไป", "mem_available": "RAM ว่าง",
-    "disk": "Disk เต็ม", "disk_latency": "Disk latency", "packet_loss": "Ping loss", "net_latency": "Ping latency",
-    "service": "Service สำคัญ", "bottleneck": "Bottleneck", "logpull": "ดึง log (SSH)", "custom": "กฎที่สร้างเอง",
-}
-DEFAULT_TEMPLATE = "{icon} {machine} · {text}"
-TEMPLATE_KEYS = ["icon", "machine", "group", "host", "sensor", "text", "value", "unit", "threshold", "level",
-                 "time", "duration"]
-
-
 def _teams(doc):
     return dict(((doc.get("notify") or {}).get("teams")) or {})
 
@@ -55,14 +44,6 @@ def get_settings():
     return {"enabled": t.get("enabled", True) is not False and bool(url), "url_set": bool(url), "url_hint": _hint(url),
             "levels": [str(x) for x in levels],
             "summary_times": [str(x) for x in t.get("summary_times") or []],
-            "kinds": [str(x) for x in t["kinds"]] if isinstance(t.get("kinds"), list) else list(KINDS),
-            "all_kinds": [{"key": k, "label": v} for k, v in KINDS.items()],
-            "machines": [str(x) for x in t.get("machines") or []],
-            "groups": [str(x) for x in t.get("groups") or []],
-            "template_alert": str(t.get("template_alert") or ""),
-            "template_recovered": str(t.get("template_recovered") or ""),
-            "default_template": DEFAULT_TEMPLATE,
-            "template_keys": TEMPLATE_KEYS,
             "all_levels": list(LEVELS)}
 
 
@@ -96,22 +77,6 @@ def update_settings(payload):
         if bad:
             errors["levels"] = f"ไม่รู้จัก: {', '.join(map(str, bad))}"
         vals["levels"] = [x for x in LEVELS if x in lv]
-    if "kinds" in payload:
-        ks = payload["kinds"] if isinstance(payload["kinds"], list) else []
-        vals["kinds"] = [k for k in KINDS if k in ks]
-    for key in ("machines", "groups"):
-        if key in payload:
-            raw = payload[key]
-            if isinstance(raw, str):
-                raw = re.split(r"[,\n]", raw)
-            vals[key] = [str(x).strip().strip("/") if key == "groups" else str(x).strip()
-                         for x in raw or [] if str(x).strip()][:200]
-    for key in ("template_alert", "template_recovered"):
-        if key in payload:
-            v = str(payload[key] or "").strip()
-            if len(v) > 300:
-                errors[key] = "ไม่เกิน 300 ตัวอักษร"
-            vals[key] = v
     if "summary_times" in payload:
         raw = payload["summary_times"]
         if isinstance(raw, str):
@@ -138,6 +103,8 @@ def update_settings(payload):
         if not isinstance(doc["notify"].get("teams"), dict):
             doc["notify"]["teams"] = CommentedMap()
         t = doc["notify"]["teams"]
+        for old in ("kinds", "machines", "groups", "template_alert", "template_recovered"):   # ย้ายไป Custom alert rules
+            t.pop(old, None)
         for k, v in vals.items():
             if v is None:
                 t.pop(k, None)

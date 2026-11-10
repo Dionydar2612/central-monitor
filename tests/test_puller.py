@@ -281,38 +281,32 @@ class TeamsNotify(unittest.TestCase):
             notify._enqueue = orig
         self.assertEqual([p["summary"] for p in sent], ["🟡 w · RAM ใช้ไป 89% (เกณฑ์ 80%)", "🔴 w · Disk C: เต็ม 93% (เกณฑ์ 90%)"])
 
-    def test_filters_and_template(self):
+    def test_rule_template(self):
         sent = []
         orig = notify._enqueue
         notify._enqueue = lambda url, payload, what: sent.append(payload["summary"])
-        cfg = {"notify": {"teams": {"webhook_url": "https://x", "kinds": ["disk", "custom"], "groups": ["TQ"],
-                                    "template_alert": "[{level}] {machine}: {text}"}}}
         try:
             notify.sensor_events([
-                {"web": "a", "group": "TQ/IT", "to": "warning", "level": "warning", "kind": "disk", "value": 85, "unit": "%",
-                 "warning": 80, "mount": "C:"},
-                {"web": "a", "group": "TQ/IT", "to": "warning", "level": "warning", "kind": "memory", "value": 85},   # ไม่ได้เลือก
-                {"web": "b", "group": "OTHER", "to": "error", "level": "error", "kind": "disk", "value": 99, "error": 90},  # คนละกลุ่ม
-                {"web": "a", "group": "TQ", "to": "error", "level": "error", "kind": "custom", "sensor": "Load",
+                {"web": "a", "to": "error", "level": "error", "kind": "custom", "rule": "r", "sensor": "Load",
                  "value": 9, "error": 4, "template": "{icon} {machine} โหลด {value}"},
-                {"web": "a", "group": "TQ", "to": "error", "level": "error", "kind": "custom", "notify": False},
-            ], cfg)
+                {"web": "a", "to": "error", "level": "error", "kind": "custom", "rule": "r", "notify": False},
+            ], {"notify": {"teams": {"webhook_url": "https://x"}}, "alert_rules": [{"id": "r"}]})
         finally:
             notify._enqueue = orig
-        self.assertEqual(sent, ["[WARNING] a: Disk C: เต็ม 85% (เกณฑ์ 80%)", "🔴 a โหลด 9"])
+        self.assertEqual(sent, ["🔴 a โหลด 9"])
 
     def test_custom_rule_always_sent_to_its_channel(self):
         sent = []
         orig = notify._enqueue
         notify._enqueue = lambda url, payload, what: sent.append((url, payload["summary"]))
-        cfg = {"notify": {"teams": {"webhook_url": "https://main", "kinds": ["availability"], "levels": ["down"]}},
+        cfg = {"notify": {"teams": {"webhook_url": "https://main", "levels": ["down"]}},
                "alert_rules": [{"id": "r1", "teams_url": "https://rule-channel"}, {"id": "r2"}]}
         try:
             notify.sensor_events([
                 {"web": "a", "to": "warning", "level": "warning", "kind": "custom", "rule": "r1", "sensor": "Disk D",
                  "value": 90, "unit": "%", "warning": 85},
                 {"web": "a", "to": "ok", "level": "recovered", "kind": "custom", "rule": "r2", "sensor": "Load", "value": 1},
-                {"web": "a", "to": "warning", "level": "warning", "kind": "memory", "value": 85, "warning": 80},  # ถูกกรอง
+                {"web": "a", "to": "warning", "level": "warning", "kind": "memory", "value": 85, "warning": 80},  # ไม่ได้เลือก warning
             ], cfg)
             notify.sensor_events([{"web": "a", "to": "error", "level": "error", "kind": "custom", "rule": "r2",
                                    "sensor": "Load", "value": 9, "error": 4}], {"alert_rules": [{"id": "r2"}]})  # ไม่มีช่องหลัก
