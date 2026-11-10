@@ -1,5 +1,6 @@
 # เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง (Custom alert rules) + ส่ง Teams ต่อกฎ
 - Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
+- การ์ด Teams แบบ PRTG: หัวเรื่องสีตามระดับ `Central Monitor Notification: <เครื่อง> [<sensor>] <ระดับ>` + Device / Sensor / Status / Last Value / Threshold / Time (ข้อความของกฎ = บรรทัด Message และข้อความบนแถบแจ้งเตือน)
 - Settings > Notifications: เอาตัวเลือกเรื่องที่ส่ง / เฉพาะเครื่อง / กลุ่ม / ข้อความการ์ด ออก (ใช้ Custom alert rules แทน) · ค่าเก่าที่บันทึกไว้ไม่ถูกใช้ และจะถูกลบเมื่อกดบันทึกครั้งถัดไป
 - รายละเอียด: `docs/NOTIFY-TH.md`
 

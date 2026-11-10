@@ -124,6 +124,32 @@ def build_card(title, level, lines, footer=""):
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
 
 
+COLOR = {"down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good", "ok": "Good",
+         "up": "Good", "unknown": "Warning"}
+CARD_PREFIX = "Central Monitor Notification"
+
+
+def fact_card(title, level, facts, summary=None):
+    """การ์ดแบบ PRTG: หัวเรื่องตัวหนาสีตามระดับ + ตาราง หัวข้อ : ค่า
+    facts = [(หัวข้อ, ค่า)] ค่าว่างจะไม่แสดง"""
+    rows = [{"title": f"{t}:", "value": str(v)} for t, v in facts if v not in (None, "")]
+    body = [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True,
+             "color": COLOR.get(level, "Default")},
+            {"type": "FactSet", "spacing": "Medium", "facts": rows}]
+    card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
+            "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": summary or title, "body": body}
+    return {"type": "message", "summary": summary or title, "attachments": [
+        {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
+
+
+def _time_full():
+    return datetime.now().astimezone().strftime("%d/%m/%Y %H:%M:%S")
+
+
+def _device(machine, host="", group=""):
+    return " ".join([str(machine)] + [f"[{x}]" for x in (host, group) if x])
+
+
 def _n(v):
     """ตัวเลขอ่านง่าย: 82.8 -> 83, 7.5 -> 7.5"""
     try:
@@ -314,10 +340,25 @@ def sensor_events(events, config=None):
                "unit": e.get("unit") or "", "threshold": _n(lim), "level": LABEL.get(k, k), "time": _now_text(),
                "duration": _dur(e["duration"]) if e.get("duration") else ""}
         tpl = e.get("template") or DEFAULT_TEMPLATE         # ข้อความเฉพาะกฎ (Custom alert rules) หรือแบบปริยาย
-        title = render(tpl, ctx) or render(DEFAULT_TEMPLATE, ctx)
-        group = e.get("group")
-        footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
-        _enqueue(url, build_card(title, k, [], footer), f"{web} {e.get('sensor')} {k}")
+        summary = render(tpl, ctx) or render(DEFAULT_TEMPLATE, ctx)   # ข้อความบนแถบแจ้งเตือนของ Teams
+        sensor = str(e.get("sensor") or _subject(e))
+        unit = e.get("unit") or ""
+        try:
+            val = f"{float(e.get('value')):.2f}".rstrip("0").rstrip(".")   # ค่าจริง 2 ตำแหน่ง เช่น 87.81
+        except (TypeError, ValueError):
+            val = None
+        th = [f"{n} {'≤' if e.get('low') else '≥'} {_n(e.get(x))}{unit}" for n, x in (("Warning", "warning"), ("Error", "error"))
+              if _n(e.get(x)) is not None]
+        facts = [("Device", _device(web, e.get("host"), e.get("group"))),
+                 ("Sensor", sensor),
+                 ("Status", f"{LABEL.get(k, k)} – {short_text(k, e)}"),
+                 ("Last Value", f"{val} {unit}".strip() if val is not None else ""),
+                 ("Threshold", " · ".join(th)),
+                 ("Message", render(e["template"], ctx).lstrip("🔴🟡🟢 ") if e.get("template") else ""),
+                 ("Duration", ctx["duration"]),
+                 ("Time", _time_full())]
+        _enqueue(url, fact_card(f"{CARD_PREFIX}: {web} [{sensor}] {LABEL.get(k, k)}", k, facts, summary),
+                 f"{web} {e.get('sensor')} {k}")
 
 
 # ------------------------------------------------------------------
@@ -487,7 +528,9 @@ def check_event(name, url, old, new, result, group="", config=None):
         text = f"เว็บ {name} ล่ม (HTTP {result['code']})"
     else:
         text = f"เว็บ {name} เข้าไม่ได้"
-    title = f"{ICON.get(level, '')} {text}"
-    lines = [url]
-    footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
-    _enqueue(s["url"], build_card(title, level, lines, footer), f"check {name} {new}")
+    facts = [("Device", _device(name, "", group)), ("Sensor", "SSL certificate" if ssl_.get("days_left") is not None
+                                                     and level == "warning" else "Web check"),
+             ("Status", f"{LABEL.get(level, level)} – {text}"), ("URL", url),
+             ("Last Value", f"HTTP {result['code']}" if result.get("code") else ""), ("Time", _time_full())]
+    _enqueue(s["url"], fact_card(f"{CARD_PREFIX}: {name} [Web check] {LABEL.get(level, level)}", level, facts,
+                                 f"{ICON.get(level, '')} {text}"), f"check {name} {new}")

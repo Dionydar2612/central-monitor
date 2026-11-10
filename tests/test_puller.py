@@ -244,11 +244,16 @@ class TeamsNotify(unittest.TestCase):
         card = sent[0][1]["attachments"][0]["content"]
         self.assertEqual(sent[0][1]["type"], "message")
         self.assertEqual(card["type"], "AdaptiveCard")
-        self.assertEqual(card["body"][0]["items"][0]["text"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")
+        self.assertEqual(card["body"][0]["text"], "Central Monitor Notification: win-01 [Availability] DOWN")
+        facts = {f["title"]: f["value"] for f in card["body"][1]["facts"]}
+        self.assertEqual(facts["Device:"], "win-01 [TQ]")
+        self.assertTrue(facts["Status:"].startswith("DOWN – "))
         self.assertEqual(sent[0][1]["summary"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")   # ข้อความในหน้าแจ้งเตือน
-        self.assertEqual(card["body"][0]["style"], "attention")
+        self.assertEqual(card["body"][0]["color"], "Attention")
         self.assertNotIn("actions", card)                                # ไม่มีปุ่มลิงก์
-        self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["style"], "good")
+        self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["color"], "Good")
+        f2 = {f["title"]: f["value"] for f in sent[1][1]["attachments"][0]["content"]["body"][1]["facts"]}
+        self.assertEqual(f2["Last Value:"], "12.3 %")
         self.assertEqual(sent[1][1]["summary"], "🟢 lx-01 · CPU กลับปกติ (12%) · เป็นอยู่ 10m")
 
     def test_summary(self):

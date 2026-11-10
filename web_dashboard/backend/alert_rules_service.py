@@ -243,7 +243,16 @@ def send_test(data):
            "text": text, "value": value, "unit": unit, "threshold": lim, "level": level.upper(), "time": "", "duration": ""}
     tpl = rule.get("message") or "{icon} {machine} · {text}"
     title = re.sub(r"\{(\w+)\}", lambda m: str(ctx.get(m.group(1), m.group(0)) or ""), tpl).strip()
-    ok, msg = notify_service.post(url, notify_service.card_payload(
-        f"[ทดสอบ] {title}", "attention" if level == "error" else "warning", "การ์ดตัวอย่างจาก Custom alert rules"))
+    th = [f"{n} {'≤' if rule.get('op') == '<' else '≥'} {rule[x]}{unit}" for n, x in (("Warning", "warning"), ("Error", "error"))
+          if rule.get(x) is not None and rule["metric"] != "service"]
+    facts = [("Device", " ".join([machine] + ([f"[{ctx['group']}]"] if ctx["group"] else []))),
+             ("Sensor", rule["name"]), ("Status", f"{level.upper()} – {text}"),
+             ("Last Value", f"{value} {unit}".strip() if value not in ("", None) else ""),
+             ("Threshold", " · ".join(th)),
+             ("Message", title.lstrip("🔴🟡🟢 ") if rule.get("message") else ""),
+             ("Time", __import__("datetime").datetime.now().astimezone().strftime("%d/%m/%Y %H:%M:%S"))]
+    ok, msg = notify_service.post(url, notify_service.fact_card(
+        f"[ทดสอบ] Central Monitor Notification: {machine} [{rule['name']}] {level.upper()}",
+        "attention" if level == "error" else "warning", facts, f"[ทดสอบ] {title}"))
     where = "ช่องของกฎนี้" if rule.get("teams_url") else "ช่องหลัก"
     return (200, {"ok": True, "message": f"ส่งไป{where}แล้ว ({msg})"}) if ok else (502, {"error": msg})

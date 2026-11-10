@@ -128,32 +128,24 @@ def send_test(webhook_url=None):
         return False, errors["webhook_url"]
     if not url:
         return False, "ยังไม่ได้ใส่ webhook URL"
-    card = {
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4",
-        "msteams": {"width": "Full"},
-        "body": [
-            {"type": "Container", "style": "good", "bleed": True, "items": [
-                {"type": "TextBlock", "text": "Central Monitor: ทดสอบการแจ้งเตือน", "weight": "Bolder", "size": "Medium", "wrap": True}]},
-            {"type": "FactSet", "facts": [{"title": "เวลา", "value": datetime.now().astimezone().strftime("%d/%m/%Y %H:%M:%S")},
-                                          {"title": "สถานะ", "value": "เชื่อมต่อ Microsoft Teams สำเร็จ"}]},
-            {"type": "TextBlock", "wrap": True, "spacing": "Small",
-             "text": "จากนี้ช่องนี้จะได้รับการ์ดเมื่อเครื่อง Down, disk เต็ม, service สำคัญหยุด ฯลฯ ตามระดับที่เลือกไว้"},
-        ],
-    }
-    payload = {"type": "message", "attachments": [
-        {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
+    payload = fact_card("Central Monitor Notification: ทดสอบการแจ้งเตือน", "good", [
+        ("Device", "Central Monitor"), ("Sensor", "Microsoft Teams"), ("Status", "OK – เชื่อมต่อ Teams สำเร็จ"),
+        ("Time", datetime.now().astimezone().strftime("%d/%m/%Y %H:%M:%S"))])
     return post(url, payload)
 
 
-def card_payload(title, style, footer=""):
-    """การ์ด 1 บรรทัดแบบเดียวกับที่ puller ส่ง (ใช้กับปุ่มทดสอบของกฎ)"""
-    body = [{"type": "Container", "style": style, "bleed": True,
-             "items": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}]}]
-    if footer:
-        body.append({"type": "TextBlock", "text": footer, "isSubtle": True, "size": "Small", "wrap": True})
+COLOR = {"attention": "Attention", "warning": "Warning", "good": "Good"}
+
+
+def fact_card(title, style, facts, summary=None):
+    """การ์ดแบบ PRTG เหมือนที่ puller ส่ง (notify.fact_card): หัวเรื่องสีตามระดับ + หัวข้อ : ค่า"""
+    rows = [{"title": f"{t}:", "value": str(v)} for t, v in facts if v not in (None, "")]
+    body = [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True,
+             "color": COLOR.get(style, "Default")},
+            {"type": "FactSet", "spacing": "Medium", "facts": rows}]
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4",
-            "msteams": {"width": "Full"}, "fallbackText": title, "body": body}
-    return {"type": "message", "summary": title, "attachments": [
+            "msteams": {"width": "Full"}, "fallbackText": summary or title, "body": body}
+    return {"type": "message", "summary": summary or title, "attachments": [
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
 
 
