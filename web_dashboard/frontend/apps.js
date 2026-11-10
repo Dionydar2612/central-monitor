@@ -52,9 +52,11 @@ function render() {
     const items = A.items;
     const bad = items.filter(x => BAD.includes(x.status) || WARN.includes(x.status));
     const hero = $("apHero");
-    hero.className = "card apHero " + (!items.length ? "" : bad.some(x => BAD.includes(x.status)) ? "bad" : bad.length ? "wr" : "ok");
+    const okN = items.filter(x => x.status === "ok").length, waitN = items.length - okN - bad.length;
+    hero.className = "card apHero " + (!items.length ? "" : bad.some(x => BAD.includes(x.status)) ? "bad" : bad.length || waitN ? "wr" : "ok");
     $("apHeadline").textContent = !items.length ? "ยังไม่ได้เฝ้าดูโปรแกรมหรือเว็บ"
-        : bad.length ? `มีปัญหา ${bad.length} จาก ${items.length} รายการ` : `ทำงานปกติทั้งหมด ${items.length} รายการ`;
+        : bad.length ? `มีปัญหา ${bad.length} จาก ${items.length} รายการ`
+        : waitN ? `ทำงานปกติ ${okN} · รอข้อมูล ${waitN} รายการ` : `ทำงานปกติทั้งหมด ${items.length} รายการ`;
     $("apSub").textContent = items.length ? `${bad.length ? bad.map(x => x.name).slice(0, 3).join(", ") + (bad.length > 3 ? " ..." : "") + " · " : ""}อัปเดต ${new Date(A.at).toLocaleTimeString("en-GB")} · ตรวจทุก 30 วินาที`
         : (A.role === "admin" ? "กด + เพิ่ม เพื่อเลือกโปรแกรม เว็บ หรือพอร์ตที่ต้องการดู" : "ให้ admin เพิ่มรายการที่ต้องการดู");
     $("cAll").textContent = items.length; $("cBad").textContent = bad.length;

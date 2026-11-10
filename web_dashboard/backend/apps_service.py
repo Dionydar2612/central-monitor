@@ -39,6 +39,42 @@ def _what(r):
     return f"{'บนเครื่อง' if m == 'port_listen' else 'จาก central'} :{r.get('port')}"
 
 
+# ข้อมูลที่ต้องมีจากเครื่อง Windows (agent) ของแต่ละประเภท -> ไม่มี = บอกให้ติดตั้ง agent ซ้ำ
+_NEEDS = {"http_local": ("cm_probe_timestamp_seconds", "ตัวตรวจเว็บบนเครื่อง (cm-probe)"),
+          "docker": ("cm_probe_timestamp_seconds", "ตัวตรวจ Docker (cm-probe)"),
+          "port_listen": ("cm_inventory_timestamp_seconds", "รายการพอร์ต (cm-inventory)"),
+          "process": ("windows_process_working_set_private_bytes", "ข้อมูล process (windows_exporter)")}
+
+
+def _why_nodata(rule, targets):
+    """เหตุผลที่ยังไม่มีสถานะ (แทนข้อความกว้าง ๆ)"""
+    generic = "รอรอบตรวจแรก (~30 วินาที)"
+    try:
+        alltargets = {t.get("name"): t for t in targets_service._plain(alert_rules_service._doc().get("targets") or [])
+                      if isinstance(t, dict)}
+        m = rule.get("metric")
+        for name in targets or []:
+            t = alltargets.get(name)
+            if not t:
+                return f"ไม่พบเครื่อง {name} ในหน้า Settings"
+            if t.get("paused"):
+                return f"เครื่อง {name} ถูก Pause อยู่"
+            agent = str(t.get("type") or "ssh") == "agent"
+            if m in ("http_url", "tcp_port") and "{host}" in str(rule.get("url") or "{host}") and not t.get("host"):
+                return f"เครื่อง {name} ยังไม่มี Host (IP) ในหน้า Settings"
+            if agent and m in _NEEDS:
+                metric, what = _NEEDS[m]
+                from clients import prom_value
+                if prom_value(f'count({metric}{{cm_web="{name}"}})') is None:
+                    return (f"เครื่อง {name} ยังไม่ส่ง{what} · รันคำสั่งติดตั้ง agent ซ้ำบนเครื่อง "
+                            f"(Settings > เครื่อง > Download zip + Make command) แล้วรอ 1-2 นาที")
+            if not agent and m in ("docker", "http_local"):
+                return (f"central ยังตรวจผ่าน SSH ไม่ได้ (เครื่องต้องมี curl / user SSH ต้องใช้ docker ได้) หรือ {generic}")
+    except Exception as e:
+        print(f"[APPS] why {rule.get('id')}: {e!r}")
+    return generic
+
+
 def list_apps(web=None):
     rules = _rules()
     by_rule = {}
@@ -63,10 +99,11 @@ def list_apps(web=None):
                 continue
             items.append({**base, "id": None, "web": ", ".join(targets) or "-", "group": "",
                           "status": "paused" if not base["enabled"] else "nodata",
-                          "message": "ปิดอยู่" if not base["enabled"] else "ยังไม่มีข้อมูล (รอรอบตรวจ ~30 วินาที หรือเครื่องยังไม่ส่งข้อมูลนี้)",
+                          "message": "ปิดอยู่" if not base["enabled"] else _why_nodata(r, targets),
                           "since": None, "value": None, "unit": ""})
     items.sort(key=lambda x: (ORDER.get(x["status"], 9), x["name"].lower(), x["web"] or ""))
     bad = sum(1 for x in items if x["status"] in ("error", "down", "warning"))
+    # หมายเหตุ: รายการ "รอข้อมูล" ไม่นับเป็นทำงานปกติ
     ok = sum(1 for x in items if x["status"] == "ok")
     return {"items": items, "summary": {"total": len(items), "ok": ok, "problem": bad, "other": len(items) - ok - bad}}
 

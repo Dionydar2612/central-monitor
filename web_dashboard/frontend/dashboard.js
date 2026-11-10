@@ -1015,7 +1015,9 @@ async function loadApps() {
     const st = x => ["error", "down"].includes(x.status) ? "bad" : x.status === "warning" ? "wr" : x.status === "ok" ? "ok" : "";
     const bad = items.filter(x => ["bad", "wr"].includes(st(x)));
     box.className = "card apStrip " + (bad.some(x => st(x) === "bad") ? "bad" : bad.length ? "wr" : "ok");
-    setText("apsText", bad.length ? `Apps & Web: มีปัญหา ${bad.length}` : "Apps & Web: ทำงานปกติ");
+    const okN = items.filter(x => x.status === "ok").length, waitN = items.length - okN - bad.length;
+    if (!bad.length && waitN) box.className = "card apStrip wr";
+    setText("apsText", bad.length ? `Apps & Web: มีปัญหา ${bad.length}` : waitN ? `Apps & Web: รอข้อมูล ${waitN}` : "Apps & Web: ทำงานปกติ");
     setText("apsSub", `${items.filter(x => x.status === "ok").length} / ${items.length} ทำงาน · ดูทั้งหมด →`);
     const MAX = 24;
     q("#apsList").innerHTML = items.slice(0, MAX).map(x => `<a class="apsP ${st(x)}" href="/apps" title="${escapeHtml(`${x.web} · ${x.message}`)}"><i></i>${escapeHtml(x.name)}</a>`).join("")
