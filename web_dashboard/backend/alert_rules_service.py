@@ -28,9 +28,17 @@ METRICS = {   # key: (ชื่อ, หน่วย, ต่อไดรฟ์?, 
     "packet_loss": ("Ping loss %", "%", False, ">", "any"),
     "net_latency": ("Ping latency ms", "ms", False, ">", "any"),
     "service": ("Service หยุด (Windows)", "", False, ">", "windows"),
+    "process": ("โปรแกรมไม่ทำงาน (Windows)", "", False, ">", "windows"),
+    "process_cpu": ("CPU % ของโปรแกรม (Windows)", "%", False, ">", "windows"),
+    "process_mem": ("RAM ของโปรแกรม MB (Windows)", "MB", False, ">", "windows"),
+    "port_listen": ("พอร์ตไม่เปิดรับบนเครื่อง (Windows)", "", False, ">", "windows"),
+    "tcp_port": ("พอร์ตเชื่อมต่อจาก central ไม่ได้", "", False, ">", "any"),
+    "http_url": ("เว็บของโปรแกรมไม่ตอบ (HTTP จาก central)", "", False, ">", "any"),
     "promql": ("PromQL เอง", "", False, ">", "any"),
 }
 NAME_RE = re.compile(r"^[^\x00-\x1f]{1,60}$")
+STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url")   # ไม่มีเกณฑ์ตัวเลข ผิดปกติ = level
+PROCESS_RE = re.compile(r"^[A-Za-z0-9_.+ ()-]{1,80}$")
 SERVICE_RE = re.compile(r"^[A-Za-z0-9_.$@ -]{1,80}$")
 MOUNT_RE = re.compile(r"^[^\x00-\x1f\"']{1,120}$")
 
@@ -109,6 +117,24 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
         if not SERVICE_RE.match(sv):
             errors["service"] = "ใส่ชื่อ service (เช่น W3SVC, MSSQLSERVER)"
         rule["service"] = sv
+    if metric in ("process", "process_cpu", "process_mem"):
+        pr = str(data.get("process") or "").strip()
+        if pr.lower().endswith(".exe"):
+            pr = pr[:-4]
+        if not PROCESS_RE.match(pr):
+            errors["process"] = "ใส่ชื่อโปรแกรมตามที่เห็นในแท็บ Processes (เช่น sqlservr, java, w3wp)"
+        rule["process"] = pr
+    if metric in ("port_listen", "tcp_port"):
+        port = _num(data.get("port"), "port", errors, 1, 65535)
+        if port is None and "port" not in errors:
+            errors["port"] = "ใส่หมายเลขพอร์ต 1 - 65535"
+        rule["port"] = int(port or 0)
+    if metric == "http_url":
+        u = str(data.get("url") or "").strip()
+        if not re.match(r"^https?://[^\s\"'<>]{1,500}$", u):
+            errors["url"] = "ใส่ URL เช่น http://{host}:8080/health ({host} = Host ของเครื่อง)"
+        rule["url"] = u
+    if metric in STATE_METRICS:
         rule["level"] = "warning" if data.get("level") == "warning" else "error"
         rule["error" if rule["level"] == "error" else "warning"] = 1
     if metric == "promql":
@@ -124,7 +150,7 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
     os_ = str(data.get("os") or "any")
     rule["os"] = os_ if os_ in ("any", "windows", "linux") else "any"
 
-    if metric != "service":
+    if metric not in STATE_METRICS:
         op = str(data.get("op") or meta[3])
         rule["op"] = "<" if op == "<" else ">"
         w = _num(data.get("warning"), "warning", errors)
@@ -232,7 +258,7 @@ def send_test(data):
     level = "error" if rule.get("error") is not None else "warning"
     lim = rule.get("error") if level == "error" else rule.get("warning")
     machine = (rule.get("targets") or ["เครื่องตัวอย่าง"])[0]
-    if rule["metric"] == "service":
+    if rule["metric"] in STATE_METRICS:
         text = rule["name"]
         value = ""
     else:
@@ -244,7 +270,7 @@ def send_test(data):
     tpl = rule.get("message") or "{icon} {machine} · {text}"
     title = re.sub(r"\{(\w+)\}", lambda m: str(ctx.get(m.group(1), m.group(0)) or ""), tpl).strip()
     th = [f"{n} {'≤' if rule.get('op') == '<' else '≥'} {rule[x]}{unit}" for n, x in (("Warning", "warning"), ("Error", "error"))
-          if rule.get(x) is not None and rule["metric"] != "service"]
+          if rule.get(x) is not None and rule["metric"] not in STATE_METRICS]
     facts = [("Device", " ".join([machine] + ([f"[{ctx['group']}]"] if ctx["group"] else []))),
              ("Sensor", rule["name"]), ("Status", f"{level.upper()} – {text}"),
              ("Last Value", f"{value} {unit}".strip() if value not in ("", None) else ""),

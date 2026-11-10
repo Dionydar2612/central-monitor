@@ -55,12 +55,14 @@ from config import CHECKPOINT_FILE, STATE_DIR, SYSTEM_DIR, load_config, parse_in
 from events import append_events
 import notify
 import custom_rules
+import software_watch
 
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
 INCIDENTS_FILE = os.path.join(STATE_DIR, "incidents.json")
 SUMMARY_STATE_FILE = os.path.join(STATE_DIR, "notify_summary.json")       # เวลาที่ส่งสรุปล่าสุด (กันส่งซ้ำ)
 SUMMARY_REQUEST_FILE = os.path.join(STATE_DIR, "notify_summary.request")  # หน้าเว็บกด "ส่งสรุปตอนนี้"
+SOFTWARE_FILE = os.path.join(STATE_DIR, "software.json")                   # รายการโปรแกรมที่จำไว้ + ประวัติ (Windows)
 INTERVAL = 30
 MAX_INCIDENTS = 20000
 
@@ -799,7 +801,25 @@ def run_once(previous):
                              extra_fn=lambda start, end: _summary_extra(targets, start, end))
     except Exception as e:
         print(f"[NOTIFY ERROR] {e!r}")
+    try:
+        _software(targets, config)
+    except Exception as e:
+        print(f"[SOFTWARE ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
+
+
+def _software(targets, config):
+    """ติดตั้ง / ถอน / อัปเดตโปรแกรม (Windows agent) -> System log + Teams  (ตรวจทุก 5 นาที)"""
+    wins = [(t["name"], f'cm_web="{t["name"]}"') for t in targets
+            if str(t.get("type") or "ssh") == "agent" and not t.get("paused")]
+    groups = {t["name"]: str(t.get("group") or "") for t in targets}
+
+    def changed(web, changes):
+        append_events([{"source": "software", "level": "info", "web": web, "group": groups.get(web, ""),
+                        "sensor": "Software", "message": f"{web} · {software_watch.describe(c)}"} for c in changes])
+        notify.software_event(web, groups.get(web, ""), changes, config)
+
+    software_watch.run(wins, _query, SOFTWARE_FILE, on_changes=changed)
 
 
 def preview_rule(rule):

@@ -112,9 +112,26 @@ class Backend(unittest.TestCase):
             {"name": "IIS หยุด", "metric": "service", "service": "W3SVC", "level": "warning"},
             {"name": "Load", "metric": "promql", "promql": "node_load1{$labels}", "warning": 4},
         ]})
+        # โปรแกรม / พอร์ต / เว็บ: ตรวจช่องที่ต้องมี
+        sw = c.put("/api/alert-rules", json={"rules": [
+            {"name": "SQL", "metric": "process", "process": ""}, {"name": "P", "metric": "port_listen", "port": 70000},
+            {"name": "U", "metric": "http_url", "url": "ftp://x"}]})
+        self.assertEqual(sw.status_code, 400)
+        self.assertTrue({"rules.0.process", "rules.1.port", "rules.2.url"} <= set(sw.json["fields"]))
         self.assertEqual(ok.status_code, 200, ok.json)
         rules = ok.json["rules"]
         self.assertEqual([r["metric"] for r in rules], ["disk", "mem_available", "service", "promql"])
+        sw = c.put("/api/alert-rules", json={"rules": rules + [
+            {"name": "SQL หยุด", "metric": "process", "process": "sqlservr.exe", "level": "warning"},
+            {"name": "SQL RAM", "metric": "process_mem", "process": "sqlservr", "warning": 4000},
+            {"name": "1433", "metric": "port_listen", "port": "1433"},
+            {"name": "Web", "metric": "http_url", "url": "http://{host}:8080/health"}]})
+        self.assertEqual(sw.status_code, 200, sw.json)
+        got = {r["name"]: r for r in sw.json["rules"]}
+        self.assertEqual((got["SQL หยุด"]["process"], got["SQL หยุด"]["warning"]), ("sqlservr", 1))
+        self.assertEqual(got["1433"]["port"], 1433)
+        self.assertNotIn("op", got["Web"])
+        c.put("/api/alert-rules", json={"rules": rules})
         self.assertEqual(rules[0]["for_minutes"], 10)
         self.assertEqual(rules[2]["warning"], 1)
         ids = [r["id"] for r in rules]

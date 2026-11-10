@@ -647,7 +647,7 @@ function resetAlerts() {
 
 /* ---------- Notifications: Microsoft Teams (/api/notify-settings) ---------- */
 const N_LABEL = { down: "เครื่อง Down", error: "Error (disk เต็ม, service หยุด, ...)", warning: "Warning",
-    recovered: "กลับมาปกติ (Recovered)", checks: "Web / SSL check" };
+    recovered: "กลับมาปกติ (Recovered)", checks: "Web / SSL check", software: "ติดตั้ง / ถอน / อัปเดตโปรแกรม (Windows)" };
 function renderNotify(d) {
     $("n_on").checked = !!d.enabled || !d.url_set;
     $("n_url").value = "";

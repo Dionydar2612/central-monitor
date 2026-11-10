@@ -64,6 +64,7 @@
 <button type="button" role="tab" data-tab="services" aria-selected="false">Services</button>
 <button type="button" role="tab" data-tab="hardware" aria-selected="false">Hardware</button>
 <button type="button" role="tab" data-tab="system" aria-selected="false">System</button>
+<button type="button" role="tab" data-tab="software" aria-selected="false">Software</button>
 <button type="button" role="tab" data-tab="alerts" aria-selected="false">Alerts &amp; Events</button>
 </div>
 <div class="dpane" data-pane="overview">
@@ -122,6 +123,7 @@
 <!-- System events จาก journalctl (#ev) ซ่อนไว้เมื่อไม่มีเหตุการณ์ -->
 <section class="card svc" id="evCard" hidden><div class="top"><h2>System events</h2><span class="cnt" id="evCnt"></span></div><div class="evl scroll" id="ev"></div></section>
 </div>
+<div class="dpane" data-pane="software" hidden><div id="pnSw" class="pn"></div></div>
 <div class="dpane" data-pane="alerts" hidden><div id="pnAl" class="pn"></div></div>
 </div>
 

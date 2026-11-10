@@ -36,7 +36,7 @@ async function getJson(url) {
 const ST = {
     down: ["D", "Down", "dn"], error: ["E", "Error", "dn"], warning: ["W", "Warning", "wr"],
     ok: ["✓", "OK", "ok"], paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"],
-    recovered: ["↺", "Recovered", "ok"]
+    recovered: ["↺", "Recovered", "ok"], info: ["i", "Info", "na"]
 };
 const TAB_TITLE = { "down,error": "Sensors With Status Down / Error", warning: "Sensors With Status Warning",
     ok: "Sensors With Status OK", paused: "Paused Sensors", acknowledged: "Acknowledged Sensors", all: "All Sensors", system: "System log", activity: "Activity log",

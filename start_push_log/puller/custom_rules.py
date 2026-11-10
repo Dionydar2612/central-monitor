@@ -10,6 +10,10 @@ puller.yaml
         metric: disk                    # ดู METRICS ด้านล่าง หรือ promql
         mount: "D:"                     # (disk / disk_free_gb / disk_latency) เว้นว่าง = ทุกไดรฟ์
         service: ""                     # (service) ชื่อ service ของ Windows
+        process: ""                     # (process / process_cpu / process_mem) ชื่อโปรแกรม เช่น sqlservr (ไม่ต้องมี .exe)
+        port: 0                         # (port_listen / tcp_port) หมายเลขพอร์ต
+        url: ""                         # (http_url) เช่น http://{host}:8080/health  ({host} = Host ของเครื่อง)
+        level: error                    # (กฎแบบ "หยุด / ไม่ตอบ") ระดับเมื่อผิดปกติ: error / warning
         promql: ""                      # (promql) ใช้ $labels แทนตัวเลือกเครื่อง เช่น node_load1{$labels}
         unit: ""                        # (promql) หน่วยที่แสดง
         targets: [host-window]          # เว้นว่าง = ทุกเครื่อง
@@ -28,6 +32,12 @@ puller.yaml
 """
 
 import math
+import re
+import socket
+import ssl
+import time
+import urllib.error
+import urllib.request
 
 INTERVAL = 30
 
@@ -46,11 +56,32 @@ METRICS = {
     "packet_loss": ("Ping loss %", "%", False, ">", "any"),
     "net_latency": ("Ping latency ms", "ms", False, ">", "any"),
     "service": ("Service หยุด (Windows)", "", False, ">", "windows"),
+    "process": ("โปรแกรมไม่ทำงาน (Windows)", "", False, ">", "windows"),
+    "process_cpu": ("CPU % ของโปรแกรม (Windows)", "%", False, ">", "windows"),
+    "process_mem": ("RAM ของโปรแกรม MB (Windows)", "MB", False, ">", "windows"),
+    "port_listen": ("พอร์ตไม่เปิดรับบนเครื่อง (Windows)", "", False, ">", "windows"),
+    "tcp_port": ("พอร์ตเชื่อมต่อจาก central ไม่ได้", "", False, ">", "any"),
+    "http_url": ("เว็บของโปรแกรมไม่ตอบ (HTTP จาก central)", "", False, ">", "any"),
     "promql": ("PromQL เอง", "", False, ">", "any"),
 }
 _EXPR_KEY = {"cpu": "cpu", "memory": "memory", "mem_available": "mem_available", "disk": "disk",
              "disk_free_gb": "disk_free_gb", "disk_latency": "disk_latency_vec", "io_util": "disk_busy",
              "cpu_queue": "cpu_queue_per_core", "net_util": "net_util", "tcp_retx": "tcp_retx"}
+
+
+# กฎแบบ "หยุด / ไม่ตอบ": ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก (level)
+STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url")
+TCP_TIMEOUT = 5
+HTTP_TIMEOUT = 10
+
+
+def proc_regex(name):
+    """ชื่อโปรแกรม -> regex ของ label process ใน windows_exporter (ไม่มี .exe, ไม่สนตัวพิมพ์)"""
+    n = str(name or "").strip()
+    if n.lower().endswith(".exe"):
+        n = n[:-4]
+    rx = "(?i)" + re.sub(r"([.\\+*?^$()\[\]{}|])", r"\\\1", n)
+    return rx.replace("\\", "\\\\").replace('"', '\\"')        # อยู่ใน "..." ของ PromQL -> \ ต้องเป็น \\
 
 
 def rules(config):
@@ -123,20 +154,18 @@ def _values(rule, ex, labels, name, windows, query, ping_exprs):
         pq = ping_exprs(name)
         rows = query(pq[m]) or []
         return [(None, rows[0][1], pq[m])] if rows else []
-    if m == "service":
-        svc = str(rule.get("service") or "").strip()
-        if not svc:
+    if m in ("process_cpu", "process_mem"):
+        name = str(rule.get("process") or "").strip()
+        if not name:
             return []
-        q = f"windows_service_state{{{labels}}} == 1"
-        state = None
-        for lb, _v in query(q) or []:
-            n = lb.get("service") or lb.get("name") or ""
-            if n.lower() == svc.lower():
-                state = lb.get("state")
-                break
-        if state is None:
-            return []                        # ไม่มี service นี้บนเครื่อง
-        return [(None, 0.0 if state == "running" else 1.0, q)]
+        sel = f'{labels},process=~"{proc_regex(name)}"'
+        if m == "process_cpu":
+            cores = f'count(count by(core) ({{__name__=~"windows_cpu_time_total|windows_cpu_processor_utility_total",{labels}}}))'
+            q = (f'sum(rate({{__name__=~"windows_process_cpu_time(_seconds)?_total",{sel}}}[2m])) * 100 / scalar({cores})')
+        else:
+            q = f"sum(windows_process_working_set_private_bytes{{{sel}}}) / 1048576"
+        rows = query(q) or []
+        return [(None, rows[0][1], q)] if rows else []
     expr = ex.get(_EXPR_KEY.get(m, ""))
     if not expr:
         return []
@@ -154,6 +183,83 @@ def _values(rule, ex, labels, name, windows, query, ping_exprs):
     return [(None, rows[0][1], expr)] if rows else []
 
 
+def _state(rule, target, labels, query):
+    """กฎแบบ "หยุด / ไม่ตอบ" -> (ผิดปกติ?, ข้อความ, ค่าที่แสดง, หน่วย, ที่มา) หรือ None = ไม่มีข้อมูล (ไม่สร้าง sensor)"""
+    m = rule["metric"]
+    if m == "service":
+        svc = str(rule.get("service") or "").strip()
+        if not svc:
+            return None
+        q = f"windows_service_state{{{labels}}} == 1"
+        state = None
+        for lb, _v in query(q) or []:
+            n = lb.get("service") or lb.get("name") or ""
+            if n.lower() == svc.lower():
+                state = lb.get("state")
+                break
+        if state is None:
+            return None                      # ไม่มี service นี้บนเครื่อง
+        return state != "running", f"Service {svc} {'ทำงานอยู่' if state == 'running' else 'หยุดทำงาน (' + str(state) + ')'}", None, "", q
+    if m == "process":
+        name = str(rule.get("process") or "").strip()
+        if not name:
+            return None
+        # มี metric ของ process ของเครื่องนี้ไหม (ไม่มีเลย = agent ไม่ส่ง / ไม่มี collector process -> ไม่เดา)
+        if not query(f"count(windows_process_working_set_private_bytes{{{labels}}})"):
+            return None
+        q = f'count(windows_process_working_set_private_bytes{{{labels},process=~"{proc_regex(name)}"}})'
+        rows = query(q) or []
+        n = int(rows[0][1]) if rows else 0
+        return n == 0, (f"{name} ทำงานอยู่ ({n} process)" if n else f"{name} ไม่ทำงาน"), n, "", q
+    if m == "port_listen":
+        port = int(rule.get("port") or 0)
+        if not query(f"cm_inventory_timestamp_seconds{{{labels}}}"):
+            return None                      # ไม่มีข้อมูลพอร์ตจากเครื่อง (agent รุ่นเก่า)
+        q = f'cm_port_listening{{{labels},port="{port}"}}'
+        rows = query(q) or []
+        who = sorted({lb.get("process") or "?" for lb, _ in rows})
+        return not rows, (f"พอร์ต {port} เปิดรับอยู่ ({', '.join(who)})" if rows else f"พอร์ต {port} ไม่ได้เปิดรับ"), \
+            None, "", q
+    host = str(target.get("host") or "").strip()
+    if m == "tcp_port":
+        port = int(rule.get("port") or 0)
+        if not host or not port:
+            return None
+        t0 = time.time()
+        try:
+            socket.create_connection((host, port), timeout=TCP_TIMEOUT).close()
+        except OSError as e:
+            return True, f"ต่อ {host}:{port} ไม่ได้ ({e.strerror or e.__class__.__name__})", None, "", f"tcp://{host}:{port}"
+        ms = (time.time() - t0) * 1000
+        return False, f"ต่อ {host}:{port} ได้ ({ms:.0f} ms)", round(ms, 1), "ms", f"tcp://{host}:{port}"
+    if m == "http_url":
+        url = str(rule.get("url") or "").strip()
+        if "{host}" in url:
+            if not host:
+                return None
+            url = url.replace("{host}", host)
+        if not url:
+            return None
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE        # เว็บภายในมักใช้ใบรับรองของตัวเอง (ตรวจแค่ว่าตอบไหม)
+        t0 = time.time()
+        code = None
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "central-monitor"})
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=ctx) as r:
+                code = r.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        except Exception as e:
+            reason = getattr(e, "reason", None) or e.__class__.__name__
+            return True, f"{url} ไม่ตอบ ({reason})", None, "", url
+        ms = (time.time() - t0) * 1000
+        bad = code >= 400
+        return bad, f"{url} ตอบ HTTP {code} ({ms:.0f} ms)", round(ms, 1), "ms", url
+    return None
+
+
 def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, query, ping_exprs):
     """sensor ของกฎที่ใช้กับเครื่องนี้"""
     name = target["name"]
@@ -164,18 +270,24 @@ def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, qu
         meta = METRICS[r["metric"]]
         unit = str(r.get("unit") or "") if r["metric"] == "promql" else meta[1]
         try:
-            vals = _values(r, ex, labels, name, windows, query, ping_exprs)
+            if r["metric"] in STATE_METRICS:
+                res = _state(r, target, labels, query)
+                vals = [] if res is None else [(None, res[:4], res[4])]
+            else:
+                vals = _values(r, ex, labels, name, windows, query, ping_exprs)
         except Exception as e:
             print(f"[RULE ERROR] {r.get('id')} {name}: {e!r}")
             continue
         for part, value, q in vals:
             sid = f"{name}:rule:{r['id']}" + (f":{part}" if part else "")
             label = str(r.get("name") or r["id"]) + (f" ({part})" if part and not r.get("mount") else "")
-            if r["metric"] == "service":
-                level = "error" if _num(r.get("error")) is not None or _num(r.get("warning")) is None else "warning"
-                st = level if value >= 1 else "ok"
-                msg = f"Service {r.get('service')} {'หยุดทำงาน' if value >= 1 else 'ทำงานอยู่'}"
-                shown, warning, error = None, None, None
+            if r["metric"] in STATE_METRICS:
+                level = r.get("level") if r.get("level") in ("warning", "error") else \
+                    "error" if _num(r.get("error")) is not None or _num(r.get("warning")) is None else "warning"
+                bad, msg, shown, sunit = value
+                st = level if bad else "ok"
+                unit = sunit
+                warning, error = None, None
             else:
                 st = _status(value, r, prev_status(sid), hyst)
                 cmp = "<" if r.get("op") == "<" else ">"

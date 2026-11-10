@@ -222,6 +222,100 @@ class CustomRules(unittest.TestCase):
                          [("w:rule:d:C:", "warning", 20), ("w:rule:d:D:", "ok", 20)])
 
 
+class SoftwareRules(unittest.TestCase):
+    import custom_rules as cr
+    import software_watch as sw
+
+    def q(self, data):
+        def query(q):
+            for k, v in data.items():
+                if k in q:
+                    return v
+            return []
+        return query
+
+    def ev(self, rule, data, target=None):
+        return self.cr.evaluate(target or {"name": "w"}, [dict({"id": "r", "name": "R"}, **rule)], {}, 'cm_web="w"', True,
+                                lambda sid: None, 2, {}, self.q(data), None)
+
+    def test_process_running(self):
+        has = {"count(windows_process_working_set_private_bytes{cm_web=\"w\"})": [({}, 120)]}
+        up = self.ev({"metric": "process", "process": "sqlservr.exe", "level": "error"},
+                     dict(has, **{'process=~"(?i)sqlservr"': [({}, 2)]}))
+        self.assertEqual((up[0]["status"], up[0]["message"]), ("ok", "sqlservr.exe ทำงานอยู่ (2 process)"))
+        down = self.ev({"metric": "process", "process": "sqlservr", "level": "warning"}, has)
+        self.assertEqual(down[0]["status"], "warning")
+        self.assertEqual(self.ev({"metric": "process", "process": "x"}, {}), [])        # ไม่มีข้อมูล process -> ไม่เดา
+        self.assertEqual(self.cr.proc_regex("a.b"), "(?i)a\\\\.b")
+
+    def test_port_and_cpu(self):
+        inv = {"cm_inventory_timestamp_seconds": [({}, 1.0)]}
+        ok = self.ev({"metric": "port_listen", "port": 1433}, dict(inv, **{'port="1433"': [({"process": "sqlservr"}, 1)]}))
+        self.assertEqual((ok[0]["status"], ok[0]["message"]), ("ok", "พอร์ต 1433 เปิดรับอยู่ (sqlservr)"))
+        bad = self.ev({"metric": "port_listen", "port": 8080}, inv)
+        self.assertEqual(bad[0]["status"], "error")
+        cpu = self.ev({"metric": "process_cpu", "process": "java", "op": ">", "warning": 50}, {"windows_process_cpu": [({}, 70.0)]})
+        self.assertEqual((cpu[0]["status"], cpu[0]["unit"]), ("warning", "%"))
+
+    def test_tcp_and_http(self):
+        import socket
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        try:
+            ok = self.ev({"metric": "tcp_port", "port": port}, {}, {"name": "w", "host": "127.0.0.1"})
+            self.assertEqual(ok[0]["status"], "ok")
+        finally:
+            srv.close()
+        bad = self.ev({"metric": "tcp_port", "port": port, "level": "warning"}, {}, {"name": "w", "host": "127.0.0.1"})
+        self.assertEqual(bad[0]["status"], "warning")
+        self.assertEqual(self.ev({"metric": "http_url", "url": "http://{host}/"}, {}, {"name": "w"}), [])   # ไม่มี Host
+        h = self.ev({"metric": "http_url", "url": f"http://127.0.0.1:{port}/"}, {})
+        self.assertEqual(h[0]["status"], "error")
+
+    def test_software_diff_and_run(self):
+        self.assertEqual(self.sw.diff({"A|x64": "1", "B|x64": "2"}, {"A|x64": "1.1", "C|x86": "3"}),
+                         [("updated", "A", "x64", "1", "1.1"), ("removed", "B", "x64", "2", ""), ("installed", "C", "x86", "", "3")])
+        self.assertEqual(self.sw.fresh_rows([({"name": "a"}, 1000), ({"name": "old"}, 700)]), [{"name": "a"}])
+        f = os.path.join(_TMP, "software-test.json")
+        data = {"inv": 1.0, "rows": [({"name": "A", "arch": "x64", "version": "1"}, 1000.0),
+                                      ({"name": "B", "arch": "x64", "version": "2"}, 1000.0)]}
+
+        def query(q):
+            return [({}, data["inv"])] if "cm_inventory" in q else data["rows"]
+        seen = []
+        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=1000, on_changes=lambda w, c: seen.append(c)), {})
+        data["rows"] = [({"name": "A", "arch": "x64", "version": "1.1"}, 2000.0),
+                        ({"name": "B", "arch": "x64", "version": "2"}, 1500.0),        # หายไปแล้ว (ค่าเก่า)
+                        ({"name": "C", "arch": "x64", "version": "9"}, 2000.0)]
+        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=1100), {})   # ยังไม่ครบ 5 นาที
+        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=1400), {})   # รายการรอบเดิม (inventory เดิม)
+        data["inv"] = 2.0
+        out = self.sw.run([("w", 'cm_web="w"')], query, f, now=1800, on_changes=lambda w, c: seen.append(c))
+        self.assertEqual(out["w"], [("updated", "A", "x64", "1", "1.1"), ("removed", "B", "x64", "2", ""),
+                                    ("installed", "C", "x64", "", "9")])
+        self.assertEqual(len(seen), 1)
+        data["inv"], data["rows"] = 3.0, []                                            # อ่านไม่ได้ -> ไม่แจ้งถอนทั้งหมด
+        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=2200), {})
+        self.assertEqual(self.sw.describe(("updated", "A", "x64", "1", "1.1")), "อัปเดต A 1 → 1.1")
+
+    def test_software_card(self):
+        sent = []
+        orig = notify._enqueue
+        notify._enqueue = lambda url, payload, what: sent.append(payload)
+        try:
+            notify.software_event("w", "G", [("installed", "C", "x64", "", "9")], {"notify": {"teams": {"webhook_url": "https://x"}}})
+            notify.software_event("w", "G", [("installed", "C", "x64", "", "9")],
+                                  {"notify": {"teams": {"webhook_url": "https://x", "levels": ["down"]}}})
+        finally:
+            notify._enqueue = orig
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["summary"], "💿 w · ติดตั้ง C")
+        facts = {f["title"]: f["value"] for f in sent[0]["attachments"][0]["content"]["body"][1]["facts"]}
+        self.assertEqual(facts["ติดตั้ง:"], "C 9")
+
+
 class TeamsNotify(unittest.TestCase):
     CFG = {"notify": {"teams": {"webhook_url": "https://example.webhook.office.com/x", "levels": ["down", "error", "recovered"]}}}
 

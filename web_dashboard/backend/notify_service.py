@@ -24,7 +24,7 @@ import os
 import settings
 import targets_service
 
-LEVELS = ("down", "error", "warning", "recovered", "checks")
+LEVELS = ("down", "error", "warning", "recovered", "checks", "software")
 def _teams(doc):
     return dict(((doc.get("notify") or {}).get("teams")) or {})
 

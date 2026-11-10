@@ -24,6 +24,20 @@ Fluent Bit (service: cm-agent)  ──HTTPS :4318──▶  central-agent-gw ─
 
 ---
 
+## Software บนเครื่อง (แท็บ Software ในหน้าเครื่อง)
+
+| ส่วน | มาจาก | อัปเดต |
+|---|---|---|
+| Running programs (จำนวน process, CPU, RAM, พอร์ตที่เปิด) | windows_exporter collector `process` | ~15 วินาที |
+| Listening TCP ports (พอร์ต / address / โปรแกรม) | `cm-inventory.ps1` (Get-NetTCPConnection) | 15 นาที |
+| Installed software (ชื่อ / เวอร์ชัน / ผู้ผลิต / วันที่ติดตั้ง / x64-x86) | `cm-inventory.ps1` (registry Uninstall) | 15 นาที |
+| Software changes (ติดตั้ง / ถอน / อัปเดต) | central เทียบรายการ (`software_watch.py`) | 5 นาที |
+
+- `cm-inventory.ps1` อยู่ใน `C:\Program Files\central-monitor-agent\` รันด้วย scheduled task `CentralMonitorInventory` (SYSTEM)
+  เขียน `C:\ProgramData\central-monitor-agent\textfile\cm_inventory.prom` ให้ windows_exporter (collector `textfile`) ส่งต่อ
+- เครื่องที่ติดตั้ง agent ไว้ก่อนหน้า: **รันคำสั่งติดตั้งซ้ำ 1 ครั้ง** (Make command เดิม) แท็บ Software จึงจะมีรายการโปรแกรม / พอร์ต
+- แจ้งเตือนโปรแกรมหยุด / CPU / RAM ของโปรแกรม / พอร์ต / เว็บ: Settings > Custom alert rules (ดู `docs/NOTIFY-TH.md`)
+
 ## ขั้นที่ 0: เตรียม central (ครั้งเดียว)
 
 1. อัปเดตโค้ด: `cm-update`

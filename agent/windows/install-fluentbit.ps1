@@ -105,10 +105,15 @@ $ExpService   = "cm-exporter"
 $ExpExe       = Join-Path $InstallDir "windows_exporter.exe"
 $ExpLog       = Join-Path $DataDir "windows_exporter.log"
 $ExpCollectorSets = @(
-    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update",
-    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time,pagefile",
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,diskdrive,time,gpu,dmi,license,pagefile,update,textfile",
+    "cpu,cpu_info,os,memory,logical_disk,physical_disk,net,tcp,system,service,process,time,pagefile,textfile",
+    "cpu,os,memory,logical_disk,net,system,service,process,textfile",
     "cpu,os,memory,logical_disk,net,system,service"
 )
+# textfile: โปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ (cm-inventory.ps1 เขียนทุก 15 นาที)
+$TextDir = Join-Path $DataDir "textfile"
+$InvScript = Join-Path $InstallDir "cm-inventory.ps1"
+$InvTask = "CentralMonitorInventory"
 $UseExporter = $false
 $script:ExporterLastError = $null
 
@@ -135,6 +140,7 @@ function Get-ExporterProducts {
 
 function Get-ExporterArgs([string] $set, [bool] $withFlags) {
     $a = @("--collectors.enabled=$set")
+    if ($set -match "textfile") { $a += "--collector.textfile.directories=$TextDir" }
     if ($withFlags -and $set -match "process") { $a += "--no-collector.process.cmdline" }
     return $a
 }
@@ -214,6 +220,53 @@ if ($NoExporter) {
         }
         Copy-Item $ExporterExe $ExpExe -Force
 
+        # รายการโปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ -> ไฟล์ .prom ให้ windows_exporter (textfile collector) อ่าน
+        New-Item -ItemType Directory -Force -Path $TextDir | Out-Null
+        $inv = @'
+# cm-inventory.ps1 (Central Monitor) - รายการโปรแกรมที่ติดตั้ง + พอร์ต TCP ที่เปิดรับ -> textfile ของ windows_exporter
+# scheduled task "CentralMonitorInventory" รันทุก 15 นาที (SYSTEM)
+$ErrorActionPreference = "Stop"
+$Dir = Join-Path $env:ProgramData "central-monitor-agent\textfile"
+New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+function Esc($s) { if ($null -eq $s) { return "" }; return ([string]$s -replace '\\', '\\' -replace '"', '\"' -replace "[\r\n\t]+", " ").Trim() }
+$L = New-Object System.Collections.Generic.List[string]
+$L.Add("# HELP cm_software_installed Installed program (registry Uninstall keys)")
+$L.Add("# TYPE cm_software_installed gauge")
+$seen = @{}
+$keys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+foreach ($p in @(Get-ItemProperty $keys -ErrorAction SilentlyContinue)) {
+    if (-not $p.DisplayName -or $p.SystemComponent -eq 1 -or $p.ParentKeyName -or "$($p.ReleaseType)" -match "Update|Hotfix") { continue }
+    $arch = if ($p.PSPath -match "WOW6432Node") { "x86" } else { "x64" }
+    $n = Esc $p.DisplayName; $v = Esc $p.DisplayVersion
+    $k = "$n|$v|$arch"
+    if ($seen.ContainsKey($k)) { continue }
+    $seen[$k] = 1
+    $L.Add("cm_software_installed{name=`"$n`",version=`"$v`",publisher=`"$(Esc $p.Publisher)`",installed=`"$(Esc $p.InstallDate)`",arch=`"$arch`"} 1")
+}
+$L.Add("# HELP cm_port_listening TCP port listening on this machine")
+$L.Add("# TYPE cm_port_listening gauge")
+$procs = @{}
+Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $procs[[int]$_.Id] = $_.ProcessName }
+$seenP = @{}
+foreach ($c in @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)) {
+    $k = "$($c.LocalPort)|$($c.LocalAddress)"
+    if ($seenP.ContainsKey($k)) { continue }
+    $seenP[$k] = 1
+    $L.Add("cm_port_listening{port=`"$($c.LocalPort)`",address=`"$(Esc $c.LocalAddress)`",process=`"$(Esc $procs[[int]$c.OwningProcess])`"} 1")
+}
+$L.Add("# HELP cm_inventory_timestamp_seconds Last inventory run")
+$L.Add("# TYPE cm_inventory_timestamp_seconds gauge")
+$L.Add("cm_inventory_timestamp_seconds $([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())")
+$tmp = Join-Path $Dir "cm_inventory.prom.tmp"
+[IO.File]::WriteAllText($tmp, (($L -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+Move-Item $tmp (Join-Path $Dir "cm_inventory.prom") -Force
+'@
+        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+        [IO.File]::WriteAllText($InvScript, $inv, (New-Object Text.UTF8Encoding($true)))
+        try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $InvScript }
+        catch { Warn "อ่านรายการโปรแกรม / พอร์ตไม่ได้: $($_.Exception.Message)" }
+
         # เลือกชุด collector ที่เก็บได้จริงบนเครื่องนี้
         $chosen = $null
         foreach ($set in $ExpCollectorSets) {
@@ -248,6 +301,16 @@ if ($NoExporter) {
         Start-Service $ExpService
         if (-not (Test-Exporter 40)) { Show-ExporterDiag; throw "service $ExpService ไม่ตอบที่ $ExporterUrl" }
         $UseExporter = $true
+        try {
+            $act = New-ScheduledTaskAction -Execute "powershell.exe" `
+                -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InvScript`""
+            $trg = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 15) `
+                -RepetitionDuration (New-TimeSpan -Days 3650)
+            $pr = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+            $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName $InvTask -Action $act -Trigger $trg -Principal $pr -Settings $set -Force | Out-Null
+            Write-Host "   รายการโปรแกรม / พอร์ต: scheduled task '$InvTask' ทุก 15 นาที"
+        } catch { Warn "สร้าง scheduled task '$InvTask' ไม่ได้: $($_.Exception.Message) (รายการโปรแกรมจะไม่อัปเดต)" }
         $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
                   Select-Object -ExpandProperty LocalAddress -Unique
         if ($listen | Where-Object { $_ -notin "127.0.0.1", "::1" }) {

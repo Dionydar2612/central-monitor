@@ -39,7 +39,7 @@ from datetime import datetime
 
 from config import load_config
 
-ALL_LEVELS = ("down", "error", "warning", "recovered", "checks")
+ALL_LEVELS = ("down", "error", "warning", "recovered", "checks", "software")
 STYLE = {"down": "attention", "error": "attention", "warning": "warning", "recovered": "good", "ok": "good",
          "up": "good", "unknown": "warning"}
 LABEL = {"down": "DOWN", "error": "ERROR", "warning": "WARNING", "recovered": "RECOVERED", "ok": "OK",
@@ -124,7 +124,7 @@ def build_card(title, level, lines, footer=""):
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
 
 
-COLOR = {"down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good", "ok": "Good",
+COLOR = {"software": "Accent", "down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good", "ok": "Good",
          "up": "Good", "unknown": "Warning"}
 CARD_PREFIX = "Central Monitor Notification"
 
@@ -752,6 +752,28 @@ def maybe_summary(sensors, incidents, state_file, request_file, config=None, ext
         os.replace(tmp, state_file)
     for n, p in enumerate(payloads, 1):
         _enqueue(s["url"], p, f"daily summary {n}/{len(payloads)}" + (" (manual)" if forced else ""))
+
+
+SOFTWARE_MAX = 15
+
+
+def software_event(web, group, changes, config=None):
+    """ติดตั้ง / ถอน / อัปเดตโปรแกรม (software_watch) -> การ์ดเดียวต่อเครื่องต่อรอบ"""
+    s = settings(config)
+    if not s["enabled"] or "software" not in s["levels"] or not changes:
+        return
+    label = {"installed": "ติดตั้ง", "removed": "ถอน", "updated": "อัปเดต"}
+    facts = [("Device", _device(web, "", group))]
+    for a, name, arch, ov, nv in changes[:SOFTWARE_MAX]:
+        facts.append((label[a], f"{name} {ov} → {nv}" if a == "updated" else f"{name} {nv or ov}".strip()))
+    if len(changes) > SOFTWARE_MAX:
+        facts.append(("อื่นๆ", f"อีก {len(changes) - SOFTWARE_MAX} รายการ (ดูแท็บ Software ของเครื่อง)"))
+    facts.append(("Time", _time_full()))
+    n = len(changes)
+    first = changes[0]
+    summary = (f"💿 {web} · {label[first[0]]} {first[1]}" + (f" และอีก {n - 1} รายการ" if n > 1 else ""))
+    _enqueue(s["url"], fact_card(f"{CARD_PREFIX}: {web} [Software] {n} change{'s' if n > 1 else ''}", "software",
+                                 facts, summary), f"software {web} {n}")
 
 
 def check_event(name, url, old, new, result, group="", config=None):

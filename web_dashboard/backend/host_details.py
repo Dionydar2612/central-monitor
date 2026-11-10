@@ -610,3 +610,77 @@ def system(web, target=None):
         if not data["ip_addresses"] and target.get("host"):
             data["ip_addresses"] = [{"nic": None, "address": target.get("host"), "family": "configured"}]
     return data
+
+
+# ---------------------------------------------------------------------------
+# Software (Windows): โปรแกรมที่ติดตั้ง / โปรแกรมที่ทำงาน / พอร์ตที่เปิดรับ / ประวัติติดตั้ง-ถอน-อัปเดต
+#   cm_software_installed / cm_port_listening / cm_inventory_timestamp_seconds  <- cm-inventory.ps1 (textfile)
+#   windows_process_*                                                           <- windows_exporter process collector
+#   ประวัติ: data/state/software.json (puller เทียบรายการทุก 5 นาที)
+# ---------------------------------------------------------------------------
+
+SOFTWARE_STATE = "software.json"
+
+
+def _install_date(v):
+    v = str(v or "")
+    return f"{v[6:8]}/{v[4:6]}/{v[:4]}" if re.match(r"^\d{8}$", v) else v
+
+
+def _fresh(rows, keep=60):
+    """timestamp() ของแต่ละ series -> เฉพาะที่ยังส่งมาอยู่ (โปรแกรมที่ถอน / พอร์ตที่ปิด Prometheus ยังเห็นอีก ~5 นาที)"""
+    rows = [(m, v) for m, v in rows or [] if _finite(v)]
+    if not rows:
+        return []
+    newest = max(v for _, v in rows)
+    return [m for m, v in rows if v >= newest - keep]
+
+
+def software(web):
+    labels, win = _context(web)
+    if labels is None:
+        return None
+    if not win:
+        return {"web": web, "supported": False}
+    skip = 'process!~"_Total|Idle"'
+    r = _run({
+        "*inst": f"timestamp(cm_software_installed{{{labels}}})",
+        "*ports": f"timestamp(cm_port_listening{{{labels}}})",
+        "inv": f"max(cm_inventory_timestamp_seconds{{{labels}}})",
+        "*pcount": f"count by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}})",
+        "*pmem": f"sum by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}})",
+        "*pcpu": (f"sum by(process) (rate({{__name__=~\"windows_process_cpu_time(_seconds)?_total\",{labels},{skip}}}[2m]))"
+                  f" * 100 / scalar(count(count by(core) ({{__name__=~\"windows_cpu_time_total|windows_cpu_processor_utility_total\","
+                  f"{labels}}})))"),
+    })
+    installed = sorted(({"name": m.get("name"), "version": m.get("version") or "", "publisher": m.get("publisher") or "",
+                         "installed": _install_date(m.get("installed")), "arch": m.get("arch") or ""}
+                        for m in _fresh(r["*inst"])), key=lambda x: (str(x["name"]).lower(), x["version"]))
+    ports = sorted(({"port": int(m.get("port") or 0), "address": m.get("address") or "", "process": m.get("process") or ""}
+                    for m in _fresh(r["*ports"])), key=lambda x: (x["port"], x["address"]))
+    mem, cpu = _by(r["*pmem"], "process", 1 / MB, 1), _by(r["*pcpu"], "process", 1, 2)
+    listen = {}
+    for p in ports:
+        listen.setdefault(p["process"].lower(), set()).add(p["port"])
+    running = sorted(({"name": m.get("process"), "count": int(v), "mem_mb": mem.get(m.get("process")),
+                       "cpu": cpu.get(m.get("process")),
+                       "ports": sorted(listen.get(str(m.get("process") or "").lower(), ()))}
+                      for m, v in r["*pcount"] or [] if m.get("process")),
+                     key=lambda x: -(x["mem_mb"] or 0))
+    history = []
+    try:
+        import json
+        import os
+        from settings import STATE_DIR
+        with open(os.path.join(STATE_DIR, SOFTWARE_STATE), encoding="utf-8") as f:
+            history = (json.load(f).get(web) or {}).get("history") or []
+    except (OSError, ValueError):
+        pass
+    unsupported = []
+    if r["inv"] is None:
+        unsupported.append({"item": "Installed software / Listening ports",
+                            "reason": "agent รุ่นนี้ยังไม่ส่งรายการโปรแกรม: ติดตั้ง agent ใหม่ด้วยคำสั่งล่าสุดจากหน้า Settings"})
+    if not running:
+        unsupported.append({"item": "Running programs", "reason": "windows_exporter ไม่ได้เปิด collector process"})
+    return {"web": web, "supported": True, "inventory_time": r["inv"], "installed": installed, "ports": ports,
+            "running": running, "history": list(reversed(history[-100:])), "unsupported": unsupported}

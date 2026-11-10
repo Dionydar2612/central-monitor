@@ -9,6 +9,7 @@
      Services      รายการ service                                               (dashboard.js เดิม)
      Hardware      CPU รุ่น / RAM / ดิสก์ / การ์ดเครือข่าย / GPU / อุณหภูมิ       GET /api/host/<web>/hardware
      System        ชื่อเครื่อง / OS / build / uptime / เวลา / IP / agent          GET /api/host/<web>/system
+     Software      โปรแกรมที่ทำงาน / พอร์ตที่เปิดรับ / โปรแกรมที่ติดตั้ง / ประวัติติดตั้ง-ถอน   GET /api/host/<web>/software
      Alerts & Events  sensor ของเครื่อง + ประวัติปัญหา 7 วัน                      GET /api/sensors?web= , /api/incidents?web=
    ใช้เฉพาะเครื่อง Windows · เครื่อง Linux แสดงหน้าแบบเดิม (ไม่มีแท็บ: KPI + กราฟคู่ Service, Process, System events)
    ค่าที่อ่านไม่ได้ไม่แสดง (ซ่อนแถว / คอลัมน์ / การ์ดที่ไม่มีค่า) ไม่มีค่าสมมติ
@@ -16,10 +17,10 @@
    ===================================================================== */
 (function () {
     "use strict";
-    const PANES = ["overview", "performance", "bottleneck", "processes", "services", "hardware", "system", "alerts"];
-    const API_KIND = { performance: "performance", bottleneck: "bottleneck", hardware: "hardware", system: "system" };
-    const REFRESH_MS = { performance: 15000, bottleneck: 30000, hardware: 300000, system: 60000, alerts: 30000, processes: 20000 };
-    const P = { tab: loadTab(), data: {}, at: {}, busy: {}, win: false };
+    const PANES = ["overview", "performance", "bottleneck", "processes", "services", "hardware", "system", "software", "alerts"];
+    const API_KIND = { performance: "performance", bottleneck: "bottleneck", hardware: "hardware", system: "system", software: "software" };
+    const REFRESH_MS = { performance: 15000, bottleneck: 30000, hardware: 300000, system: 60000, software: 60000, alerts: 30000, processes: 20000 };
+    const P = { tab: loadTab(), data: {}, at: {}, busy: {}, win: false, swq: "" };
 
     function loadTab() {
         try { const t = localStorage.getItem("cm.detailTab"); return PANES.includes(t) ? t : "overview"; } catch (e) { return "overview"; }
@@ -255,6 +256,38 @@
             card("Problem history (7 days)", table(["State", "Sensor", "Worst", "Start", "End", "Duration", "Peak"], iRows, "No problems in the last 7 days"));
     }
 
+    /* ---------------- Software ---------------- */
+    const SW_ACT = { installed: ["ติดตั้ง", "ok"], removed: ["ถอน", "cr"], updated: ["อัปเดต", "wr"] };
+    function renderSoftware(d) {
+        if (!d.supported) return `<div class="empty">ใช้ได้กับเครื่อง Windows</div>`;
+        const notes = (d.unsupported || []).map(u => `<div class="empty" style="text-align:left">${esc(u.item)}: ${esc(u.reason)}</div>`).join("");
+        const run = card("Running programs", table(["Program", "Instances", "CPU", "RAM", "Listening ports"],
+            (d.running || []).map(p => `<tr><td><b>${esc(p.name)}</b></td><td>${esc(p.count)}</td><td>${num(p.cpu, 1, "%")}</td>`
+                + `<td>${num(p.mem_mb, 0, " MB")}</td><td>${esc((p.ports || []).join(", ") || "-")}</td></tr>`)),
+            `<span class="cnt">${(d.running || []).length}</span>`);
+        const ports = card("Listening TCP ports", table(["Port", "Address", "Program"],
+            (d.ports || []).map(p => `<tr><td><b>${esc(p.port)}</b></td><td>${esc(p.address)}</td><td>${esc(p.process || "-")}</td></tr>`)),
+            `<span class="cnt">${(d.ports || []).length}</span>`);
+        const hist = card("Software changes", table(["Time", "Change", "Program", "Version"],
+            (d.history || []).map(h => { const [t, c] = SW_ACT[h.action] || [h.action, ""];
+                return `<tr><td>${ts(h.time)}</td><td class="${c}">${esc(t)}</td><td>${esc(h.name)}${h.arch === "x86" ? " <small>(x86)</small>" : ""}</td>`
+                    + `<td>${esc(h.action === "updated" ? `${h.old} → ${h.new}` : (h.new || h.old || "-"))}</td></tr>`; }),
+            "ยังไม่มีการเปลี่ยนแปลง (เริ่มจำรายการเมื่อเครื่องส่งรายการครั้งแรก)"));
+        const inst = card("Installed software", table(["Name", "Version", "Publisher", "Installed", "Arch"],
+            (d.installed || []).map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.version || "-")}</td><td>${esc(x.publisher || "-")}</td>`
+                + `<td>${esc(x.installed || "-")}</td><td>${esc(x.arch || "-")}</td></tr>`)),
+            `<span class="cnt">${(d.installed || []).length}${d.inventory_time ? ` · updated ${esc(ts(d.inventory_time))}` : ""}</span>`
+            + `<input class="swq" type="search" placeholder="ค้นหาโปรแกรม" value="${esc(P.swq)}" style="margin-left:auto;max-width:220px">`);
+        return notes + `<div class="grid pgrid2">${run}${ports}</div>` + inst + hist;
+    }
+    function swFilter(box) {
+        const qv = P.swq.trim().toLowerCase();
+        box.querySelectorAll(".swq").forEach(inp => {
+            const tb = inp.closest(".pcard").querySelector("tbody");
+            if (tb) [...tb.rows].forEach(r => { r.hidden = !!qv && !r.textContent.toLowerCase().includes(qv); });
+        });
+    }
+
     /* ---------------- Processes (เพิ่มจากของเดิม) ---------------- */
     function renderProcesses(d) {
         const io = (d.io_top || []).filter(p => hasValue(p.io_mb));
@@ -315,8 +348,8 @@
 
     /* ---------------- โหลด / วาด ---------------- */
     const RENDER = { performance: renderPerformance, bottleneck: renderBottleneck, hardware: renderHardware,
-                     system: renderSystem, alerts: renderAlerts, processes: renderProcesses };
-    const BOX = { performance: "#pnPerf", bottleneck: "#pnBn", hardware: "#pnHw", system: "#pnSys", alerts: "#pnAl", processes: "#pnProc" };
+                     system: renderSystem, software: renderSoftware, alerts: renderAlerts, processes: renderProcesses };
+    const BOX = { performance: "#pnPerf", bottleneck: "#pnBn", hardware: "#pnHw", system: "#pnSys", software: "#pnSw", alerts: "#pnAl", processes: "#pnProc" };
 
     async function fetchPane(tab) {
         const w = encodeURIComponent(S.web);
@@ -342,6 +375,7 @@
             P.data[key] = d; P.at[key] = Date.now();
             box.innerHTML = RENDER[tab](d || {});
             prune(box);
+            if (tab === "software") swFilter(box);
         } catch (err) {
             console.error(`Pane ${tab}:`, err);
             if (tab !== "processes") box.innerHTML = `<div class="empty">โหลดข้อมูลไม่ได้: ${esc(err.message || err)}</div>`;
@@ -361,7 +395,7 @@
 
     window.CMPanes = {
         refresh(force) { layout(); if (S.web && P.win) load(P.tab, force); },
-        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
+        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnSw", "#pnAl", "#pnProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
         show,
     };
 
@@ -369,6 +403,8 @@
         const tabs = q("#dTabs");
         if (!tabs) return;
         tabs.addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) show(b.dataset.tab); });
+        const sw = q("#pnSw");
+        if (sw) sw.addEventListener("input", e => { if (e.target.matches(".swq")) { P.swq = e.target.value; swFilter(sw); } });
         tabs.addEventListener("keydown", e => {
             if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
             const i = PANES.indexOf(P.tab), n = PANES[(i + (e.key === "ArrowRight" ? 1 : PANES.length - 1)) % PANES.length];
