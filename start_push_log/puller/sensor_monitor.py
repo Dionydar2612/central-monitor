@@ -796,7 +796,7 @@ def run_once(previous):
     try:
         notify.sensor_events(events, config)          # การ์ดแจ้งเตือน Microsoft Teams (ถ้าตั้งไว้)
         notify.maybe_summary(sensors, _read(INCIDENTS_FILE, []), SUMMARY_STATE_FILE, SUMMARY_REQUEST_FILE, config,
-                             extra_fn=lambda: _summary_extra(targets))
+                             extra_fn=lambda start, end: _summary_extra(targets, start, end))
     except Exception as e:
         print(f"[NOTIFY ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
@@ -828,9 +828,16 @@ def preview_rule(rule):
     return out
 
 
-def _summary_extra(targets):
-    """Disk I/O utilization % (ดิสก์ที่ไม่ว่างมากที่สุด) ต่อเครื่อง สำหรับการ์ดสรุปใน Teams"""
+def _summary_extra(targets, start=None, end=None):
+    """ค่าสำหรับรายงานสรุปใน Teams ต่อเครื่อง (ไม่มีค่าเฉลี่ยข้ามเครื่อง)
+    io_util = Disk I/O ตอนนี้ · *_max = ค่าสูงสุดของเครื่องนั้นในช่วง [start, end] (disk_max ต่อไดรฟ์)"""
     out = {}
+    end = end or time.time()
+    rng = max(60, int(end - (start or end - 3600)))
+
+    def mx(expr):
+        return f"max_over_time(({expr})[{rng}s:1m])"
+
     for t in targets:
         if t.get("paused"):
             continue
@@ -839,7 +846,11 @@ def _summary_extra(targets):
             ex = _win_exprs(f'cm_web="{t["name"]}"')
         else:
             ex = _linux_exprs(f'job="{prom.get("job")}",instance="{prom.get("instance")}"')
-        out[t["name"]] = {"io_util": _one(ex["disk_busy"])}
+        out[t["name"]] = {
+            "io_util": _one(ex["disk_busy"]), "io_max": _one(mx(ex["disk_busy"])),
+            "cpu_max": _one(mx(ex["cpu"])), "mem_max": _one(mx(ex["memory"])),
+            "disk_max": {lb.get("mountpoint", "?"): v for lb, v in (_query(mx(ex["disk"])) or [])},
+        }
     return out
 
 

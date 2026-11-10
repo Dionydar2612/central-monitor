@@ -256,22 +256,67 @@ class TeamsNotify(unittest.TestCase):
         self.assertEqual(f2["Last Value:"], "12.3 %")
         self.assertEqual(sent[1][1]["summary"], "🟢 lx-01 · CPU กลับปกติ (12%) · เป็นอยู่ 10m")
 
+    def _texts(self, body):
+        out = []
+        for x in body:
+            if x["type"] == "TextBlock":
+                out.append(x["text"])
+            elif x["type"] == "FactSet":
+                out += [f["title"] + " " + f["value"] for f in x["facts"]]
+            elif x["type"] == "Container":
+                out += self._texts(x["items"])
+            elif x["type"] == "ColumnSet":
+                out.append(" | ".join(" / ".join(i["text"] for i in c["items"]) for c in x["columns"]))
+        return out
+
     def test_summary(self):
-        sensors = [
-            {"web": "a", "kind": "cpu", "status": "ok", "value": 43.2},
-            {"web": "a", "kind": "memory", "status": "warning", "value": 83.2, "unit": "%", "warning": 80, "error": 95},
-            {"web": "a", "kind": "mem_available", "status": "warning", "value": 16.8, "unit": "%", "warning": 20, "error": 10},
-            {"web": "a", "kind": "disk", "status": "ok", "value": 18.7, "mount": "C:"},
-            {"web": "b", "kind": "availability", "status": "down"},
-            {"web": "c", "kind": "cpu", "status": "ok", "value": 5},
-            {"web": "d", "kind": "cpu", "status": "ok", "value": 7},
-        ]
-        card = notify.build_summary(sensors, [{"web": "c", "end": time.time()}],
-                                    extra={"a": {"io_util": 1.4}})["attachments"][0]["content"]
-        blocks = [[i["text"] for i in b["items"]] for b in card["body"][1:]]
-        self.assertEqual(blocks, [["🔴 b", "เครื่องดับ หรือไม่ส่งข้อมูล"],
-                                  ["🟡 a", "CPU 43% · RAM 83% 🟡 · Disk C: 19% · Disk I/O 1.4%"],
-                                  ["🟢 c · กลับปกติ", "CPU 5%"], ["🟢 d", "CPU 7%"]])
+        from datetime import datetime
+        day = datetime.now().replace(hour=17, minute=0, second=5, microsecond=0)
+        now, start = day.timestamp(), day.replace(hour=8, second=0).timestamp()
+        sensors = [{"web": "b", "kind": "availability", "status": "down", "name": "Availability",
+                    "incident": {"start": now - 1500, "worst": "down"}},
+                   {"web": "p", "kind": "availability", "status": "paused"}]
+        for w, c, m, d in (("a", 35, 62, 55), ("c", 92, 91, 88)):
+            sensors += [{"web": w, "group": "G", "kind": "availability", "status": "ok"},
+                        {"web": w, "group": "G", "kind": "cpu", "status": "error" if c > 90 else "ok", "value": c},
+                        {"web": w, "group": "G", "kind": "memory", "status": "ok", "value": m},
+                        {"web": w, "group": "G", "kind": "disk", "status": "ok", "value": d, "mount": "C:"}]
+        incidents = [{"web": "a", "kind": "availability", "name": "Availability", "start": start + 3600,
+                      "end": start + 4320, "duration": 720, "worst": "down", "ended_by": "recovered"},
+                     {"web": "a", "kind": "cpu", "start": start - 7200, "end": start - 3600}]     # นอกช่วง
+        extra = {"a": {"io_util": 1.4, "io_max": 30, "cpu_max": 61, "mem_max": 70, "disk_max": {"C:": 55}},
+                 "c": {"cpu_max": 97, "mem_max": 93, "disk_max": {"C:": 93.4}}}
+        prev = {"time": start, "machines": {"a": {"cpu": 30, "mem": 60, "disks": {"C:": 54}}}}
+        payloads, snap = notify.build_summary(sensors, incidents, now, extra, start, prev)
+        self.assertEqual(len(payloads), 1)
+        t = self._texts(payloads[0]["attachments"][0]["content"]["body"])
+        self.assertIn("Evening Report", t[0])
+        self.assertTrue(t[1].startswith("ช่วงเวลา 08:00–17:00"))
+        self.assertIn("🟢 UP: 2 เครื่อง (มี Warning / Error 1)", t)
+        self.assertIn("🔴 DOWN: 1 เครื่อง", t)
+        self.assertIn("⏸ PAUSE: 1 เครื่อง", t)
+        self.assertIn("Incident: 2 ครั้ง (ยังไม่หาย 1)", t)
+        self.assertIn("Downtime: a 12m, b 25m (ยังดับอยู่)", t)
+        self.assertIn("Recovery: 1 เครื่อง · a 09:12 (ดับ 12m)", t)
+        self.assertIn("CPU สูงสุด: 92% (c) · ช่วง 08:00–17:00: 97% (c)", t)
+        self.assertIn("Disk สูงสุด: 88% (c C:) · ช่วง 08:00–17:00: 93% (c C:)", t)
+        self.assertIn("🟢 a / UP | 35% / สูงสุด 61% / 08:00: 30% ▲5 | 62% / สูงสุด 70% / 08:00: 60% ▲2 | C: 55% ▲1"
+                      " | 1.4% / สูงสุด 30%", t)
+        self.assertIn("🔴 b / DOWN | - | - | - | -", t)
+        self.assertFalse(any("เฉลี่ย" in x and "ไม่ใช้ค่าเฉลี่ย" not in x for x in t))   # ไม่มีค่าเฉลี่ย
+        self.assertEqual(snap["machines"]["a"], {"cpu": 35.0, "mem": 62.0, "disks": {"C:": 55.0}})
+
+    def test_summary_split_and_period(self):
+        sensors = [{"web": f"m{i:03d}", "kind": "cpu", "status": "ok", "value": i % 100} for i in range(400)]
+        payloads, _ = notify.build_summary(sensors, [], extra={})
+        self.assertGreater(len(payloads), 1)
+        self.assertTrue(all(len(json.dumps(p, ensure_ascii=False).encode()) < 27000 for p in payloads))
+        from datetime import datetime
+        d = datetime.now()
+        at = lambda h, m=0: d.replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
+        self.assertEqual(notify._period_start(["08:00", "17:00"], at(8)), at(0))
+        self.assertEqual(notify._period_start(["08:00", "17:00"], at(17)), at(8))
+        self.assertEqual(notify._period_start(["08:00", "17:00"], at(10, 30)), at(8))
 
     def test_one_card_per_issue(self):
         sent = []

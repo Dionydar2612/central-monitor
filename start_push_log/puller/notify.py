@@ -367,8 +367,10 @@ def sensor_events(events, config=None):
 #   ปัญหาของเครื่อง = ข้อความสั้นของแต่ละ sensor ที่ไม่ปกติ เช่น "RAM ใช้ไป 83% (เกณฑ์ 80%)"
 # ------------------------------------------------------------------
 
-SUMMARY_MAX_LINES = 60
+# กฎของรายงาน: ห้ามใช้ค่าเฉลี่ยข้ามเครื่อง (Average) ทุกกรณี -> แสดงค่าของแต่ละเครื่อง + ค่าสูงสุด (พร้อมชื่อเครื่อง)
 SUMMARY_LATE = 15 * 60          # puller หยุดไปเกินเวลานี้หลังเวลาที่ตั้ง -> ไม่ส่งย้อนหลัง
+SUMMARY_MAX_BYTES = 24000       # การ์ด Teams รับได้ ~28KB -> เกินนี้แบ่งเป็นหลายการ์ด
+SUMMARY_MAX_INCIDENTS = 15
 
 
 def _sensor_as_event(sn):
@@ -377,10 +379,17 @@ def _sensor_as_event(sn):
             "to": sn.get("status")}
 
 
-def _pct(v):
+def _f(v):
     try:
         v = float(v)
     except (TypeError, ValueError):
+        return None
+    return v
+
+
+def _pct(v):
+    v = _f(v)
+    if v is None:
         return None
     return f"{v:.0f}%" if v >= 10 else f"{v:.1f}".rstrip("0").rstrip(".") + "%"
 
@@ -389,23 +398,33 @@ def _mark(st):
     return f" {ICON[st]}" if st in ("warning", "error", "down") else ""
 
 
-def build_summary(sensors, incidents, now=None, extra=None):
-    """การ์ดสรุปสถานะทุกเครื่อง ณ ตอนนี้
-    sensors = sensors.json["sensors"]  incidents = incidents.json  extra = {เครื่อง: {"io_util": %}}
-    ต่อเครื่อง: หัว "🟡 host-window" + บรรทัดค่า "CPU 43% · RAM 83% 🟡 · Disk C: 19%, D: 40% · Disk I/O 1.4%"
-               + ปัญหาอื่นที่ไม่ใช่ค่าเหล่านี้ (service หยุด, ping ...) ถ้ามี"""
-    now = now or time.time()
-    extra = extra or {}
-    start = datetime.fromtimestamp(now).astimezone().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    had_problem = {i.get("web") for i in incidents or [] if (i.get("end") or 0) >= start}
-    machines = {}
+def _hm(ts):
+    return datetime.fromtimestamp(ts).astimezone().strftime("%H:%M")
+
+
+def _delta(cur, prev):
+    """เทียบกับรอบก่อน: ▲5 / ▼3 / = """
+    cur, prev = _f(cur), _f(prev)
+    if cur is None or prev is None:
+        return ""
+    d = round(cur - prev)
+    return f"▲{d}" if d > 0 else f"▼{-d}" if d < 0 else "="
+
+
+def _machines(sensors):
+    """sensors.json -> {เครื่อง: ค่าปัจจุบัน + สถานะ}"""
+    out = {}
     for sn in sensors or []:
-        m = machines.setdefault(sn.get("web") or "?", {"worst": "ok", "paused": False, "cpu": None, "mem": None,
-                                                       "disks": [], "other": []})
+        web = sn.get("web") or "?"
+        m = out.setdefault(web, {"group": str(sn.get("group") or "").strip("/"), "host": sn.get("host") or "",
+                                 "avail": None, "paused": False, "worst": "ok", "cpu": None, "mem": None,
+                                 "disks": {}, "other": []})
         st, k = sn.get("status"), sn.get("kind")
         if st == "paused":
             m["paused"] = True
             continue
+        if k == "availability":
+            m["avail"] = st
         if st in ("down", "error", "warning") and RANK.get(st, 0) > RANK.get(m["worst"], 0):
             m["worst"] = st
         if k == "cpu":
@@ -413,65 +432,283 @@ def build_summary(sensors, incidents, now=None, extra=None):
         elif k == "memory":
             m["mem"] = (sn.get("value"), st)
         elif k == "disk":
-            m["disks"].append((str(sn.get("mount") or "?"), sn.get("value"), st))
-        elif st in ("error", "warning") and k not in ("bottleneck", "mem_available"):
+            m["disks"][str(sn.get("mount") or "?")] = (sn.get("value"), st)
+        elif st in ("error", "warning") and k not in ("bottleneck", "mem_available", "availability"):
             m["other"].append(f"{ICON[st]} {short_text(st, _sensor_as_event(sn))}")
-
-    blocks = []
-    for web, m in machines.items():
+    for m in out.values():
         if m["paused"]:
-            blocks.append((-1, web, f"⏸ {web}", ["หยุดตรวจ (Paused)"]))
-            continue
-        if m["worst"] == "down":
-            blocks.append((4, web, f"🔴 {web}", ["เครื่องดับ หรือไม่ส่งข้อมูล"]))
-            continue
-        vals = []
-        if m["cpu"] and _pct(m["cpu"][0]):
-            vals.append(f"CPU {_pct(m['cpu'][0])}{_mark(m['cpu'][1])}")
-        if m["mem"] and _pct(m["mem"][0]):
-            vals.append(f"RAM {_pct(m['mem'][0])}{_mark(m['mem'][1])}")
-        if m["disks"]:
-            vals.append("Disk " + ", ".join(f"{mt} {_pct(v)}{_mark(st)}" for mt, v, st in sorted(m["disks"]) if _pct(v)))
-        io = (extra.get(web) or {}).get("io_util")
-        if _pct(io):
-            vals.append(f"Disk I/O {_pct(io)}")
-        lines = [" · ".join(vals)] if vals else []
-        lines += m["other"]
-        if m["worst"] in ("error", "warning"):
-            head = f"{ICON[m['worst']]} {web}"
-            rank = RANK[m["worst"]]
-        elif web in had_problem:
-            head, rank = f"🟢 {web} · กลับปกติ", 0.5
+            m["state"] = "PAUSE"
+        elif m["avail"] == "down" or m["worst"] == "down":
+            m["state"] = "DOWN"
+        elif m["avail"] == "unknown" or (m["avail"] is None and m["cpu"] is None and m["mem"] is None):
+            m["state"] = "UNKNOWN"
         else:
-            head, rank = f"🟢 {web}", 0
-        blocks.append((rank, web, head, lines))
-    blocks.sort(key=lambda r: (-r[0], r[1]))
+            m["state"] = "UP"
+    return out
 
-    n_bad = sum(1 for r in blocks if r[0] >= 3)
-    n_warn = sum(1 for r in blocks if r[0] == 2)
-    n_ok = sum(1 for r in blocks if 0 <= r[0] < 2)
-    level = "error" if n_bad else "warning" if n_warn else "ok"
-    when = datetime.fromtimestamp(now).astimezone().strftime("%d/%m/%Y %H:%M")
-    title = f"📋 สรุปสถานะเครื่อง {when} · 🔴 {n_bad} · 🟡 {n_warn} · 🟢 {n_ok}"
 
-    body = [{"type": "Container", "style": STYLE.get(level, "default"), "bleed": True,
-             "items": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}]}]
-    for _, _, head, lines in blocks[:SUMMARY_MAX_LINES]:
-        items = [{"type": "TextBlock", "text": head, "weight": "Bolder", "wrap": True}]
-        items += [{"type": "TextBlock", "text": t, "wrap": True, "spacing": "None"} for t in lines if t]
-        body.append({"type": "Container", "separator": True, "spacing": "Medium", "items": items})
-    if len(blocks) > SUMMARY_MAX_LINES:
-        body.append({"type": "TextBlock", "text": f"... และอีก {len(blocks) - SUMMARY_MAX_LINES} เครื่อง", "wrap": True})
-    if not blocks:
-        body.append({"type": "TextBlock", "text": "ยังไม่มีเครื่อง", "wrap": True})
-    card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
-            "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": title, "body": body}
-    return {"type": "message", "summary": title, "attachments": [
-        {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
+def _period_incidents(incidents, sensors, start, now):
+    """incident ที่เกิด / จบในช่วง [start, now] (ทั้งที่ปิดแล้ว และที่ยังเปิดอยู่)"""
+    out = []
+    for i in incidents or []:
+        s0, e0 = _f(i.get("start")) or 0, _f(i.get("end")) or 0
+        if e0 >= start and s0 <= now:
+            out.append({**i, "open": False})
+    for sn in sensors or []:
+        inc = sn.get("incident")
+        if isinstance(inc, dict) and (_f(inc.get("start")) or now) <= now:
+            out.append({"web": sn.get("web"), "group": sn.get("group"), "kind": sn.get("kind"), "name": sn.get("name"),
+                        "start": inc.get("start"), "end": None, "worst": inc.get("worst") or sn.get("status"),
+                        "peak": inc.get("peak"), "unit": inc.get("unit"), "open": True})
+    out.sort(key=lambda i: _f(i.get("start")) or 0)
+    return out
+
+
+def _overlap(i, start, now):
+    s0 = max(_f(i.get("start")) or start, start)
+    e0 = min(_f(i.get("end")) or now, now)
+    return max(0, e0 - s0)
+
+
+def _txt(text, **kw):
+    return {"type": "TextBlock", "text": text, "wrap": True, **kw}
+
+
+def _cell(lines, width, bold_first=False):
+    items = []
+    for n, t in enumerate(lines):
+        if not t:
+            continue
+        b = {"type": "TextBlock", "text": t, "wrap": True, "spacing": "None"}
+        if n == 0 and bold_first:
+            b["weight"] = "Bolder"
+        if n > 0:
+            b.update(isSubtle=True, size="Small")
+        items.append(b)
+    return {"type": "Column", "width": width, "items": items or [_txt("-", spacing="None")]}
+
+
+TABLE_W = ("stretch", 22, 22, 30, 18)        # Machine | CPU | RAM | Disk | Disk I/O
+
+
+def _row(cells, header=False):
+    cols = [_cell(c, w, bold_first=(n == 0)) for n, (c, w) in enumerate(zip(cells, TABLE_W))]
+    if header:
+        for c in cols:
+            for it in c["items"]:
+                it.update(weight="Bolder", isSubtle=False, size="Default")
+    return {"type": "ColumnSet", "separator": True, "spacing": "Small", "columns": cols}
+
+
+def _value_cell(cur, st, peak, prev, prev_label):
+    if _pct(cur) is None:
+        return ["-"]
+    out = [f"{_pct(cur)}{_mark(st)}"]
+    if _pct(peak) is not None:
+        out.append(f"สูงสุด {_pct(peak)}")
+    if prev_label and _pct(prev) is not None:
+        out.append(f"{prev_label}: {_pct(prev)} {_delta(cur, prev)}")
+    return out
+
+
+def _max_of(items):
+    """[(ค่า, ป้ายชื่อ)] -> "92% (PROD-03)" ของค่าที่มากที่สุด (ไม่เฉลี่ย)"""
+    items = [(v, n) for v, n in items if _f(v) is not None]
+    if not items:
+        return "-"
+    v, n = max(items, key=lambda x: _f(x[0]))
+    return f"{_pct(v)} ({n})"
+
+
+def build_summary(sensors, incidents, now=None, extra=None, start=None, prev=None, label=None):
+    """รายงานสรุป (Morning / Evening / ส่งตอนนี้)  -> (payloads, snapshot)
+    sensors = sensors.json["sensors"]  incidents = incidents.json
+    extra   = {เครื่อง: {"io_util", "io_max", "cpu_max", "mem_max", "disk_max": {mount: %}}}  ค่าสูงสุดในช่วง
+    start   = เริ่มช่วงรายงาน (ปริยาย 00:00 วันนี้)   prev = snapshot ของรายงานรอบก่อนวันเดียวกัน (ใช้เปรียบเทียบ)
+    ไม่มีค่าเฉลี่ยข้ามเครื่อง: ทุกค่าเป็นของเครื่องนั้น ๆ  Group Summary = ค่าสูงสุดพร้อมชื่อเครื่อง"""
+    now = now or time.time()
+    extra = extra or {}
+    midnight = datetime.fromtimestamp(now).astimezone().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    start = start if start is not None else midnight
+    machines = _machines(sensors)
+    prev_m = (prev or {}).get("machines") or {}
+    prev_label = _hm(prev["time"]) if prev and prev.get("time") else ""
+
+    # ---------- สถานะเครื่อง ----------
+    count = {k: 0 for k in ("UP", "DOWN", "PAUSE", "UNKNOWN")}
+    for m in machines.values():
+        count[m["state"]] += 1
+    n_warn = sum(1 for m in machines.values() if m["state"] == "UP" and m["worst"] in ("warning", "error"))
+
+    # ---------- incident / downtime / recovery ในช่วง ----------
+    incs = _period_incidents(incidents, sensors, start, now)
+    down_incs = [i for i in incs if i.get("kind") == "availability"]
+    downtime = {}
+    for i in down_incs:
+        d = downtime.setdefault(i.get("web") or "?", [0, 0, False])
+        d[0] += _overlap(i, start, now)
+        d[1] += 1
+        d[2] = d[2] or i["open"]
+    recovered = [i for i in down_incs if not i["open"] and i.get("ended_by", "recovered") == "recovered"
+                 and (_f(i.get("end")) or 0) >= start]
+
+    when = datetime.fromtimestamp(now).astimezone()
+    label = label or ("Morning Report" if when.hour < 12 else "Evening Report")
+    period = f"{_hm(start)}–{_hm(now)}"
+    level = "error" if count["DOWN"] else "warning" if n_warn or count["UNKNOWN"] else "ok"
+    title = f"📋 Central Monitor Daily Summary · {label} {when.strftime('%d/%m/%Y %H:%M')}"
+    summary_line = (f"{label} {when.strftime('%H:%M')} · UP {count['UP']} · DOWN {count['DOWN']} · "
+                    f"PAUSE {count['PAUSE']} · UNKNOWN {count['UNKNOWN']}")
+
+    head = [
+        {"type": "Container", "style": STYLE.get(level, "default"), "bleed": True, "items": [
+            _txt(title, weight="Bolder", size="Medium"),
+            _txt(f"ช่วงเวลา {period} · ค่าปัจจุบันของแต่ละเครื่อง + ค่าสูงสุดในช่วง (ไม่ใช้ค่าเฉลี่ย)"
+                 + (f" · เทียบกับรอบ {prev_label}" if prev_label else ""), spacing="None", isSubtle=True, size="Small")]},
+        {"type": "FactSet", "spacing": "Medium", "facts": [
+            {"title": "🟢 UP:", "value": f"{count['UP']} เครื่อง" + (f" (มี Warning / Error {n_warn})" if n_warn else "")},
+            {"title": "🔴 DOWN:", "value": f"{count['DOWN']} เครื่อง"},
+            {"title": "⏸ PAUSE:", "value": f"{count['PAUSE']} เครื่อง"},
+            {"title": "❔ UNKNOWN:", "value": f"{count['UNKNOWN']} เครื่อง"},
+            {"title": "Incident:", "value": f"{len(incs)} ครั้ง" + (f" (ยังไม่หาย {sum(1 for i in incs if i['open'])})"
+                                                                   if any(i["open"] for i in incs) else "")},
+            {"title": "Downtime:", "value": ", ".join(f"{w} {_dur(d[0])}" + (" (ยังดับอยู่)" if d[2] else "")
+                                                       for w, d in sorted(downtime.items())) or "ไม่มี"},
+            {"title": "Recovery:", "value": (f"{len({i.get('web') for i in recovered})} เครื่อง · " + ", ".join(
+                f"{i.get('web')} {_hm(i['end'])} (ดับ {_dur(i.get('duration') or (i['end'] - i['start']))})"
+                for i in recovered)) if recovered else "ไม่มี"},
+        ]},
+    ]
+
+    # ---------- รายละเอียด incident ----------
+    inc_body = []
+    if incs:
+        inc_body.append(_txt(f"Incident ในช่วง {period}", weight="Bolder", separator=True, spacing="Medium"))
+        for i in incs[-SUMMARY_MAX_INCIDENTS:]:
+            st = i.get("worst") or "error"
+            span = f"{_hm(i['start'])}–{'ตอนนี้' if i['open'] else _hm(i['end'])}"
+            dur = _dur((_f(i.get("end")) or now) - (_f(i.get("start")) or now))
+            pk = f" · สูงสุด {_pct(i['peak']) if i.get('unit') == '%' else _n(i['peak'])}" \
+                if i.get("peak") is not None and i.get("kind") != "availability" else ""
+            inc_body.append(_txt(f"{ICON.get(st, '•')} {span} ({dur}) **{i.get('web')}** · {i.get('name') or i.get('kind')}"
+                                 f" · {LABEL.get(st, st)}{pk}" + (" · ยังไม่หาย" if i["open"] else ""), spacing="None"))
+        if len(incs) > SUMMARY_MAX_INCIDENTS:
+            inc_body.append(_txt(f"... และก่อนหน้านี้อีก {len(incs) - SUMMARY_MAX_INCIDENTS} ครั้ง",
+                                 isSubtle=True, size="Small", spacing="None"))
+
+    # ---------- ตารางต่อกลุ่ม ----------
+    groups = {}
+    for web, m in machines.items():
+        groups.setdefault(m["group"], []).append(web)
+    snap = {"time": now, "machines": {}}
+    tables = []
+    for g in sorted(groups):
+        webs = sorted(groups[g], key=lambda w: (-{"DOWN": 9, "UNKNOWN": 5, "PAUSE": -1}.get(machines[w]["state"], 0)
+                                                - RANK.get(machines[w]["worst"], 0), w))
+        rows = []
+        cpu_now, mem_now, disk_now, cpu_pk, mem_pk, disk_pk = [], [], [], [], [], []
+        for web in webs:
+            m, x, p = machines[web], extra.get(web) or {}, prev_m.get(web) or {}
+            icon = {"DOWN": "🔴", "PAUSE": "⏸", "UNKNOWN": "❔"}.get(m["state"]) or ICON.get(m["worst"], "🟢")
+            name_cell = [f"{icon} {web}", m["state"]] + m["other"][:3]
+            if m["state"] in ("DOWN", "PAUSE", "UNKNOWN") and m["cpu"] is None:
+                rows.append(_row([name_cell, ["-"], ["-"], ["-"], ["-"]]))
+                continue
+            cpu, mem = m["cpu"] or (None, None), m["mem"] or (None, None)
+            disks = []
+            for mt in sorted(m["disks"]):
+                v, st = m["disks"][mt]
+                if _pct(v) is None:
+                    continue
+                pk = (x.get("disk_max") or {}).get(mt)
+                t = f"{mt} {_pct(v)}{_mark(st)}"
+                if _f(pk) is not None and _f(pk) - _f(v) >= 1:
+                    t += f" (สูงสุด {_pct(pk)})"
+                if prev_label and (p.get("disks") or {}).get(mt) is not None:
+                    t += f" {_delta(v, p['disks'][mt])}"
+                disks.append(t)
+                disk_now.append((v, f"{web} {mt}"))
+                disk_pk.append((pk if _f(pk) is not None else v, f"{web} {mt}"))
+            io = [f"{_pct(x['io_util'])}"] if _pct(x.get("io_util")) else ["-"]
+            if _pct(x.get("io_max")):
+                io.append(f"สูงสุด {_pct(x['io_max'])}")
+            rows.append(_row([name_cell,
+                              _value_cell(cpu[0], cpu[1], x.get("cpu_max"), p.get("cpu"), prev_label),
+                              _value_cell(mem[0], mem[1], x.get("mem_max"), p.get("mem"), prev_label),
+                              disks or ["-"], io]))
+            cpu_now.append((cpu[0], web))
+            mem_now.append((mem[0], web))
+            cpu_pk.append((x.get("cpu_max") if _f(x.get("cpu_max")) is not None else cpu[0], web))
+            mem_pk.append((x.get("mem_max") if _f(x.get("mem_max")) is not None else mem[0], web))
+            snap["machines"][web] = {"cpu": _f(cpu[0]), "mem": _f(mem[0]),
+                                     "disks": {mt: _f(v) for mt, (v, _) in m["disks"].items()}}
+        gname = g or "ไม่ระบุกลุ่ม"
+        head_g = [_txt(f"กลุ่ม {gname} · {len(webs)} เครื่อง", weight="Bolder", size="Medium", separator=True,
+                       spacing="Large"),
+                  {"type": "FactSet", "spacing": "Small", "facts": [
+                      {"title": "CPU สูงสุด:", "value": f"{_max_of(cpu_now)} · ช่วง {period}: {_max_of(cpu_pk)}"},
+                      {"title": "Memory สูงสุด:", "value": f"{_max_of(mem_now)} · ช่วง {period}: {_max_of(mem_pk)}"},
+                      {"title": "Disk สูงสุด:", "value": f"{_max_of(disk_now)} · ช่วง {period}: {_max_of(disk_pk)}"}]},
+                  _row([["Machine"], ["CPU"], ["RAM"], ["Disk (ต่อไดรฟ์)"], ["Disk I/O"]], header=True)]
+        tables.append((head_g, rows))
+    if not machines:
+        tables.append(([_txt("ยังไม่มีเครื่อง")], []))
+
+    # ---------- รวมเป็นการ์ด (เกินขนาด -> แบ่งหลายการ์ด) ----------
+    def card(body, part=""):
+        t = title + part
+        c = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4",
+             "msteams": {"width": "Full"}, "fallbackText": summary_line, "body": body}
+        return {"type": "message", "summary": summary_line if not part else t, "attachments": [
+            {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": c}]}
+
+    def size(body):
+        return len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+
+    bodies, cur = [], head + inc_body
+    for head_g, rows in tables:
+        chunk = list(head_g)
+        for r in rows:
+            if size(cur + chunk + [r]) > SUMMARY_MAX_BYTES and (cur or len(chunk) > len(head_g)):
+                if len(chunk) > len(head_g) or not cur:
+                    bodies.append(cur + chunk)
+                    cur, chunk = [], [head_g[0], head_g[-1]]          # การ์ดถัดไป: ชื่อกลุ่ม + หัวตาราง
+                else:
+                    bodies.append(cur)
+                    cur = []
+            chunk.append(r)
+        if size(cur + chunk) > SUMMARY_MAX_BYTES and cur:
+            bodies.append(cur)
+            cur = []
+        cur = cur + chunk
+    bodies.append(cur)
+    bodies = [b for b in bodies if b]
+    if len(bodies) == 1:
+        return [card(bodies[0])], snap
+    out = []
+    for n, b in enumerate(bodies, 1):
+        if n > 1:
+            b = [_txt(f"{title} (ต่อ {n}/{len(bodies)})", weight="Bolder", isSubtle=True)] + b
+        out.append(card(b, f" ({n}/{len(bodies)})" if n > 1 else ""))
+    return out, snap
+
+
+def _period_start(times, anchor):
+    """ต้นช่วงรายงาน = เวลาสรุปรอบก่อนหน้าของวันเดียวกัน (ไม่มี = 00:00)
+    เช่น times 08:00, 17:00 -> รอบ 08:00 = 00:00–08:00 · รอบ 17:00 = 08:00–17:00"""
+    day = datetime.fromtimestamp(anchor).astimezone()
+    start = day.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    for t in times:
+        h, m = _hhmm(t)
+        at = day.replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
+        if start < at < anchor - 60:
+            start = at
+    return start
 
 
 def maybe_summary(sensors, incidents, state_file, request_file, config=None, extra_fn=None):
-    """เรียกทุกรอบ sensor (30 วินาที): ถึงเวลาที่ตั้ง หรือมีคำขอ "ส่งสรุปตอนนี้" จากหน้าเว็บ -> ส่งการ์ดสรุป"""
+    """เรียกทุกรอบ sensor (30 วินาที): ถึงเวลาที่ตั้ง หรือมีคำขอ "ส่งสรุปตอนนี้" จากหน้าเว็บ -> ส่งการ์ดสรุป
+    extra_fn(start, end) -> ค่าสูงสุดในช่วงต่อเครื่อง (ถาม Prometheus เฉพาะตอนจะส่ง)"""
     s = settings(config)
     if not s["url"].startswith("https://"):
         return
@@ -482,33 +719,39 @@ def maybe_summary(sensors, incidents, state_file, request_file, config=None, ext
             os.remove(request_file)
         except OSError:
             pass
-    due = None
+    try:
+        with open(state_file) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {}
+    due, due_ts = None, None
     if s["enabled"] and s["summary_times"]:
         today = datetime.fromtimestamp(now).astimezone()
-        try:
-            with open(state_file) as f:
-                last = json.load(f).get("last", "")
-        except (OSError, ValueError):
-            last = ""
         for t in s["summary_times"]:
             h, m = _hhmm(t)
             at = today.replace(hour=h, minute=m, second=0, microsecond=0)
             key = at.strftime("%Y-%m-%d %H:%M")
-            if 0 <= now - at.timestamp() <= SUMMARY_LATE and key > last:
-                due = key
+            if 0 <= now - at.timestamp() <= SUMMARY_LATE and key > state.get("last", ""):
+                due, due_ts = key, at.timestamp()
     if not forced and not due:
         return
-    if due:
-        tmp = state_file + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"last": due}, f)
-        os.replace(tmp, state_file)
+    start = _period_start(s["summary_times"], due_ts or now)
+    prev = state.get("snap")
+    same_day = prev and datetime.fromtimestamp(prev.get("time") or 0).date() == datetime.fromtimestamp(now).date()
     try:
-        extra = extra_fn() if extra_fn else None          # ค่าที่ไม่มีใน sensor (Disk I/O) ถามเฉพาะตอนจะส่ง
+        extra = extra_fn(start, now) if extra_fn else None
     except Exception as e:
         print(f"[NOTIFY ERROR] summary extra: {e!r}")
         extra = None
-    _enqueue(s["url"], build_summary(sensors, incidents, now, extra), "daily summary" + (" (manual)" if forced else ""))
+    label = None if due else "ส่งตอนนี้"
+    payloads, snap = build_summary(sensors, incidents, now, extra, start, prev if same_day else None, label)
+    if due:                       # จำเฉพาะรอบที่ตั้งเวลาไว้ (กด "ส่งตอนนี้" ไม่เปลี่ยนค่าที่ใช้เทียบ)
+        tmp = state_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"last": due, "snap": snap}, f)
+        os.replace(tmp, state_file)
+    for n, p in enumerate(payloads, 1):
+        _enqueue(s["url"], p, f"daily summary {n}/{len(payloads)}" + (" (manual)" if forced else ""))
 
 
 def check_event(name, url, old, new, result, group="", config=None):
