@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<!--
+  apps.html - หน้า Apps & Web: โปรแกรม / เว็บ / พอร์ต ยังทำงานไหม (มุมมองแบบง่าย)
+    ข้อมูล: GET /api/apps (กฎใน Custom alert rules ชนิดโปรแกรม / service / เว็บ / พอร์ต + สถานะจาก sensor)
+    admin เพิ่ม / ลบรายการได้จากหน้านี้ (POST / DELETE /api/apps)
+-->
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor - Apps &amp; Web</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><b>Apps &amp; Web</b><div style="color:var(--mut);font-size:12px;margin-top:2px">โปรแกรม · เว็บ · พอร์ต ยังทำงานไหม</div></div>
+<div class="sbadges" id="sbadges"></div>
+<div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><a class="st-nav" href="/events">Status &amp; Logs</a><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings" id="settingsLink" hidden>Settings</a><button id="logoutButton">Logout</button></div>
+</header>
+
+<section class="card apHero" id="apHero"><span class="apBig"></span><div><h1 id="apHeadline">กำลังโหลด...</h1><small id="apSub"></small></div></section>
+
+<div class="apBar" id="apBar">
+<button type="button" class="apChip" data-f="all" aria-pressed="true">ทั้งหมด<b id="cAll"></b></button>
+<button type="button" class="apChip" data-f="problem" aria-pressed="false">มีปัญหา<b id="cBad"></b></button>
+<button type="button" class="apChip" data-f="program" aria-pressed="false">โปรแกรม</button>
+<button type="button" class="apChip" data-f="service" aria-pressed="false">Service</button>
+<button type="button" class="apChip" data-f="web" aria-pressed="false">เว็บ</button>
+<button type="button" class="apChip" data-f="port" aria-pressed="false">พอร์ต</button>
+<input type="search" id="apFind" placeholder="ค้นหาชื่อ / เครื่อง" autocomplete="off">
+<button type="button" class="apChip" id="apAddBtn" hidden>+ เพิ่ม</button>
+</div>
+
+<form class="card apAdd" id="apForm" hidden>
+<label>ประเภท<span class="seg" id="apType"><button type="button" data-t="program" aria-pressed="true">โปรแกรม</button><button type="button" data-t="web" aria-pressed="false">เว็บ</button><button type="button" data-t="port" aria-pressed="false">พอร์ต</button><button type="button" data-t="service" aria-pressed="false">Service</button></span></label>
+<label>เครื่อง<select id="apWeb"></select></label>
+<label><span id="apValLabel">ชื่อโปรแกรม</span><input id="apVal" list="apSuggest" autocomplete="off"><datalist id="apSuggest"></datalist></label>
+<label>ชื่อที่แสดง (ไม่บังคับ)<input id="apName" autocomplete="off" placeholder="เช่น ระบบบัญชี"></label>
+<div class="apBtns"><button type="submit" class="primary" id="apSave">เพิ่ม</button><button type="button" id="apCancel">ยกเลิก</button></div>
+<div class="apHint" id="apHint"></div>
+<div class="apMsg" id="apMsg"></div>
+</form>
+
+<div class="apGrid" id="apGrid"></div>
+</div>
+<script src="/badges.js"></script>
+<script src="/apps.js"></script>
+</body>
+</html>

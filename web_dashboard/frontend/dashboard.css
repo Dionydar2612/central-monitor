@@ -1216,3 +1216,47 @@ td.bad{color:#e5484d}
 .rltbl td.rlwhat{max-width:320px;word-break:break-word}
 #rlForm{margin-top:14px}
 .rltbl td.rlwarn{color:#c27c00;font-weight:600}
+
+/* ---- Apps & Web (apps.html + แท็บ Software): โปรแกรม / เว็บ / พอร์ต ทำงานไหม ---- */
+.apHero{display:flex;align-items:center;gap:16px;padding:22px 24px}
+.apHero .apBig{width:18px;height:18px;border-radius:50%;flex:none;background:#9aa7bf}
+.apHero.ok .apBig{background:#10c27a;box-shadow:0 0 0 6px rgba(16,194,122,.15)}
+.apHero.bad .apBig{background:#e5484d;box-shadow:0 0 0 6px rgba(229,72,77,.15)}
+.apHero.wr .apBig{background:#e5a000;box-shadow:0 0 0 6px rgba(229,160,0,.15)}
+.apHero h1{margin:0;font-size:22px;font-weight:600}
+.apHero small{color:var(--mut);font-size:13px}
+.apBar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 12px}
+.apBar .apChip{border:1px solid var(--line);background:var(--card);color:var(--mut);font:500 13px inherit;font-family:inherit;padding:6px 12px;border-radius:999px;cursor:pointer}
+.apBar .apChip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--card)}
+.apBar .apChip b{font-weight:600;margin-left:4px}
+.apBar input[type=search]{margin-left:auto;min-width:180px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;font-size:13px}
+.apGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.apT{position:relative;display:flex;gap:12px;align-items:flex-start;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:10px;color:inherit;text-decoration:none;min-width:0}
+.apT:hover{border-color:var(--soft)}
+.apT .apDot{width:10px;height:10px;border-radius:50%;margin-top:6px;flex:none;background:#9aa7bf}
+.apT.ok .apDot{background:#10c27a}
+.apT.wr{border-color:rgba(229,160,0,.45)}.apT.wr .apDot{background:#e5a000}
+.apT.bad{border-color:rgba(229,72,77,.5);background:linear-gradient(0deg,rgba(229,72,77,.05),rgba(229,72,77,.05)),var(--card)}.apT.bad .apDot{background:#e5484d}
+.apT .apMain{min-width:0;flex:1}
+.apT b{display:block;font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.apT small{display:block;color:var(--mut);font-size:12px;margin-top:2px}
+.apT p{margin:6px 0 0;color:var(--mut);font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+.apT .apAge{font-size:12px;color:var(--mut);white-space:nowrap}
+.apT.bad .apAge{color:#e5484d;font-weight:600}.apT.wr .apAge{color:#c27c00;font-weight:600}
+.apT .apDel{position:absolute;right:6px;bottom:6px;border:0;background:none;color:var(--mut);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:6px;opacity:0}
+.apT:hover .apDel,.apT .apDel:focus-visible{opacity:1}.apT .apDel:hover{background:var(--chip);color:#e5484d}
+.apAdd{display:grid;grid-template-columns:auto 1fr 2fr 1.4fr auto;gap:8px;align-items:end;margin-bottom:12px}
+.apAdd label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mut)}
+.apAdd input,.apAdd select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;font-size:13px}
+.apAdd .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.apAdd .seg button{border:0;background:var(--card);color:var(--mut);font:inherit;font-size:13px;padding:8px 12px;cursor:pointer}
+.apAdd .seg button[aria-pressed="true"]{background:var(--ink);color:var(--card)}
+.apAdd .apBtns{display:flex;gap:6px}
+.apAdd .apBtns button{padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
+.apAdd .apBtns button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.apAdd .apMsg{grid-column:1/-1;font-size:12px;color:#e5484d;min-height:0}
+.apAdd .apHint{grid-column:1/-1;font-size:12px;color:var(--mut)}
+.apEmpty{padding:36px;text-align:center;color:var(--mut)}
+.apEmpty b{display:block;color:var(--ink);font-size:15px;margin-bottom:6px}
+.apNav{display:inline-flex;align-items:center;gap:6px}
+@media (max-width:760px){.apAdd{grid-template-columns:1fr}.apBar input[type=search]{margin-left:0;flex:1}.user{flex-wrap:wrap}}

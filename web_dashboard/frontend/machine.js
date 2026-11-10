@@ -278,7 +278,15 @@
                 + `<td>${esc(x.installed || "-")}</td><td>${esc(x.arch || "-")}</td></tr>`)),
             `<span class="cnt">${(d.installed || []).length}${d.inventory_time ? ` · updated ${esc(ts(d.inventory_time))}` : ""}</span>`
             + `<input class="swq" type="search" placeholder="ค้นหาโปรแกรม" value="${esc(P.swq)}" style="margin-left:auto;max-width:220px">`);
-        return notes + `<div class="grid pgrid2">${run}${ports}</div>` + inst + hist;
+        const ap = d.apps || [];
+        const bad = ap.filter(x => ["error", "down", "warning"].includes(x.status)).length;
+        const tile = x => { const c = ["error", "down"].includes(x.status) ? "bad" : x.status === "warning" ? "wr" : x.status === "ok" ? "ok" : "";
+            const age = x.status === "ok" ? "ทำงาน" : c ? "หยุด" : "รอข้อมูล";
+            return `<div class="apT ${c}"><span class="apDot"></span><div class="apMain"><b>${esc(x.name)}</b><p>${esc(x.message)}</p></div><span class="apAge">${age}</span></div>`; };
+        const watched = `<section class="card pcard"><div class="top"><h2>Watched apps &amp; web</h2><span class="cnt">${ap.length ? (bad ? `มีปัญหา ${bad}` : "ทำงานปกติทั้งหมด") : ""}</span>`
+            + `<a class="st-nav" href="/apps" style="margin-left:auto">จัดการ</a></div>`
+            + (ap.length ? `<div class="apGrid advice">${ap.map(tile).join("")}</div>` : `<div class="empty advice">ยังไม่ได้เฝ้าดูโปรแกรม / เว็บของเครื่องนี้ · เพิ่มได้ที่หน้า Apps &amp; Web</div>`) + `</section>`;
+        return notes + watched + `<div class="grid pgrid2">${run}${ports}</div>` + inst + hist;
     }
     function swFilter(box) {
         const qv = P.swq.trim().toLowerCase();
@@ -353,12 +361,16 @@
 
     async function fetchPane(tab) {
         const w = encodeURIComponent(S.web);
-        if (API_KIND[tab]) return apiGet(`/api/host/${w}/${API_KIND[tab]}`);
+        if (API_KIND[tab] && tab !== "software") return apiGet(`/api/host/${w}/${API_KIND[tab]}`);
         if (tab === "alerts") {
             const [s, i] = await Promise.all([apiGet(`/api/sensors?web=${w}`), apiGet(`/api/incidents?web=${w}&hours=168`)]);
             return { sensors: s.sensors || [], incidents: i.incidents || [] };
         }
         if (tab === "processes") return apiGet(`/api/live-processes?web=${w}`);
+        if (tab === "software") {
+            const [sw, ap] = await Promise.all([apiGet(`/api/host/${w}/software`), apiGet(`/api/apps?web=${w}`).catch(() => ({ items: [] }))]);
+            return { ...sw, apps: ap.items || [] };
+        }
         return null;
     }
 

@@ -97,6 +97,30 @@ class Backend(unittest.TestCase):
         log = open(os.path.join(self.tmp, "state", "audit.log"), encoding="utf-8").read()
         self.assertNotIn("abc123456", log)                               # URL ไม่อยู่ใน Activity log
 
+    def test_apps(self):
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "app-01", "host": "10.0.0.9", "ssh": {"user": "cp"}, "logs": []})
+        before = c.get("/api/alert-rules").json["rules"]
+        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "nope", "value": "x"}).status_code, 400)
+        self.assertIn("value", c.post("/api/apps", json={"type": "port", "web": "app-01", "value": "99999"}).json["fields"])
+        r = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "{host}:8080/health"})
+        self.assertEqual(r.status_code, 201, r.json)
+        rule = r.json["rule"]
+        self.assertEqual((rule["metric"], rule["url"], rule["targets"], rule["name"]),
+                         ("http_url", "http://{host}:8080/health", ["app-01"], "app-01:8080/health (app-01)"))
+        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "sqlservr.exe"}).status_code, 201)
+        items = c.get("/api/apps").json["items"]
+        self.assertTrue({("web", "nodata"), ("program", "nodata")} <= {(x["type"], x["status"]) for x in items})
+        self.assertEqual(len(c.get("/api/alert-rules").json["rules"]), len(before) + 2)     # กฎเดิมยังอยู่
+        self.assertEqual(c.delete(f"/api/apps/{rule['id']}").status_code, 200)
+        self.assertEqual(c.delete("/api/apps/no-such").status_code, 404)
+        self.assertNotIn("web", [x["type"] for x in c.get("/api/apps").json["items"]])
+        c.post("/api/users", json={"username": "v2", "password": "password2", "role": "viewer"})
+        self.assertEqual(self.login("v2", "password2"), 200)
+        self.assertEqual(c.get("/api/apps").status_code, 200)
+        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "x"}).status_code, 403)
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

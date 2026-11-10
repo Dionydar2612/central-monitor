@@ -78,6 +78,7 @@ import sensors_service
 import users_service
 import retention_service
 import agent_service
+import apps_service
 import alert_settings_service
 import notify_service
 import alert_rules_service
@@ -175,7 +176,7 @@ def _required_role(method, path):
                                                                      "/api/alert-settings", "/api/notify-settings",
                                                                      "/api/alert-rules")):
         return "admin"
-    if path.startswith("/api/checks"):
+    if path.startswith(("/api/checks", "/api/apps")):
         return "viewer" if method == "GET" else "admin"
     if path == "/api/info-logs":
         return "operator"
@@ -213,6 +214,8 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
     ("PUT", re.compile(r"^/api/alert-rules$"), "settings.alert_rules", ()),
+    ("POST", re.compile(r"^/api/apps$"), "apps.add", ("type", "web", "value", "name")),
+    ("DELETE", re.compile(r"^/api/apps/(?P<t>[^/]+)$"), "apps.delete", ()),
     ("POST", re.compile(r"^/api/alert-rules/test$"), "settings.alert_rules_test", ("name",)),
     ("POST", re.compile(r"^/api/notify-settings/summary-now$"), "settings.notify_summary_now", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
@@ -480,6 +483,42 @@ def notify_settings_test():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)
+
+
+@app.get("/apps")
+def apps_page():
+    """หน้า Apps & Web (frontend/apps.html)"""
+    return send_from_directory(STATIC_DIR, "apps.html")
+
+
+@app.get("/api/apps")
+def apps_list():
+    """โปรแกรม / เว็บ / พอร์ต ที่เฝ้าดู + สถานะ"""
+    try:
+        return jsonify(apps_service.list_apps(request.args.get("web") or None))
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.post("/api/apps")
+def apps_add():
+    try:
+        body = _json_body()
+        if body is None:
+            return jsonify({"error": "ต้องส่งเป็น JSON"}), 400
+        ok, out = apps_service.add_app(body)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (201 if ok else 400)
+
+
+@app.delete("/api/apps/<rule_id>")
+def apps_delete(rule_id):
+    try:
+        ok, out = apps_service.delete_app(rule_id)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (200 if ok else 404 if out.get("error") == "ไม่พบรายการนี้" else 400)
 
 
 @app.get("/api/alert-rules")
