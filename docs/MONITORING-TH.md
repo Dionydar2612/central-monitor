@@ -123,7 +123,7 @@ Linux ใช้ node_exporter ในรูปแบบเดียวกัน (
 ## 7. หน้าเว็บ
 
 - **WEB status**: ไทล์ Total / Up / Down / Warning / Critical / Paused
-  หัวกลุ่มแสดงค่าเฉลี่ยของกลุ่ม · ตาราง: Name, OS, IP, Status, CPU, Memory, Disk, Network (MB/s + ping ms / loss %), Alerts, Last pull
+  ตาราง: Name, OS, IP, Status, CPU, Memory, Disk, Network (MB/s + ping ms / loss %), Alerts, Last pull
   คลิกหัวคอลัมน์เพื่อเรียง · ตัวกรองข้อความ / OS / สถานะ
 - **รายละเอียดเครื่อง Windows** 8 แท็บ: Overview · Performance · Bottleneck · Processes · Services · Hardware · System · Alerts & Events
 - **รายละเอียดเครื่อง Linux** ใช้หน้าแบบเดิม (ไม่มีแท็บ): KPI, กราฟ System Load คู่การ์ด Service, CPU / Memory process, System events

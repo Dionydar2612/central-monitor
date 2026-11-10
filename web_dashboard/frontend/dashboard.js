@@ -988,20 +988,12 @@ function checkRows(list) {
         }).join("") + `</tbody></table>`;
 }
 
-function treeServers(n) { return [...n.servers, ...[...n.kids.values()].flatMap(treeServers)]; }
-function groupAvgHtml(n) {
-    const rows = treeServers(n), avg = k => { const v = rows.map(x => x[k]).filter(hasValue).map(Number); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
-    const part = (label, k) => { const v = avg(k); return v === null ? "" : `<span class="${level(k, v) || "ok"}">${label} ${v.toFixed(0)}%</span>`; };
-    const html = part("CPU", "cpu") + part("RAM", "memory") + part("Disk", "disk");
-    return html ? `<span class="gavg" title="ค่าเฉลี่ยของเครื่องที่ online ในกลุ่ม">${html}</span>` : "";
-}
-
 function groupHtml(n, cur, depth, forceOpen) {
     const open = forceOpen || !S.closed.has(n.path);
     const body = !open ? "" :
         `<div class="gbody">${n.servers.length ? `<div class="tblw">${serverRows(n.servers, cur)}</div>` : ""}${n.checks.length ? `<div class="tblw">${checkRows(n.checks)}</div>` : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
     const items = n.servers.length + n.checks.length;
-    return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}${groupAvgHtml(n)}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
+    return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
 }
 
 function matchesFilter(x, f, isCheck) {

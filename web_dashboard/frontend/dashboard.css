@@ -1167,9 +1167,7 @@ td.bad{color:#e5484d}
 .ovnet{white-space:nowrap;font-variant-numeric:tabular-nums}.ovnet small{display:block;font-size:11px;color:var(--mut)}
 .ovnet small.wr{color:#c27c00}.ovnet small.cr{color:#e5484d}
 .ostag.lx{background:#4b5563}
-.gavg{display:inline-flex;gap:8px;font-size:12px;color:var(--mut);margin-left:10px}.gavg .ok{color:#0a9a60}.gavg .wr{color:#c27c00}.gavg .cr{color:#e5484d}
-@media(max-width:600px){.gavg{display:none}}
-
+@media(max-width:600px){
 /* ---- 10. รายละเอียดเครื่อง: แท็บ + แผงข้อมูล (machine.js) ---- */
 .dtabs{display:flex;gap:4px;flex-wrap:wrap;margin:16px 0 0;border-bottom:1px solid var(--line)}
 .dtabs button{border:0;background:none;color:var(--mut);font:500 14px inherit;font-family:inherit;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
