@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 
+import notify_service
 import targets_service
 from clients import puller_get
 
@@ -46,11 +47,16 @@ def _doc():
 def list_rules():
     doc = _doc()
     rules = targets_service._plain(doc.get("alert_rules") or [])
+    rules = rules if isinstance(rules, list) else []
+    for r in rules:                              # webhook ของกฎเป็นความลับ: ไม่ส่ง URL เต็มกลับไป
+        url = str(r.pop("teams_url", "") or "")
+        r["teams_url_set"] = bool(url)
+        r["teams_url_hint"] = notify_service._hint(url)
     targets = [{"name": t.get("name"), "group": t.get("group") or "",
                 "os": "windows" if str(t.get("type") or "") == "agent" else "linux"}
                for t in targets_service._plain(doc.get("targets") or []) if isinstance(t, dict) and t.get("name")]
     groups = sorted({t["group"] for t in targets if t["group"]})
-    return {"rules": rules if isinstance(rules, list) else [], "metrics": _catalog(), "targets": targets, "groups": groups,
+    return {"rules": rules, "metrics": _catalog(), "main_url_set": bool(notify_service.main_url()), "targets": targets, "groups": groups,
             "template_keys": ["icon", "machine", "group", "host", "sensor", "text", "value", "unit", "threshold",
                               "level", "time", "duration"]}
 
@@ -74,7 +80,7 @@ def _slug(name):
     return (base or "rule") + "-" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:6]
 
 
-def clean_rule(data, existing_ids=(), keep_id=None):
+def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
     """ตรวจ + จัดรูปกฎ 1 ข้อ -> (rule, errors)"""
     data = data or {}
     errors = {}
@@ -138,6 +144,16 @@ def clean_rule(data, existing_ids=(), keep_id=None):
     f = _num(data.get("for_minutes"), "for_minutes", errors, 0.5, 1440)
     rule["for_minutes"] = f if f is not None else 3
     rule["notify"] = data.get("notify", True) is not False
+    # ช่อง Teams ของกฎนี้ (ว่าง = เก็บค่าเดิม / ใช้ช่องหลัก · "-" = ลบ)
+    tu = str(data.get("teams_url") or "").strip()
+    if tu == "-":
+        tu = ""
+    elif tu:
+        tu = notify_service._clean_url(tu, errors, "teams_url") or ""
+    else:
+        tu = old_url
+    if tu:
+        rule["teams_url"] = tu
     msg = str(data.get("message") or "").strip()
     if len(msg) > 300:
         errors["message"] = "ไม่เกิน 300 ตัวอักษร"
@@ -152,12 +168,14 @@ def save_rules(payload):
     items = (payload or {}).get("rules")
     if not isinstance(items, list) or len(items) > 200:
         return False, {"error": "rules ต้องเป็นรายการ (ไม่เกิน 200 กฎ)"}
+    old = {str(r.get("id")): str(r.get("teams_url") or "")
+           for r in targets_service._plain(_doc().get("alert_rules") or []) if isinstance(r, dict)}
     out, fields, ids = [], {}, set()
     for i, item in enumerate(items):
         rid = str((item or {}).get("id") or "").strip() or None
         if rid and (rid in ids or not re.match(r"^[a-z0-9-]{1,60}$", rid)):
             rid = None
-        rule, errors = clean_rule(item, ids, keep_id=rid)
+        rule, errors = clean_rule(item, ids, keep_id=rid, old_url=old.get(rid or "", ""))
         for k, v in errors.items():
             fields[f"rules.{i}.{k}"] = v
         ids.add(rule["id"])
@@ -196,3 +214,36 @@ def preview(data):
         return puller_get("/rule-preview", {"rule": json.dumps(rule, ensure_ascii=False)}, timeout=60)
     except Exception as e:
         return 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
+
+
+def send_test(data):
+    """ส่งการ์ดตัวอย่างของกฎนี้ไป Teams (ช่องของกฎ หรือช่องหลัก) -> (status, ผล)"""
+    rid = str((data or {}).get("id") or "")
+    old = {str(r.get("id")): str(r.get("teams_url") or "")
+           for r in targets_service._plain(_doc().get("alert_rules") or []) if isinstance(r, dict)}
+    rule, errors = clean_rule(data, keep_id=rid or "test", old_url=old.get(rid, ""))
+    if errors:
+        return 400, {"error": "ค่าไม่ถูกต้อง", "fields": errors}
+    url = rule.get("teams_url") or notify_service.main_url()
+    if not url:
+        return 400, {"error": "ยังไม่มีช่อง Teams: ใส่ Teams webhook ของกฎนี้ หรือตั้งช่องหลักในการ์ด Notifications"}
+    meta = METRICS.get(rule["metric"], ("", "", False, ">", "any"))
+    unit = rule.get("unit", "") if rule["metric"] == "promql" else meta[1]
+    level = "error" if rule.get("error") is not None else "warning"
+    lim = rule.get("error") if level == "error" else rule.get("warning")
+    machine = (rule.get("targets") or ["เครื่องตัวอย่าง"])[0]
+    if rule["metric"] == "service":
+        text = rule["name"]
+        value = ""
+    else:
+        value = lim
+        text = f"{rule['name']} {lim}{unit} ({'ต่ำกว่า' if rule.get('op') == '<' else 'เกณฑ์'} {lim}{unit})"
+    icon = "🔴" if level == "error" else "🟡"
+    ctx = {"icon": icon, "machine": machine, "group": (rule.get("groups") or [""])[0], "host": "", "sensor": rule["name"],
+           "text": text, "value": value, "unit": unit, "threshold": lim, "level": level.upper(), "time": "", "duration": ""}
+    tpl = rule.get("message") or "{icon} {machine} · {text}"
+    title = re.sub(r"\{(\w+)\}", lambda m: str(ctx.get(m.group(1), m.group(0)) or ""), tpl).strip()
+    ok, msg = notify_service.post(url, notify_service.card_payload(
+        f"[ทดสอบ] {title}", "attention" if level == "error" else "warning", "การ์ดตัวอย่างจาก Custom alert rules"))
+    where = "ช่องของกฎนี้" if rule.get("teams_url") else "ช่องหลัก"
+    return (200, {"ok": True, "message": f"ส่งไป{where}แล้ว ({msg})"}) if ok else (502, {"error": msg})

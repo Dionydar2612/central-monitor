@@ -205,11 +205,12 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-f" data-r2="for_minutes"><label for="rl_for">ต้องเป็นต่อเนื่องนาน (นาที)</label><input id="rl_for" type="number" min="0.5" step="0.5" value="3"><div class="st-err"></div></div>
 <div class="st-f"><label for="rl_os">OS</label><select id="rl_os"><option value="any">ทุก OS</option><option value="windows">Windows</option><option value="linux">Linux</option></select></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="rl_notify" checked> ส่ง Microsoft Teams</label></div>
+<div class="st-f rl-teams" data-r2="teams_url" style="grid-column:span 3"><label for="rl_teams">ช่อง Teams ของกฎนี้ (Workflows webhook URL · ว่าง = ใช้ช่องหลักในการ์ด Notifications)</label><input id="rl_teams" type="password" autocomplete="off" placeholder="https://...  (ว่าง = ช่องหลัก / ค่าเดิม)"><small id="rl_teams_hint"></small><div class="st-err"></div></div>
 <div class="st-f" style="grid-column:span 3"><label>ใช้กับเครื่อง (ไม่เลือกเลย = ทุกเครื่อง)</label><div class="nlv" id="rl_targets"></div></div>
 <div class="st-f" style="grid-column:span 3"><label>หรือทั้งกลุ่ม</label><div class="nlv" id="rl_groups"></div></div>
 <div class="st-f" data-r2="message" style="grid-column:span 3"><label for="rl_msg">ข้อความบนการ์ด Teams ของกฎนี้ (ว่าง = ใช้แบบทั้งระบบ)</label><input id="rl_msg" autocomplete="off" placeholder="เช่น {icon} {machine} · D: ใช้ไป {value}{unit} (เกณฑ์ {threshold}{unit})"><div class="st-err"></div></div>
 </div>
-<div class="st-actions" style="margin-top:10px"><button class="st-btn" id="rl_preview" type="button">Preview กับเครื่องตอนนี้</button><button class="st-btn primary" id="rl_save" type="button">Save rule</button><button class="st-btn" id="rl_cancel" type="button">Cancel</button></div>
+<div class="st-actions" style="margin-top:10px"><button class="st-btn" id="rl_preview" type="button">Preview กับเครื่องตอนนี้</button><button class="st-btn" id="rl_test" type="button">ทดสอบส่ง Teams</button><button class="st-btn primary" id="rl_save" type="button">Save rule</button><button class="st-btn" id="rl_cancel" type="button">Cancel</button></div>
 <div id="rl_pv"></div>
 </div>
 <div class="st-msg" id="rl_msgbox" role="status"></div>

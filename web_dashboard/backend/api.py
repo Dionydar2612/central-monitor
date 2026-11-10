@@ -213,6 +213,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times", "kinds", "machines", "groups")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
     ("PUT", re.compile(r"^/api/alert-rules$"), "settings.alert_rules", ()),
+    ("POST", re.compile(r"^/api/alert-rules/test$"), "settings.alert_rules_test", ("name",)),
     ("POST", re.compile(r"^/api/notify-settings/summary-now$"), "settings.notify_summary_now", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
@@ -498,6 +499,16 @@ def alert_rules_put():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (200 if ok else 400)
+
+
+@app.post("/api/alert-rules/test")
+def alert_rules_test():
+    """ส่งการ์ดตัวอย่างของกฎไป Teams"""
+    try:
+        status, data = alert_rules_service.send_test(request.get_json(silent=True) or {})
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(data), status
 
 
 @app.post("/api/alert-rules/preview")

@@ -175,6 +175,28 @@ def send_test(webhook_url=None):
     }
     payload = {"type": "message", "attachments": [
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
+    return post(url, payload)
+
+
+def card_payload(title, style, footer=""):
+    """การ์ด 1 บรรทัดแบบเดียวกับที่ puller ส่ง (ใช้กับปุ่มทดสอบของกฎ)"""
+    body = [{"type": "Container", "style": style, "bleed": True,
+             "items": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True}]}]
+    if footer:
+        body.append({"type": "TextBlock", "text": footer, "isSubtle": True, "size": "Small", "wrap": True})
+    card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4",
+            "msteams": {"width": "Full"}, "fallbackText": title, "body": body}
+    return {"type": "message", "summary": title, "attachments": [
+        {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
+
+
+def main_url():
+    y = targets_service._yaml()
+    return str(_teams(targets_service._load_doc(y)).get("webhook_url") or "")
+
+
+def post(url, payload):
+    """POST ไป Teams -> (ok, ข้อความ)"""
     req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": "central-monitor"})
     try:

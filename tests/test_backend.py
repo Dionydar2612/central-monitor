@@ -122,6 +122,19 @@ class Backend(unittest.TestCase):
         self.assertEqual([r["id"] for r in again], ids)                   # แก้แล้ว id เดิม
         acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
         self.assertIn("settings.alert_rules", acts)
+        # ช่อง Teams ของกฎ: เก็บแต่ไม่ส่ง URL เต็มกลับ, แก้กฎโดยไม่ใส่ URL = เก็บค่าเดิม, "-" = ลบ
+        rules[0]["teams_url"] = "https://example.webhook.office.com/rule-secret-999999"
+        got = c.put("/api/alert-rules", json={"rules": rules}).json["rules"]
+        self.assertTrue(got[0]["teams_url_set"])
+        self.assertNotIn("teams_url", got[0])
+        self.assertTrue(got[0]["teams_url_hint"].endswith("999999"))
+        got = c.put("/api/alert-rules", json={"rules": got}).json["rules"]
+        self.assertTrue(got[0]["teams_url_set"])
+        got[0]["teams_url"] = "-"
+        got = c.put("/api/alert-rules", json={"rules": got}).json["rules"]
+        self.assertFalse(got[0]["teams_url_set"])
+        bad = c.post("/api/alert-rules/test", json={"name": "x", "metric": "cpu", "warning": 1})
+        self.assertEqual(bad.status_code, 400)                            # ยังไม่มีช่อง Teams
 
     def test_password_hash(self):
         import users_service as u

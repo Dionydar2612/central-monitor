@@ -769,6 +769,7 @@ def run_once(previous):
                   "sid": s["id"], "kind": s.get("kind"), "value": s.get("value"), "unit": s.get("unit"),
                   "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error"),
                   "low": s.get("low_is_bad"), "notify": s.get("notify", True), "template": s.get("template"),
+                  "rule": (s.get("details") or {}).get("rule") if s.get("kind") == "custom" else None,
                   "host": s.get("host")}
         if new == "ok" and closed and closed[-1]["id"] == s["id"]:
             c = closed[-1]

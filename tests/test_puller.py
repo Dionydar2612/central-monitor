@@ -301,6 +301,25 @@ class TeamsNotify(unittest.TestCase):
             notify._enqueue = orig
         self.assertEqual(sent, ["[WARNING] a: Disk C: เต็ม 85% (เกณฑ์ 80%)", "🔴 a โหลด 9"])
 
+    def test_custom_rule_always_sent_to_its_channel(self):
+        sent = []
+        orig = notify._enqueue
+        notify._enqueue = lambda url, payload, what: sent.append((url, payload["summary"]))
+        cfg = {"notify": {"teams": {"webhook_url": "https://main", "kinds": ["availability"], "levels": ["down"]}},
+               "alert_rules": [{"id": "r1", "teams_url": "https://rule-channel"}, {"id": "r2"}]}
+        try:
+            notify.sensor_events([
+                {"web": "a", "to": "warning", "level": "warning", "kind": "custom", "rule": "r1", "sensor": "Disk D",
+                 "value": 90, "unit": "%", "warning": 85},
+                {"web": "a", "to": "ok", "level": "recovered", "kind": "custom", "rule": "r2", "sensor": "Load", "value": 1},
+                {"web": "a", "to": "warning", "level": "warning", "kind": "memory", "value": 85, "warning": 80},  # ถูกกรอง
+            ], cfg)
+            notify.sensor_events([{"web": "a", "to": "error", "level": "error", "kind": "custom", "rule": "r2",
+                                   "sensor": "Load", "value": 9, "error": 4}], {"alert_rules": [{"id": "r2"}]})  # ไม่มีช่องหลัก
+        finally:
+            notify._enqueue = orig
+        self.assertEqual([u for u, _ in sent], ["https://rule-channel", "https://main"])
+
     def test_disabled_without_url(self):
         self.assertFalse(notify.settings({"notify": {"teams": {"webhook_url": ""}}})["enabled"])
         self.assertFalse(notify.settings({})["enabled"])

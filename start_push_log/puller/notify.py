@@ -84,9 +84,12 @@ def render(template, ctx):
 
 
 def wanted(e, s):
-    """เรื่องนี้ต้องส่งไหม (ชนิด / เครื่อง / กลุ่ม / กฎปิดการส่ง)"""
+    """เรื่องนี้ต้องส่งไหม (ชนิด / เครื่อง / กลุ่ม / กฎปิดการส่ง)
+    กฎที่สร้างเองและเปิด "ส่ง Teams" -> ส่งเสมอ (ไม่ขึ้นกับตัวกรองเรื่อง / เครื่อง / กลุ่มทั้งระบบ)"""
     if e.get("notify") is False:
         return False
+    if e.get("rule"):
+        return True
     if s["kinds"] is not None and str(e.get("kind") or "") not in s["kinds"]:
         return False
     if s["machines"] or s["groups"]:
@@ -304,11 +307,22 @@ def sensor_events(events, config=None):
     """เหตุการณ์จาก sensor_monitor.run_once (สถานะที่ยืนยันแล้ว) -> 1 การ์ดต่อ 1 เรื่อง
     การ์ด = บรรทัดเดียว เช่น "🟡 host-window · RAM ใช้ไป 83% (เกณฑ์ 80%)" + เวลา"""
     s = settings(config)
-    if not s["enabled"] or not events:
+    if not events:
         return
+    cfg = config if config is not None else load_config()
+    rule_urls = {str(r.get("id")): str(r.get("teams_url") or "").strip()
+                 for r in cfg.get("alert_rules") or [] if isinstance(r, dict)}
     for e in events:
         k = _kind(e)
-        if not k or k not in s["levels"] or not wanted(e, s):
+        if not k or not wanted(e, s):
+            continue
+        rid = e.get("rule")
+        if rid:
+            # กฎที่สร้างเอง: ส่งทั้งตอนมีปัญหาและตอนกลับปกติ ไปที่ช่องของกฎ (ถ้าตั้ง) หรือช่องหลัก
+            url = rule_urls.get(rid) or (s["url"] if s["enabled"] else "")
+        else:
+            url = s["url"] if s["enabled"] and k in s["levels"] else ""
+        if not url.startswith("https://"):
             continue
         web = e.get("web") or "?"
         lim = e.get("error") if e.get("to") == "error" else e.get("warning")
@@ -320,7 +334,7 @@ def sensor_events(events, config=None):
         title = render(tpl, ctx) or render(DEFAULT_TEMPLATE, ctx)
         group = e.get("group")
         footer = " · ".join(x for x in (f"กลุ่ม {group}" if group else "", _now_text()) if x)
-        _enqueue(s["url"], build_card(title, k, [], footer), f"{web} {e.get('sensor')} {k}")
+        _enqueue(url, build_card(title, k, [], footer), f"{web} {e.get('sensor')} {k}")
 
 
 # ------------------------------------------------------------------

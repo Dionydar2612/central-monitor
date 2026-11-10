@@ -1215,3 +1215,4 @@ td.bad{color:#e5484d}
 .rltbl tr.off td{opacity:.5}.rltbl td.act{white-space:nowrap;text-align:right}.rltbl td.act .st-btn+.st-btn{margin-left:6px}
 .rltbl td.rlwhat{max-width:320px;word-break:break-word}
 #rlForm{margin-top:14px}
+.rltbl td.rlwarn{color:#c27c00;font-weight:600}
