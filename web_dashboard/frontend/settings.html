@@ -79,22 +79,14 @@
 <div class="st-box">
 <div id="agStatus" style="color:var(--mut)">บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่</div>
 <ol class="agsteps">
-<li><div class="rtin" style="max-width:560px"><input id="agCentral" placeholder="IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก" autocomplete="off"><button class="st-btn sm primary" id="agEnroll" type="button">สร้างคำสั่งติดตั้ง</button></div></li>
-<li>บนเครื่อง Windows เปิด <b>Windows PowerShell</b> แบบ <b>Run as Administrator</b> แล้ววางคำสั่งนี้ (บรรทัดเดียว ไม่ต้องโหลด zip):
-<textarea class="st-code" id="agCmd" readonly rows="4"></textarea>
-<div style="margin-top:6px"><button class="st-btn sm" id="agCopy" type="button">Copy command</button> <span id="agCopyMsg" style="color:var(--mut);font-size:12px"></span> <span id="agExp" style="color:var(--mut);font-size:12px"></span></div></li>
-<li>ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · แก้ไฟล์ log / Event channel ด้านบนแล้วบันทึก เครื่องจะเปลี่ยนตามเองภายใน ~5 นาที</li>
+<li><a class="st-btn sm" id="agZip" href="/api/targets/agent-package.zip" download>Download installer (zip)</a> แตกไฟล์บนเครื่อง Windows (มีสคริปต์ + ใบรับรองของ central) · ถ้าเครื่องออกอินเทอร์เน็ตไม่ได้ วางไฟล์ <code>fluent-bit-5.1.5-win64.zip</code> ไว้ในโฟลเดอร์เดียวกัน</li>
+<li><div class="rtin" style="max-width:520px"><input id="agCentral" placeholder="IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก" autocomplete="off"><button class="st-btn sm" id="agMake" type="button">Make command</button></div></li>
+<li>เปิด PowerShell แบบ <b>Run as Administrator</b> ในโฟลเดอร์ที่แตกไว้ แล้วรัน:
+<textarea class="st-code" id="agCmd" readonly rows="3"></textarea>
+<div style="margin-top:6px"><button class="st-btn sm" id="agCopy" type="button">Copy command</button> <span id="agCopyMsg" style="color:var(--mut);font-size:12px"></span></div></li>
+<li>ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · ทดสอบ: <code>eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"</code></li>
 </ol>
-<div class="rtnote">คำสั่งใช้ได้ 24 ชม. กับเครื่องเดียว (รันซ้ำบนเครื่องเดิมได้) · เครื่องได้ token ของตัวเอง ยกเลิกได้ทีละเครื่อง · เครื่อง Windows ต้องต่อมาที่ central พอร์ต <span id="agEPort">4319</span> (ติดตั้ง) และ <span id="agPort">4318</span> (ส่งข้อมูล) ได้</div>
-<div id="agTok" class="rtnote" style="margin-top:8px"></div>
-<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--mut)">วิธีเดิม (ดาวน์โหลด zip + token กลาง)</summary>
-<ol class="agsteps">
-<li><a class="st-btn sm" id="agZip" href="/api/targets/agent-package.zip" download>Download installer (zip)</a> แตกไฟล์บนเครื่อง Windows · ถ้าเครื่องออกอินเทอร์เน็ตไม่ได้ วางไฟล์ <code>fluent-bit-5.1.5-win64.zip</code> ไว้ในโฟลเดอร์เดียวกัน</li>
-<li><button class="st-btn sm" id="agMake" type="button">Make command</button> แล้วรันในโฟลเดอร์ที่แตกไว้ (PowerShell แบบ Administrator):
-<textarea class="st-code" id="agCmdOld" readonly rows="3"></textarea></li>
-</ol>
-<label class="st-check"><input type="checkbox" id="agLegacy"> ยอมรับ token กลาง (CENTRAL_AGENT_TOKEN) ของเครื่องที่ติดตั้งแบบเดิม — ปิดได้เมื่อทุกเครื่องติดตั้งด้วยคำสั่งบรรทัดเดียวแล้ว</label>
-</details>
+<div class="rtnote">คำสั่งมี token ของ central (เหมือนรหัสผ่าน) อย่าแชร์ในที่สาธารณะ · เครื่อง Windows ต้องต่อออกไปที่ central พอร์ต <span id="agPort">4318</span> ได้</div>
 </div>
 </div>
 

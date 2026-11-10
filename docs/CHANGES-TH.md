@@ -1,6 +1,5 @@
 # เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง (Custom alert rules) + ส่ง Teams ต่อกฎ
 - Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
-- เพิ่มเครื่อง Windows ด้วยคำสั่งบรรทัดเดียว: container ใหม่ `central-agent-enroll` (:4319) · token เฉพาะเครื่อง (Revoke ได้ / ลบเครื่อง = ยกเลิก) · โหลด Fluent Bit + windows_exporter จาก central · ค่าตั้ง log / channel อัปเดตเองทุก 5 นาที · central-agent-gw อ่าน token จาก `data/agent-auth/tokens.txt` (token กลางเดิมยังใช้ได้จนกว่าจะปิด) ดู `docs/WINDOWS-AGENT-TH.md`
 - Daily Summary ใหม่ (Morning / Evening Report): **ห้ามใช้ค่าเฉลี่ย** · ค่าของแต่ละเครื่อง + ค่าสูงสุดในช่วง · Disk แยกไดรฟ์ · UP/DOWN/PAUSE/UNKNOWN · Incident / Downtime / Recovery · Group Summary = ค่าสูงสุดพร้อมชื่อเครื่อง · รอบเย็นเทียบกับรอบเช้า (ดู NOTIFY-TH.md)
 - การ์ด Teams แบบ PRTG: หัวเรื่องสีตามระดับ `Central Monitor Notification: <เครื่อง> [<sensor>] <ระดับ>` + Device / Sensor / Status / Last Value / Threshold / Time (ข้อความของกฎ = บรรทัด Message และข้อความบนแถบแจ้งเตือน)
 - Settings > Notifications: เอาตัวเลือกเรื่องที่ส่ง / เฉพาะเครื่อง / กลุ่ม / ข้อความการ์ด ออก (ใช้ Custom alert rules แทน) · ค่าเก่าที่บันทึกไว้ไม่ถูกใช้ และจะถูกลบเมื่อกดบันทึกครั้งถัดไป

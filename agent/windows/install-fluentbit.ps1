@@ -6,9 +6,7 @@
   Fluent Bit อ่านจาก 127.0.0.1 แล้วส่งต่อแบบเข้ารหัส -> ไม่มีใครในวง network ดึง/ดักข้อมูลจากเครื่องนี้ได้
 
 .EXAMPLE
-  # วิธีง่ายสุด: หน้า Settings > เครื่อง Windows > "สร้างคำสั่งติดตั้ง" -> วางคำสั่งบรรทัดเดียวใน PowerShell (Admin)
-  #   (โหลดสคริปต์นี้ + ไฟล์ติดตั้งจาก central เอง, token เฉพาะเครื่อง, ค่าตั้งอัปเดตเองทุก 5 นาที)
-  # วิธีเดิม: รันใน PowerShell แบบ Administrator (คำสั่งเต็มคัดลอกได้จากหน้า Settings ของ central)
+  # รันใน PowerShell แบบ Administrator (คำสั่งเต็มคัดลอกได้จากหน้า Settings ของ central)
   powershell -ExecutionPolicy Bypass -File .\install-fluentbit.ps1 `
       -Central 10.0.0.5 -Token <token> -Name win-app-01 `
       -Logs "C:\inetpub\logs\LogFiles\*\*.log;D:\app\logs\*.log" -Channels "System,Application"
@@ -23,8 +21,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Central = "",                                     # IP หรือชื่อของเครื่อง central (ที่เครื่องนี้มองเห็น)
-    [string] $Token = "",                                       # token เฉพาะเครื่อง (คำสั่งบรรทัดเดียว) หรือ CENTRAL_AGENT_TOKEN
+    [Parameter(Mandatory = $true)] [string] $Central,          # IP หรือชื่อของเครื่อง central (ที่เครื่องนี้มองเห็น)
+    [Parameter(Mandatory = $true)] [string] $Token,            # CENTRAL_AGENT_TOKEN ใน docker/.env ของ central
     [string] $Name = "",                                        # ชื่อเครื่องใน central (ต้องตรงกับที่เพิ่มในหน้า Settings)
     [int]    $Port = 4318,
     [string] $Logs = "",                                        # path ไฟล์ log คั่นด้วย ; (wildcard ได้)
@@ -35,11 +33,7 @@ param(
     [switch] $SkipCertCheck,                                    # ไม่ตรวจใบรับรอง (ยังเข้ารหัส) ใช้เมื่อชื่อ/IP ไม่ตรงกับใบรับรอง
     [string] $ExporterVersion = "0.32.1",                       # เวอร์ชัน windows_exporter
     [string] $ExporterExe = "",                                 # ไฟล์ windows_exporter-<version>-amd64.exe (ใช้แทนการดาวน์โหลด)
-    [switch] $NoExporter,                                       # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
-    [int]    $EnrollPort = 0,                                   # พอร์ต central-agent-enroll (มี = ติดตั้งตัวอัปเดตค่าตั้งอัตโนมัติ)
-    [string] $Thumbprint = "",                                  # SHA1 ของใบรับรอง central (ใช้ตอนถามค่าตั้ง)
-    [string] $ConfigHash = "",                                  # รุ่นของค่าตั้ง (log / channel) ที่ central ให้มา
-    [switch] $ConfigOnly                                        # เขียน config ใหม่จาก agent.json + ค่าที่ส่งมา แล้วเริ่ม agent ใหม่ (ไม่ติดตั้งโปรแกรม)
+    [switch] $NoExporter                                        # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,24 +50,6 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
           [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { throw "ต้องรันใน PowerShell แบบ Run as Administrator" }
 
-# ค่าที่บันทึกไว้ตอนติดตั้ง (ใช้กับ -ConfigOnly และการอัปเดตค่าตั้งอัตโนมัติ)
-$StateFile = Join-Path $DataDir "agent.json"
-$saved = $null
-if (Test-Path $StateFile) { try { $saved = Get-Content $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $saved = $null } }
-if ($ConfigOnly) {
-    if (-not $saved) { throw "ไม่พบ $StateFile (ยังไม่เคยติดตั้งด้วยสคริปต์รุ่นนี้) รันติดตั้งเต็มก่อน" }
-    if (-not $Central) { $Central = $saved.central }
-    if (-not $Token) { $Token = $saved.token }
-    if (-not $Name) { $Name = $saved.name }
-    if (-not $PSBoundParameters.ContainsKey("Port")) { $Port = [int]$saved.port }
-    if (-not $PSBoundParameters.ContainsKey("Logs")) { $Logs = $saved.logs }
-    if (-not $PSBoundParameters.ContainsKey("Channels")) { $Channels = $saved.channels }
-    if (-not $EnrollPort) { $EnrollPort = [int]$saved.enroll_port }
-    if (-not $Thumbprint) { $Thumbprint = $saved.thumbprint }
-    if ($saved.skip_cert) { $SkipCertCheck = [switch]$true }
-}
-if (-not $Central -or -not $Token) { throw "ต้องระบุ -Central และ -Token (หรือใช้คำสั่งบรรทัดเดียวจากหน้า Settings)" }
-
 if (-not $Name) { $Name = $env:COMPUTERNAME.ToLower() }
 if ($Name -notmatch '^[a-z0-9][a-z0-9-]{0,39}$') {
     throw "ชื่อเครื่อง '$Name' ใช้ไม่ได้ (a-z 0-9 - เท่านั้น ยาวไม่เกิน 40) ระบุ -Name ให้ตรงกับที่เพิ่มในหน้า Settings"
@@ -83,14 +59,6 @@ $channelList = (@($Channels -split ',' | ForEach-Object { $_.Trim() } | Where-Ob
 
 Say "เครื่อง: $Name  ->  central: ${Central}:$Port"
 
-$ExporterPort = 9182
-$FluentExe = Join-Path $InstallDir "bin\fluent-bit.exe"
-$UseExporter = $false
-if ($ConfigOnly) {
-    Say "อัปเดตค่าตั้ง (ไม่ติดตั้งโปรแกรมใหม่)"
-    $UseExporter = [bool]$saved.use_exporter
-    if (-not (Test-Path $FluentExe)) { throw "ไม่พบ $FluentExe" }
-} else {
 # ---------------------------------------------------------------- 1) ทดสอบว่าต่อ central ได้
 Say "1/7 ทดสอบการเชื่อมต่อ ${Central}:$Port"
 $tcp = Test-NetConnection -ComputerName $Central -Port $Port -WarningAction SilentlyContinue
@@ -295,16 +263,14 @@ if ($NoExporter) {
     }
 }
 
-}   # end if (-not $ConfigOnly)
-
 # ---------------------------------------------------------------- 4) ใบรับรองของ central
 Say "4/7 ใบรับรองของ central"
 New-Item -ItemType Directory -Force -Path $DataDir, (Join-Path $DataDir "buffer") | Out-Null
 if (-not $CaFile) { $CaFile = Join-Path $Here "central-ca.pem" }
 $CaDest = Join-Path $DataDir "central-ca.pem"
 if (Test-Path $CaFile) {
-    if ((Resolve-Path $CaFile).Path -ne $CaDest) { Copy-Item $CaFile $CaDest -Force }
-} elseif (-not $SkipCertCheck -and -not (Test-Path $CaDest)) {
+    Copy-Item $CaFile $CaDest -Force
+} elseif (-not $SkipCertCheck) {
     throw "ไม่พบ central-ca.pem (ดาวน์โหลดชุดติดตั้งจากหน้า Settings) หรือใช้ -SkipCertCheck"
 }
 
@@ -557,8 +523,6 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---------------------------------------------------------------- 7) Windows service
 Say "6/7 ติดตั้ง Windows service '$ServiceName'"
-$cur = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($cur -and $cur.Status -ne 'Stopped') { Stop-Service $ServiceName -Force; Start-Sleep 2 }   # ให้อ่าน config ใหม่
 $bin = "`"$FluentExe`" -c `"$ConfFile`""
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     sc.exe config $ServiceName binPath= $bin start= auto | Out-Null
@@ -595,36 +559,6 @@ $logFile = Join-Path $DataDir "fluent-bit.log"
 if (Test-Path $logFile) {
     $bad = Select-String -Path $logFile -Pattern "\[error\]|\[ warn\]" | Select-Object -Last 5
     if ($bad) { Warn "พบข้อความใน $logFile :"; $bad | ForEach-Object { Write-Host "   $($_.Line)" } }
-}
-
-# ---------------------------------------------------------------- บันทึกค่า + ตัวอัปเดตค่าตั้งอัตโนมัติ
-$state = [ordered]@{
-    central = $Central; port = $Port; token = $Token; name = $Name; logs = $Logs; channels = $Channels
-    skip_cert = [bool]$SkipCertCheck; use_exporter = [bool]$UseExporter; enroll_port = $EnrollPort
-    thumbprint = $Thumbprint; config_hash = $(if ($ConfigHash) { $ConfigHash } elseif ($saved) { $saved.config_hash } else { "" })
-    updated = (Get-Date).ToString("s")
-}
-[IO.File]::WriteAllText($StateFile, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
-
-$SyncTask = "CentralMonitorAgentSync"
-$SyncScript = Join-Path $Here "cm-agent-sync.ps1"
-if (-not $ConfigOnly -and $EnrollPort -gt 0 -and $Thumbprint -and (Test-Path $SyncScript)) {
-    try {
-        $act = New-ScheduledTaskAction -Execute "powershell.exe" `
-            -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$SyncScript`""
-        $trg = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 5) `
-            -RepetitionDuration (New-TimeSpan -Days 3650)
-        $pr = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-        $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable -MultipleInstances IgnoreNew
-        Register-ScheduledTask -TaskName $SyncTask -Action $act -Trigger $trg -Principal $pr -Settings $set -Force | Out-Null
-        Write-Host "   อัปเดตค่าตั้งอัตโนมัติ: scheduled task '$SyncTask' ทุก 5 นาที (แก้ log / channel ในหน้า Settings ได้เลย)"
-    } catch {
-        Warn "สร้าง scheduled task '$SyncTask' ไม่ได้: $($_.Exception.Message) (แก้ค่าตั้งแล้วต้องรันคำสั่งติดตั้งซ้ำ)"
-    }
-}
-if ($ConfigOnly) {
-    Write-Host "อัปเดตค่าตั้งของ '$Name' แล้ว" -ForegroundColor Green
-    return
 }
 Write-Host ""
 Write-Host "เสร็จแล้ว - เครื่อง '$Name' จะขึ้นสถานะใน Central Monitor ภายใน ~1 นาที" -ForegroundColor Green

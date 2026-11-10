@@ -181,7 +181,7 @@ WAS_RUNNING="$( cd docker && $DOCKER compose ps -q central-api 2>/dev/null || tr
 ( cd docker && $DOCKER compose up -d --build )
 if [ -n "$WAS_RUNNING" ]; then
   # central-api mount ไฟล์ .pub เดี่ยว ๆ - สร้างไฟล์ใหม่แล้ว container เก่ายังเห็นไฟล์เดิม ต้องสร้าง container ใหม่
-  ( cd docker && $DOCKER compose up -d --force-recreate --no-deps central-api central-puller central-agent-enroll )
+  ( cd docker && $DOCKER compose up -d --force-recreate --no-deps central-api central-puller )
   # ใบรับรองของ agent อาจเปลี่ยน -> คัดลอกใหม่แล้วเริ่ม gateway ใหม่
   ( cd docker && $DOCKER compose up -d --force-recreate buffer-init central-agent-gw ) || true
   # prometheus.yml อาจเปลี่ยน (เช่น job ping ใหม่) -> Prometheus อ่าน config ใหม่เฉพาะตอนเริ่ม

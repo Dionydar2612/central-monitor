@@ -16,11 +16,9 @@
 # =====================================================================
 
 extensions:
-  # token ที่ยอมรับ: data/agent-auth/tokens.txt บรรทัดละ 1 ตัว (token เฉพาะเครื่องจากคำสั่งบรรทัดเดียว
-  # + CENTRAL_AGENT_TOKEN เดิม ถ้ายังเปิดไว้) หน้า Settings เขียนไฟล์นี้ gateway อ่านใหม่เองเมื่อไฟล์เปลี่ยน
   bearertokenauth/agents:
     scheme: Bearer
-    filename: /run/agent-auth/tokens.txt
+    token: ${env:CENTRAL_AGENT_TOKEN}
   basicauth/opensearch:
     client_auth:
       username: admin
