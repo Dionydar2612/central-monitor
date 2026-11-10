@@ -77,6 +77,7 @@ import checks_service
 import sensors_service
 import users_service
 import retention_service
+import agent_auth
 import agent_service
 import alert_settings_service
 import notify_service
@@ -112,6 +113,7 @@ from targets_service import ValidationError
 
 # static_url_path="" : ไฟล์ใน frontend/ เสิร์ฟที่ราก เช่น /dashboard.js
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
+agent_auth.init()          # tokens.txt ของ central-agent-gw ตรงกับ CENTRAL_AGENT_TOKEN ปัจจุบัน
 
 app.secret_key = settings.SECRET_KEY
 
@@ -195,6 +197,9 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
     ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
+    ("POST", re.compile(r"^/api/targets/agent-auth/legacy$"), "agent.legacy_token", ("enabled",)),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/enroll$"), "agent.enroll_command", ("central",)),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/revoke-token$"), "agent.revoke_token", ()),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
     ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
@@ -337,7 +342,42 @@ def agent_setup(name):
     if not re.match(r"^[A-Za-z0-9.:-]{1,253}$", central):
         return jsonify({"error": "central ต้องเป็น IP หรือชื่อเครื่อง"}), 400
     return jsonify({**agent_service.setup_info(t, central), "central": central,
-                    "status": agent_service.status(name)})
+                    "status": agent_service.status(name), "token": agent_auth.token_info(name),
+                    "legacy": agent_auth.legacy_enabled(), "enroll_port": agent_auth.ENROLL_PORT,
+                    "thumbprint_ok": bool(agent_auth.thumbprint())})
+
+
+@app.post("/api/targets/<name>/enroll")
+def agent_enroll(name):
+    """คำสั่งติดตั้งบรรทัดเดียว (enroll code ใช้ได้ 24 ชม. / 1 เครื่อง) -> token เฉพาะเครื่อง"""
+    t = agent_service.agent_target(name)
+    if not t:
+        return jsonify({"error": "ไม่พบเครื่อง agent ชื่อนี้"}), 404
+    central = str((request.get_json(silent=True) or {}).get("central") or "").strip().strip("[]")
+    if not re.match(r"^[A-Za-z0-9.:-]{1,253}$", central):
+        return jsonify({"error": "ใส่ IP หรือชื่อของ central ที่เครื่อง Windows ใช้เรียก"}), 400
+    if not agent_auth.thumbprint():
+        return jsonify({"error": "ยังไม่มีใบรับรอง keys/agent-tls (รัน cm-update)"}), 500
+    from datetime import datetime, timezone
+    code, exp = agent_auth.create_code(name, central)
+    return jsonify({"command": agent_auth.one_liner(central, code), "code": code,
+                    "expires": datetime.fromtimestamp(exp, timezone.utc).isoformat(),
+                    "enroll_port": agent_auth.ENROLL_PORT, "agent_port": agent_auth.AGENT_PORT})
+
+
+@app.post("/api/targets/<name>/revoke-token")
+def agent_revoke(name):
+    """ยกเลิก token เฉพาะเครื่อง (agent เครื่องนั้นส่งข้อมูลไม่ได้ภายในไม่กี่วินาที)"""
+    if not agent_auth.revoke(name):
+        return jsonify({"error": "เครื่องนี้ไม่มี token เฉพาะเครื่อง"}), 404
+    return jsonify({"status": "ok"})
+
+
+@app.post("/api/targets/agent-auth/legacy")
+def agent_legacy():
+    """เปิด / ปิด token กลาง CENTRAL_AGENT_TOKEN (เครื่องที่ติดตั้งแบบเดิม)"""
+    agent_auth.set_legacy(bool((request.get_json(silent=True) or {}).get("enabled")))
+    return jsonify({"legacy": agent_auth.legacy_enabled()})
 
 
 @app.get("/api/targets/agent-package.zip")
@@ -1020,6 +1060,10 @@ def targets_delete(name):
         return _config_error(e)
     if not deleted:
         return jsonify({"error": "not found"}), 404
+    try:
+        agent_auth.revoke(name)                 # ลบเครื่อง -> token ของเครื่องนั้นใช้ไม่ได้ทันที
+    except OSError as e:
+        print(f"[AGENT-AUTH] revoke {name}: {e!r}")
     return jsonify({"status": "ok"})
 
 

@@ -150,8 +150,16 @@ services:
         mkdir -p /data/buffer/.otel-storage && chown -R 10001:10001 /data/buffer/.otel-storage && chmod 755 /data/buffer &&
         if [ -f /agent-src/cert.pem ] && [ -f /agent-src/key.pem ]; then
         cp /agent-src/cert.pem /agent-src/key.pem /agent-tls/ && chown 10001:10001 /agent-tls/*.pem && chmod 400 /agent-tls/key.pem;
-        else echo "[WARN] keys/agent-tls/cert.pem ไม่มี -> central-agent-gw เริ่มไม่ได้ (รัน install.sh --keep)"; fi
+        else echo "[WARN] keys/agent-tls/cert.pem ไม่มี -> central-agent-gw เริ่มไม่ได้ (รัน install.sh --keep)"; fi &&
+        mkdir -p /agent-auth &&
+        if [ ! -s /agent-auth/tokens.txt ]; then
+        echo "$${CENTRAL_AGENT_TOKEN:-$$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')} # legacy CENTRAL_AGENT_TOKEN" > /agent-auth/tokens.txt; fi &&
+        chown -R $${HOST_UID:-1000}:$${HOST_GID:-1000} /agent-auth && chmod 711 /agent-auth && chmod 644 /agent-auth/tokens.txt
+    env_file:
+      - .env          # CENTRAL_AGENT_TOKEN, HOST_UID (token ตั้งต้นของ central-agent-gw)
     volumes:
+      # token ที่ central-agent-gw ยอมรับ (token เฉพาะเครื่อง + token กลางเดิม) ดู web_dashboard/backend/agent_auth.py
+      - ../data/agent-auth:/agent-auth
       - ../data/buffer:/data/buffer
       # ใบรับรองของ agent-gateway: คัดลอกจาก keys/agent-tls ให้ uid ของ otel (10001) อ่านได้
       - ../keys/agent-tls:/agent-src:ro
@@ -216,6 +224,7 @@ services:
     volumes:
       - ../start_push_log/otel/agent-gateway.yaml:/etc/otelcol/config.yaml:ro
       - agent-tls:/run/agent-tls:ro
+      - ../data/agent-auth:/run/agent-auth:ro      # tokens.txt (อ่านใหม่เองเมื่อเปลี่ยน)
     env_file:
       - .env          # CENTRAL_AGENT_TOKEN, OPENSEARCH_ADMIN_PASSWORD
     environment:
@@ -269,6 +278,7 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+    image: central-monitor-web:local        # central-agent-enroll ใช้ image นี้ร่วม
     container_name: central-api
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"   # ไม่รันเป็น root -> ไฟล์ใน data/ config/ เป็นของ user บน host
     hostname: central-api
@@ -336,6 +346,56 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # ---------------------------------------------------------------
+  # central-agent-enroll : ให้เครื่อง Windows ติดตั้ง agent ด้วยคำสั่งบรรทัดเดียว (HTTPS :4319)
+  #   ใช้ image เดียวกับ central-api แต่เปิดแค่ /agent/* (ไม่มีหน้าเว็บ / login)
+  #   ทุกคำขอต้องมี enroll code (สร้างในหน้า Settings อายุ 24 ชม.) หรือ token ของเครื่อง
+  #   ใบรับรอง = keys/agent-tls (ตัวเดียวกับ :4318)  ไฟล์ติดตั้งเก็บที่ data/agent-files
+  #   ไม่ใช้: CENTRAL_ENROLL_BIND=127.0.0.1
+  # ---------------------------------------------------------------
+  central-agent-enroll:
+    image: central-monitor-web:local
+    pull_policy: never
+    container_name: central-agent-enroll
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    hostname: agent-enroll
+    command:
+      - gunicorn
+      - --chdir
+      - /app
+      - --bind
+      - 0.0.0.0:4319
+      - --workers
+      - "1"
+      - --threads
+      - "8"
+      - --timeout
+      - "300"
+      - enroll_app:app
+    working_dir: /app
+    depends_on:
+      - central-api
+      - buffer-init
+    env_file:
+      - .env          # CENTRAL_AGENT_TOKEN
+    environment:
+      TZ: Asia/Bangkok
+      CENTRAL_TLS_CERT: /run/agent-tls/cert.pem       # gunicorn.conf.py เปิด HTTPS ด้วยใบรับรองของ agent
+      CENTRAL_TLS_KEY: /run/agent-tls/key.pem
+      CENTRAL_ENROLL_PORT: ${CENTRAL_ENROLL_PORT:-4319}
+      CENTRAL_AGENT_PORT: ${CENTRAL_AGENT_PORT:-4318}
+    networks:
+      - central-net
+    ports:
+      - "${CENTRAL_ENROLL_BIND:-${CENTRAL_AGENT_BIND:-0.0.0.0}}:${CENTRAL_ENROLL_PORT:-4319}:4319"
+    volumes:
+      - ../data:/data
+      - ../config:/app/config:ro
+      - ../agent:/app/agent:ro
+      - ../keys/agent-tls:/run/agent-tls:ro
+    restart: unless-stopped
+    logging: *default-logging
 
 
   # ===================================================================

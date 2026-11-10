@@ -158,12 +158,16 @@ async function makeAgentCommand() {
     try { localStorage.setItem("cm.agentCentral", central); } catch (e) { /* ignore */ }
     try {
         const d = await api("GET", `/api/targets/${encodeURIComponent(name)}/agent-setup${central ? "?central=" + encodeURIComponent(central) : ""}`);
-        $("agCmd").value = d.command;
+        $("agCmdOld").value = d.command;
         $("agPort").textContent = d.port;
+        $("agEPort").textContent = d.enroll_port || "4319";
+        $("agLegacy").checked = d.legacy !== false;
+        agentTokenLine(name, d.token);
         if (!$("agCentral").value) $("agCentral").value = d.central;
         const st = d.status || {};
         const warn = [!d.token_set && "ยังไม่มี CENTRAL_AGENT_TOKEN ใน docker/.env (รัน cm-update)",
                       !d.ca_available && "ยังไม่มีใบรับรอง keys/agent-tls (รัน cm-update)"].filter(Boolean);
+        if (!d.token_set) warn.shift();          // วิธีใหม่ไม่ต้องใช้ token กลาง
         $("agStatus").textContent = (st.online ? `✓ agent ส่งข้อมูลอยู่ · last seen ${new Date(st.last_seen).toLocaleString("en-GB")}`
             : st.last_seen ? `⚠ ไม่ได้รับข้อมูลจาก agent ตั้งแต่ ${new Date(st.last_seen).toLocaleString("en-GB")}`
             : "ยังไม่ได้รับข้อมูลจาก agent (ยังไม่ได้ติดตั้ง หรือเครื่องต่อมาไม่ได้)") + (warn.length ? " · " + warn.join(" · ") : "");
@@ -171,11 +175,40 @@ async function makeAgentCommand() {
     } catch (e) { if (e.message !== "auth") $("agStatus").textContent = "สร้างคำสั่งไม่สำเร็จ: " + e.message; }
 }
 
+/* token เฉพาะเครื่อง: แสดงสถานะ + ปุ่ม Revoke */
+function agentTokenLine(name, tok) {
+    const box = $("agTok"); box.textContent = "";
+    if (!tok) { box.append("เครื่องนี้ยังไม่มี token เฉพาะเครื่อง (ยังไม่ได้ติดตั้งด้วยคำสั่งบรรทัดเดียว)"); return; }
+    const t = v => v ? new Date(v * 1000).toLocaleString("en-GB") : "-";
+    const b = el("button", { class: "st-btn sm", type: "button" }, "Revoke token");
+    b.onclick = async () => {
+        if (!confirm(`ยกเลิก token ของ ${name}? agent เครื่องนี้จะส่งข้อมูลไม่ได้จนกว่าจะติดตั้งใหม่`)) return;
+        try { await api("POST", `/api/targets/${encodeURIComponent(name)}/revoke-token`, {}); agentTokenLine(name, null); }
+        catch (e) { if (e.message !== "auth") alert("ยกเลิกไม่สำเร็จ: " + e.message); }
+    };
+    box.append(`token เฉพาะเครื่อง: ติดตั้งจาก ${tok.host || "-"} เมื่อ ${t(tok.created)} · ถามค่าตั้งล่าสุด ${t(tok.last_sync)} `, b);
+}
+
+async function enrollCommand() {
+    const name = S.editing;
+    if (!name) { $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วกด Install command ที่แถวของเครื่องนี้"; return; }
+    const central = $("agCentral").value.trim();
+    if (!central) { $("agCentral").focus(); $("agStatus").textContent = "ใส่ IP หรือชื่อของ central ที่เครื่อง Windows ใช้เรียก"; return; }
+    try { localStorage.setItem("cm.agentCentral", central); } catch (e) { /* ignore */ }
+    try {
+        const d = await api("POST", `/api/targets/${encodeURIComponent(name)}/enroll`, { central });
+        $("agCmd").value = d.command;
+        $("agEPort").textContent = d.enroll_port; $("agPort").textContent = d.agent_port;
+        $("agExp").textContent = `ใช้ได้ถึง ${new Date(d.expires).toLocaleString("en-GB")}`;
+        $("agCmd").select();
+    } catch (e) { if (e.message !== "auth") $("agStatus").textContent = "สร้างคำสั่งไม่สำเร็จ: " + e.message; }
+}
+
 function openForm(t) {
     S.editing = t ? t.name : null; S.scanned = []; S.hostKeyKnown = !!(t && t.host_key_known);
     setType(t ? (t.type || "ssh") : "ssh");
     $("f_type").disabled = !!t;
-    $("agCmd").value = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
+    $("agCmd").value = ""; $("agCmdOld").value = ""; $("agExp").textContent = ""; $("agTok").textContent = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
     $("agCentral").value = agentCentralGuess();
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
     $("a_logs").value = t && t.agent ? (t.agent.logs || []).join("\n") : "";
@@ -385,9 +418,10 @@ async function saveAgent(body) {
         S.editing = body.name || S.editing;
         $("f_name").disabled = true; $("f_type").disabled = true;
         $("formTitle").textContent = `Edit target: ${S.editing}`;
-        say("formMsg", `บันทึก ${S.editing} แล้ว — ติดตั้ง agent ตามขั้นตอนด้านบน`, "ok");
+        say("formMsg", `บันทึก ${S.editing} แล้ว — กด "สร้างคำสั่งติดตั้ง" แล้ววางคำสั่งบนเครื่อง Windows`, "ok");
         await loadTargets();
         await makeAgentCommand();
+        if ($("agCentral").value.trim() && !$("agCmd").value) await enrollCommand();
         $("agCmd").scrollIntoView({ behavior: "smooth", block: "center" });
     } catch (e) {
         if (e.message === "auth") return;
@@ -729,6 +763,14 @@ document.addEventListener("DOMContentLoaded", () => {
     $("n_clear").onclick = () => { if (confirm("ลบ webhook URL? (หยุดส่งแจ้งเตือนไป Teams)")) saveNotify({ webhook_url: "-", enabled: false }); };
     $("f_type").addEventListener("change", e => setType(e.target.value));
     $("agMake").onclick = makeAgentCommand;
+    $("agEnroll").onclick = enrollCommand;
+    $("agLegacy").onchange = async e => {
+        if (!e.target.checked && !confirm("ปิด token กลาง? เครื่องที่ติดตั้งแบบเดิม (zip) จะส่งข้อมูลไม่ได้จนกว่าจะติดตั้งใหม่ด้วยคำสั่งบรรทัดเดียว")) {
+            e.target.checked = true; return;
+        }
+        try { const d = await api("POST", "/api/targets/agent-auth/legacy", { enabled: e.target.checked }); e.target.checked = d.legacy; }
+        catch (err) { e.target.checked = !e.target.checked; if (err.message !== "auth") alert("บันทึกไม่สำเร็จ: " + err.message); }
+    };
     $("agCopy").onclick = async () => {
         const t = $("agCmd"); if (!t.value) return; t.select();
         try { await navigator.clipboard.writeText(t.value); } catch (e) { document.execCommand("copy"); }

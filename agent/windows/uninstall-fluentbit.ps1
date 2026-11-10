@@ -7,6 +7,11 @@
 param([switch] $Purge, [switch] $KeepExporter)
 $ErrorActionPreference = "Stop"
 $ServiceName = "cm-agent"
+# ตัวอัปเดตค่าตั้งอัตโนมัติ
+if (Get-ScheduledTask -TaskName "CentralMonitorAgentSync" -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName "CentralMonitorAgentSync" -Confirm:$false
+    Write-Host "ลบ scheduled task CentralMonitorAgentSync แล้ว"
+}
 # windows_exporter ที่ติดตั้งโดยสคริปต์นี้ (service cm-exporter) ถูกลบพร้อม agent เสมอ
 if (Get-Service -Name "cm-exporter" -ErrorAction SilentlyContinue) {
     Stop-Service "cm-exporter" -Force -ErrorAction SilentlyContinue
