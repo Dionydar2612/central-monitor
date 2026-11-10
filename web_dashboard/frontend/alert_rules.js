@@ -8,7 +8,7 @@
 
 const RL = { data: null, rules: [], editing: null };
 
-const RL_STATE = ["service", "process", "port_listen", "tcp_port", "http_url"];   // ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก
+const RL_STATE = ["service", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker"];   // ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก
 const RL_PROC = ["process", "process_cpu", "process_mem"];
 function rlMetric(key) { return ((RL.data && RL.data.metrics) || []).find(m => m.key === key) || { label: key, unit: "" }; }
 
@@ -28,6 +28,8 @@ function rlCond(r) {
     if (r.metric === "port_listen") return `พอร์ต ${r.port} ไม่เปิดรับ → ${lvT}`;
     if (r.metric === "tcp_port") return `ต่อพอร์ต ${r.port} ไม่ได้ → ${lvT}`;
     if (r.metric === "http_url") return `ไม่ตอบ / HTTP ≥ 400 → ${lvT}`;
+    if (r.metric === "http_local") return `ไม่ตอบ / HTTP ≥ 500 → ${lvT}`;
+    if (r.metric === "docker") return `${r.container} ไม่ running → ${lvT}`;
     const sym = r.op === "<" ? "≤" : "≥", out = [];
     if (r.warning !== undefined && r.warning !== null) out.push(`W ${sym} ${r.warning}${u}`);
     if (r.error !== undefined && r.error !== null) out.push(`E ${sym} ${r.error}${u}`);
@@ -46,7 +48,7 @@ function rlRender() {
         on.onchange = () => { r.enabled = on.checked; rlSave(`${on.checked ? "เปิด" : "ปิด"}กฎ ${r.name} แล้ว`); };
         const m = rlMetric(r.metric);
         const what = m.label + (r.mount ? ` · ${r.mount}` : "") + (r.metric === "promql" ? ` · ${r.promql}` : "")
-            + (RL_PROC.includes(r.metric) ? ` · ${r.process}` : "") + (r.metric === "http_url" ? ` · ${r.url}` : "");
+            + (RL_PROC.includes(r.metric) ? ` · ${r.process}` : "") + (["http_url", "http_local"].includes(r.metric) ? ` · ${r.url}` : "") + (r.metric === "docker" ? ` · ${r.container}` : "");
         tb.append(el("tr", { class: r.enabled === false ? "off" : "" },
             el("td", {}, on), el("td", {}, el("b", {}, r.name)), el("td", { class: "rlwhat" }, what),
             el("td", {}, rlWhere(r)), el("td", {}, rlCond(r)), el("td", {}, `${r.for_minutes} นาที`),
@@ -84,7 +86,8 @@ function rlShowFields() {
     document.querySelectorAll("#rlForm .rl-service").forEach(n => { n.hidden = m.key !== "service"; });
     document.querySelectorAll("#rlForm .rl-process").forEach(n => { n.hidden = !RL_PROC.includes(m.key); });
     document.querySelectorAll("#rlForm .rl-port").forEach(n => { n.hidden = !["port_listen", "tcp_port"].includes(m.key); });
-    document.querySelectorAll("#rlForm .rl-url").forEach(n => { n.hidden = m.key !== "http_url"; });
+    document.querySelectorAll("#rlForm .rl-url").forEach(n => { n.hidden = !["http_url", "http_local"].includes(m.key); });
+    document.querySelectorAll("#rlForm .rl-container").forEach(n => { n.hidden = m.key !== "docker"; });
     document.querySelectorAll("#rlForm .rl-state").forEach(n => { n.hidden = !RL_STATE.includes(m.key); });
     document.querySelectorAll("#rlForm .rl-promql").forEach(n => { n.hidden = m.key !== "promql"; });
     document.querySelectorAll("#rlForm .rl-num").forEach(n => { n.hidden = RL_STATE.includes(m.key); });
@@ -102,7 +105,7 @@ function rlOpen(i) {
     $("rl_title").textContent = i === null ? "กฎใหม่" : `แก้กฎ: ${r.name}`;
     $("rl_name").value = r.name || ""; $("rl_metric").value = r.metric; $("rl_enabled").checked = r.enabled !== false;
     $("rl_mount").value = r.mount || ""; $("rl_service").value = r.service || "";
-    $("rl_process").value = r.process || ""; $("rl_port").value = r.port || ""; $("rl_url").value = r.url || ""; $("rl_level").value = r.level || "error";
+    $("rl_process").value = r.process || ""; $("rl_port").value = r.port || ""; $("rl_url").value = r.url || ""; $("rl_container").value = r.container || ""; $("rl_level").value = r.level || "error";
     $("rl_promql").value = r.promql || ""; $("rl_unit").value = r.unit || "";
     $("rl_op").value = r.op || ">"; $("rl_warn").value = r.warning ?? ""; $("rl_err").value = r.error ?? "";
     $("rl_for").value = r.for_minutes ?? 3; $("rl_os").value = r.os || "any"; $("rl_notify").checked = r.notify !== false;
@@ -131,7 +134,8 @@ function rlRead() {
     if (m === "service") r.service = $("rl_service").value.trim();
     if (RL_PROC.includes(m)) r.process = $("rl_process").value.trim();
     if (m === "port_listen" || m === "tcp_port") r.port = $("rl_port").value.trim();
-    if (m === "http_url") r.url = $("rl_url").value.trim();
+    if (m === "http_url" || m === "http_local") r.url = $("rl_url").value.trim();
+    if (m === "docker") r.container = $("rl_container").value.trim();
     if (RL_STATE.includes(m)) r.level = $("rl_level").value;
     else { r.op = $("rl_op").value; r.warning = $("rl_warn").value.trim(); r.error = $("rl_err").value.trim(); }
     if (m === "promql") { r.promql = $("rl_promql").value.trim(); r.unit = $("rl_unit").value.trim(); }

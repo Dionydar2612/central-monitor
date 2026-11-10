@@ -34,10 +34,13 @@ METRICS = {   # key: (ชื่อ, หน่วย, ต่อไดรฟ์?, 
     "port_listen": ("พอร์ตไม่เปิดรับบนเครื่อง (Windows)", "", False, ">", "windows"),
     "tcp_port": ("พอร์ตเชื่อมต่อจาก central ไม่ได้", "", False, ">", "any"),
     "http_url": ("เว็บของโปรแกรมไม่ตอบ (HTTP จาก central)", "", False, ">", "any"),
+    "http_local": ("เว็บบนเครื่องไม่ตอบ (localhost)", "", False, ">", "any"),
+    "docker": ("Docker container ไม่ทำงาน", "", False, ">", "any"),
     "promql": ("PromQL เอง", "", False, ">", "any"),
 }
 NAME_RE = re.compile(r"^[^\x00-\x1f]{1,60}$")
-STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url")   # ไม่มีเกณฑ์ตัวเลข ผิดปกติ = level
+STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker")
+CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")   # ไม่มีเกณฑ์ตัวเลข ผิดปกติ = level
 PROCESS_RE = re.compile(r"^[A-Za-z0-9_.+ ()-]{1,80}$")
 SERVICE_RE = re.compile(r"^[A-Za-z0-9_.$@ -]{1,80}$")
 MOUNT_RE = re.compile(r"^[^\x00-\x1f\"']{1,120}$")
@@ -60,7 +63,7 @@ def list_rules():
         url = str(r.pop("teams_url", "") or "")
         r["teams_url_set"] = bool(url)
         r["teams_url_hint"] = notify_service._hint(url)
-    targets = [{"name": t.get("name"), "group": t.get("group") or "",
+    targets = [{"name": t.get("name"), "group": t.get("group") or "", "host": t.get("host") or "",
                 "os": "windows" if str(t.get("type") or "") == "agent" else "linux"}
                for t in targets_service._plain(doc.get("targets") or []) if isinstance(t, dict) and t.get("name")]
     groups = sorted({t["group"] for t in targets if t["group"]})
@@ -134,6 +137,18 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
         if not re.match(r"^https?://[^\s\"'<>]{1,500}$", u):
             errors["url"] = "ใส่ URL เช่น http://{host}:8080/health ({host} = Host ของเครื่อง)"
         rule["url"] = u
+    if metric == "http_local":
+        u = str(data.get("url") or "").strip()
+        if u and not re.match(r"^https?://", u):
+            u = "http://" + u
+        if not re.match(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?(/[^\s\"'<>]*)?$", u):
+            errors["url"] = "ใส่ URL บนเครื่อง เช่น http://localhost:8080/health (Windows ตรวจ http://127.0.0.1:<พอร์ต>/)"
+        rule["url"] = u
+    if metric == "docker":
+        cn = str(data.get("container") or "").strip().lstrip("/")
+        if not CONTAINER_RE.match(cn):
+            errors["container"] = "ใส่ชื่อ container (ตามที่เห็นใน docker ps)"
+        rule["container"] = cn
     if metric in STATE_METRICS:
         rule["level"] = "warning" if data.get("level") == "warning" else "error"
         rule["error" if rule["level"] == "error" else "warning"] = 1

@@ -114,6 +114,9 @@ $ExpCollectorSets = @(
 $TextDir = Join-Path $DataDir "textfile"
 $InvScript = Join-Path $InstallDir "cm-inventory.ps1"
 $InvTask = "CentralMonitorInventory"
+# Docker container + เว็บ localhost (cm-probe.ps1 ทุก 1 นาที)
+$ProbeScript = Join-Path $InstallDir "cm-probe.ps1"
+$ProbeTask = "CentralMonitorProbe"
 $UseExporter = $false
 $script:ExporterLastError = $null
 
@@ -262,8 +265,83 @@ $tmp = Join-Path $Dir "cm_inventory.prom.tmp"
 [IO.File]::WriteAllText($tmp, (($L -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
 Move-Item $tmp (Join-Path $Dir "cm_inventory.prom") -Force
 '@
+        $probe = @'
+# cm-probe.ps1 (Central Monitor) - Docker container + เว็บที่เปิดบนเครื่อง (http://127.0.0.1:<พอร์ต>/)
+# -> textfile ของ windows_exporter  scheduled task "CentralMonitorProbe" รันทุก 1 นาที (SYSTEM)
+$ErrorActionPreference = "Continue"
+$Dir = Join-Path $env:ProgramData "central-monitor-agent\textfile"
+New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+function Esc($s) { if ($null -eq $s) { return "" }; return ([string]$s -replace '\\', '\\' -replace '"', '\"' -replace "[\r\n\t]+", " ").Trim() }
+$L = New-Object System.Collections.Generic.List[string]
+
+# ---- Docker ----
+$L.Add("# TYPE cm_docker_container gauge")
+$up = 0
+$docker = Get-Command docker.exe -ErrorAction SilentlyContinue
+if ($docker) {
+    $out = & $docker.Source ps -a --format "{{json .}}" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $up = 1
+        $seen = @{}
+        foreach ($line in @($out)) {
+            try { $c = $line | ConvertFrom-Json } catch { continue }
+            foreach ($n in ("$($c.Names)" -split ",")) {
+                $n = $n.Trim().TrimStart("/")
+                if (-not $n -or $seen.ContainsKey($n)) { continue }
+                $seen[$n] = 1
+                $L.Add("cm_docker_container{name=`"$(Esc $n)`",image=`"$(Esc $c.Image)`",state=`"$(Esc "$($c.State)".ToLower())`",status=`"$(Esc $c.Status)`"} 1")
+            }
+        }
+    }
+}
+$L.Add("# TYPE cm_docker_up gauge")
+$L.Add("cm_docker_up $up")
+
+# ---- เว็บบนเครื่อง: ทุกพอร์ตที่เปิดรับ (ยกเว้นพอร์ตที่ไม่ใช่เว็บแน่ๆ) ----
+$skip = @(53, 88, 135, 139, 389, 445, 464, 593, 636, 1433, 1434, 1521, 3268, 3269, 3306, 3389, 5432, 5985, 5986, 6379, 9182, 27017, 47001)
+$ports = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort -Unique |
+          Where-Object { $_ -lt 49152 -and $skip -notcontains $_ } | Sort-Object | Select-Object -First 30)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
+[Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+function Probe($url) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $rq = [Net.HttpWebRequest]::Create($url)
+        $rq.Timeout = 2500; $rq.ReadWriteTimeout = 2500; $rq.AllowAutoRedirect = $false; $rq.Proxy = $null
+        $rs = $rq.GetResponse(); $code = [int]$rs.StatusCode; $rs.Close()
+        return @($code, $sw.ElapsedMilliseconds, $null)
+    } catch {
+        $ex = $_.Exception
+        while ($ex -and -not ($ex -is [Net.WebException])) { $ex = $ex.InnerException }
+        if ($ex -and $ex.Response) { $code = [int]$ex.Response.StatusCode; $ex.Response.Close(); return @($code, $sw.ElapsedMilliseconds, $null) }
+        return @(0, $sw.ElapsedMilliseconds, $(if ($ex) { "$($ex.Status)" } else { "Error" }))
+    }
+}
+$codes = New-Object System.Collections.Generic.List[string]
+$times = New-Object System.Collections.Generic.List[string]
+foreach ($p in $ports) {
+    $r = Probe "http://127.0.0.1:$p/"; $scheme = "http"
+    if ($r[0] -eq 0 -and "$($r[2])" -match "ServerProtocolViolation|ConnectionClosed|ReceiveFailure|SecureChannelFailure|KeepAliveFailure") {
+        $r2 = Probe "https://127.0.0.1:$p/"
+        if ($r2[0] -gt 0) { $r = $r2; $scheme = "https" }
+    }
+    $codes.Add("cm_http_local_code{port=`"$p`",scheme=`"$scheme`"} $($r[0])")
+    if ($r[0] -gt 0) { $times.Add("cm_http_local_ms{port=`"$p`",scheme=`"$scheme`"} $($r[1])") }
+}
+# แต่ละ metric ต้องอยู่ติดกัน (textfile collector ของ windows_exporter ตรวจรูปแบบเข้ม)
+$L.Add("# TYPE cm_http_local_code gauge"); $L.AddRange($codes)
+$L.Add("# TYPE cm_http_local_ms gauge"); $L.AddRange($times)
+$L.Add("# TYPE cm_probe_timestamp_seconds gauge")
+$L.Add("cm_probe_timestamp_seconds $([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())")
+$tmp = Join-Path $Dir "cm_probe.prom.tmp"
+[IO.File]::WriteAllText($tmp, (($L -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
+'@
         New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
         [IO.File]::WriteAllText($InvScript, $inv, (New-Object Text.UTF8Encoding($true)))
+        [IO.File]::WriteAllText($ProbeScript, $probe, (New-Object Text.UTF8Encoding($true)))
+        try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ProbeScript }
+        catch { Warn "ตรวจ Docker / เว็บบนเครื่องไม่ได้: $($_.Exception.Message)" }
         try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $InvScript }
         catch { Warn "อ่านรายการโปรแกรม / พอร์ตไม่ได้: $($_.Exception.Message)" }
 
@@ -310,6 +388,13 @@ Move-Item $tmp (Join-Path $Dir "cm_inventory.prom") -Force
             $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable -MultipleInstances IgnoreNew
             Register-ScheduledTask -TaskName $InvTask -Action $act -Trigger $trg -Principal $pr -Settings $set -Force | Out-Null
             Write-Host "   รายการโปรแกรม / พอร์ต: scheduled task '$InvTask' ทุก 15 นาที"
+            $act2 = New-ScheduledTaskAction -Execute "powershell.exe" `
+                -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ProbeScript`""
+            $trg2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) `
+                -RepetitionDuration (New-TimeSpan -Days 3650)
+            $set2 = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName $ProbeTask -Action $act2 -Trigger $trg2 -Principal $pr -Settings $set2 -Force | Out-Null
+            Write-Host "   Docker / เว็บบนเครื่อง: scheduled task '$ProbeTask' ทุก 1 นาที"
         } catch { Warn "สร้าง scheduled task '$InvTask' ไม่ได้: $($_.Exception.Message) (รายการโปรแกรมจะไม่อัปเดต)" }
         $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
                   Select-Object -ExpandProperty LocalAddress -Unique

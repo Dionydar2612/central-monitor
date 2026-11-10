@@ -268,6 +268,16 @@
         const ports = card("Listening TCP ports", table(["Port", "Address", "Program"],
             (d.ports || []).map(p => `<tr><td><b>${esc(p.port)}</b></td><td>${esc(p.address)}</td><td>${esc(p.process || "-")}</td></tr>`)),
             `<span class="cnt">${(d.ports || []).length}</span>`);
+        const dk = d.containers || [];
+        const docker = card("Docker containers", table(["Container", "Image", "State", "Status"],
+            dk.map(c => `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.image || "-")}</td>`
+                + `<td class="${c.state === "running" && !/unhealthy/i.test(c.status) ? "ok" : "cr"}">${esc(c.state || "-")}</td><td>${esc(c.status || "-")}</td></tr>`)),
+            `<span class="cnt">${dk.filter(c => c.state === "running").length} / ${dk.length} running</span>`);
+        const lw = (d.local_http || []).filter(w => w.code > 0);
+        const webs = card("Web on this machine (localhost)", table(["Port", "URL", "HTTP", "Time", "Program"],
+            lw.map(w => `<tr><td><b>${esc(w.port)}</b></td><td>${esc(`${w.scheme}://localhost:${w.port}/`)}</td>`
+                + `<td class="${w.code >= 500 ? "cr" : w.code >= 400 ? "wr" : "ok"}">${esc(w.code)}</td><td>${num(w.ms, 0, " ms")}</td><td>${esc(w.process || "-")}</td></tr>`)),
+            `<span class="cnt">ตรวจทุก 1 นาที</span>`);
         const hist = card("Software changes", table(["Time", "Change", "Program", "Version"],
             (d.history || []).map(h => { const [t, c] = SW_ACT[h.action] || [h.action, ""];
                 return `<tr><td>${ts(h.time)}</td><td class="${c}">${esc(t)}</td><td>${esc(h.name)}${h.arch === "x86" ? " <small>(x86)</small>" : ""}</td>`
@@ -286,7 +296,7 @@
         const watched = `<section class="card pcard"><div class="top"><h2>Watched apps &amp; web</h2><span class="cnt">${ap.length ? (bad ? `มีปัญหา ${bad}` : "ทำงานปกติทั้งหมด") : ""}</span>`
             + `<a class="st-nav" href="/apps" style="margin-left:auto">จัดการ</a></div>`
             + (ap.length ? `<div class="apGrid advice">${ap.map(tile).join("")}</div>` : `<div class="empty advice">ยังไม่ได้เฝ้าดูโปรแกรม / เว็บของเครื่องนี้ · เพิ่มได้ที่หน้า Apps &amp; Web</div>`) + `</section>`;
-        return notes + watched + `<div class="grid pgrid2">${run}${ports}</div>` + inst + hist;
+        return notes + watched + `<div class="grid pgrid2">${run}${ports}</div>` + `<div class="grid pgrid2">${webs}${docker}</div>` + inst + hist;
     }
     function swFilter(box) {
         const qv = P.swq.trim().toLowerCase();

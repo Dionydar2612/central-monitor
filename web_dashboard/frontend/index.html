@@ -38,6 +38,9 @@
 <div class="user"><span><span id="systemDot" class="dot green"></span><span id="systemStatus">Loading...</span></span><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/apps">Apps &amp; Web</a><a class="st-nav" href="/settings">Settings</a><button id="logoutButton">Logout</button></div>
 </header>
 
+<!-- Apps & Web: โปรแกรม / เว็บ / พอร์ต / Docker ที่เฝ้าดู (ซ่อนเมื่อยังไม่ได้เพิ่ม) จาก /api/apps -->
+<section class="card apStrip" id="apStrip" hidden><a class="apsHead" href="/apps"><span class="apBig" id="apsDot"></span><span><b id="apsText">Apps &amp; Web</b><small id="apsSub"></small></span></a><div class="apsList" id="apsList"></div></section>
+
 <!-- การ์ด WEB status: ภาพรวมทุกเครื่อง + web checks จาก /api/overview แบ่งตามกลุ่ม (group ใน puller.yaml)
        #ovTiles = Total / OK / Warning / Down / Paused / Web checks
        #ovFind  = กรองชื่อ / IP / กลุ่ม / URL      #ovExpand #ovCollapse = ขยาย/ยุบทุกกลุ่ม

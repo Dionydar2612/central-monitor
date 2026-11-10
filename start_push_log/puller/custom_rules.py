@@ -13,6 +13,8 @@ puller.yaml
         process: ""                     # (process / process_cpu / process_mem) ชื่อโปรแกรม เช่น sqlservr (ไม่ต้องมี .exe)
         port: 0                         # (port_listen / tcp_port) หมายเลขพอร์ต
         url: ""                         # (http_url) เช่น http://{host}:8080/health  ({host} = Host ของเครื่อง)
+                                        # (http_local) เช่น http://localhost:8080/health  ตรวจจากในเครื่องเอง
+        container: ""                   # (docker) ชื่อ container
         level: error                    # (กฎแบบ "หยุด / ไม่ตอบ") ระดับเมื่อผิดปกติ: error / warning
         promql: ""                      # (promql) ใช้ $labels แทนตัวเลือกเครื่อง เช่น node_load1{$labels}
         unit: ""                        # (promql) หน่วยที่แสดง
@@ -31,8 +33,12 @@ puller.yaml
 ไม่มีข้อมูลของเครื่องนั้น -> ไม่สร้าง sensor (ไม่เดา)
 """
 
+import json
 import math
 import re
+import shlex
+import subprocess
+import urllib.parse
 import socket
 import ssl
 import time
@@ -62,6 +68,8 @@ METRICS = {
     "port_listen": ("พอร์ตไม่เปิดรับบนเครื่อง (Windows)", "", False, ">", "windows"),
     "tcp_port": ("พอร์ตเชื่อมต่อจาก central ไม่ได้", "", False, ">", "any"),
     "http_url": ("เว็บของโปรแกรมไม่ตอบ (HTTP จาก central)", "", False, ">", "any"),
+    "http_local": ("เว็บบนเครื่องไม่ตอบ (localhost)", "", False, ">", "any"),
+    "docker": ("Docker container ไม่ทำงาน", "", False, ">", "any"),
     "promql": ("PromQL เอง", "", False, ">", "any"),
 }
 _EXPR_KEY = {"cpu": "cpu", "memory": "memory", "mem_available": "mem_available", "disk": "disk",
@@ -70,7 +78,7 @@ _EXPR_KEY = {"cpu": "cpu", "memory": "memory", "mem_available": "mem_available",
 
 
 # กฎแบบ "หยุด / ไม่ตอบ": ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก (level)
-STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url")
+STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker")
 TCP_TIMEOUT = 5
 HTTP_TIMEOUT = 10
 
@@ -183,7 +191,90 @@ def _values(rule, ex, labels, name, windows, query, ping_exprs):
     return [(None, rows[0][1], expr)] if rows else []
 
 
-def _state(rule, target, labels, query):
+# ---------------------------------------------------------------------------
+# เครื่อง Linux: docker + เว็บ localhost ผ่าน SSH (1 คำสั่งต่อเครื่อง ทุก ~1 นาที)
+# เครื่อง Windows: cm-probe.ps1 บนเครื่อง (ทุก 1 นาที) -> cm_docker_container / cm_http_local_code (Prometheus)
+# ---------------------------------------------------------------------------
+PROBE_TTL = 55
+_probe_cache = {}
+
+
+def _local_port(url):
+    u = urllib.parse.urlsplit(url)
+    return u.port or (443 if u.scheme == "https" else 80)
+
+
+def parse_probe(out):
+    """ผลคำสั่ง probe ของ Linux -> {containers: {ชื่อ: {...}}, docker_error, http: {url: (code, ms)}}"""
+    res = {"containers": {}, "docker_error": None, "http": {}}
+    part = None
+    for line in out.splitlines():
+        if line.startswith("##"):
+            part = line.strip("#").strip()
+            continue
+        if part == "DOCKER" and line.strip():
+            if line.startswith("{"):
+                try:
+                    c = json.loads(line)
+                except ValueError:
+                    continue
+                for n in str(c.get("Names") or "").split(","):
+                    if n:
+                        res["containers"][n.strip().lstrip("/")] = {"state": str(c.get("State") or "").lower(),
+                                                                    "status": c.get("Status") or "", "image": c.get("Image") or ""}
+            elif not res["containers"]:
+                res["docker_error"] = line.strip()[:200]
+        elif part == "HTTP" and "\t" in line:
+            url, _, rest = line.partition("\t")
+            bits = rest.split()
+            try:
+                res["http"][url] = (int(bits[0]), float(bits[1]) * 1000)
+            except (IndexError, ValueError):
+                res["http"][url] = (0, 0.0)
+    return res
+
+
+def linux_probe(target, rules, runner=None):
+    """docker ps + curl localhost บนเครื่อง Linux (ผ่าน SSH) cache ~1 นาทีต่อเครื่อง"""
+    name = target.get("name")
+    urls = sorted({str(r.get("url") or "") for r in rules if r.get("metric") == "http_local" and r.get("url")})
+    want_docker = any(r.get("metric") == "docker" for r in rules)
+    key = (name, tuple(urls), want_docker)
+    hit = _probe_cache.get(key)
+    if hit and time.time() - hit[0] < PROBE_TTL:
+        return hit[1]
+    cmd = []
+    if want_docker:
+        cmd.append("echo '##DOCKER'; (docker ps -a --format '{{json .}}' 2>&1 || sudo -n docker ps -a --format '{{json .}}' 2>&1) | head -500")
+    if urls:
+        cmd.append("echo '##HTTP'")
+        for u in urls:
+            q = shlex.quote(u)
+            cmd.append(f"printf '%s\\t' {q}; curl -sk -o /dev/null -m 5 -w '%{{http_code}} %{{time_total}}\\n' {q} 2>/dev/null || echo '000 0'")
+    try:
+        if runner is None:
+            from ssh_client import _build_command
+            out = subprocess.run(_build_command(target, "; ".join(cmd)), capture_output=True, timeout=40).stdout.decode(errors="replace")
+        else:
+            out = runner(target, "; ".join(cmd))
+        res = parse_probe(out)
+    except Exception as e:
+        print(f"[RULE PROBE] {name}: {e!r}")
+        res = None
+    _probe_cache[key] = (time.time(), res)
+    return res
+
+
+def _container_state(c):
+    if not c:
+        return True, "ไม่พบ container"
+    st = c.get("state") or ""
+    status = c.get("status") or ""
+    bad = st != "running" or "unhealthy" in status.lower()
+    return bad, (status or st)
+
+
+def _state(rule, target, labels, query, windows=True, rules=None):
     """กฎแบบ "หยุด / ไม่ตอบ" -> (ผิดปกติ?, ข้อความ, ค่าที่แสดง, หน่วย, ที่มา) หรือ None = ไม่มีข้อมูล (ไม่สร้าง sensor)"""
     m = rule["metric"]
     if m == "service":
@@ -220,6 +311,55 @@ def _state(rule, target, labels, query):
         who = sorted({lb.get("process") or "?" for lb, _ in rows})
         return not rows, (f"พอร์ต {port} เปิดรับอยู่ ({', '.join(who)})" if rows else f"พอร์ต {port} ไม่ได้เปิดรับ"), \
             None, "", q
+    if m == "docker":
+        cname = str(rule.get("container") or "").strip().lstrip("/")
+        if not cname:
+            return None
+        if windows:
+            if not query(f"cm_probe_timestamp_seconds{{{labels}}}"):
+                return None                  # agent รุ่นเก่า / ไม่มี cm-probe
+            q = f"cm_docker_container{{{labels}}}"
+            found = None
+            for lb, _v in query(q) or []:
+                if str(lb.get("name") or "").lower() == cname.lower():
+                    found = {"state": str(lb.get("state") or "").lower(), "status": lb.get("status") or ""}
+                    break
+            if found is None and not query(f"cm_docker_up{{{labels}}} == 1"):
+                return None                  # เครื่องนี้ไม่มี docker / อ่านไม่ได้
+        else:
+            p = linux_probe(target, rules or [rule])
+            if not p or (p.get("docker_error") and not p.get("containers")):
+                return None
+            q = "ssh: docker ps -a"
+            found = p["containers"].get(cname) or next((v for k, v in p["containers"].items() if k.lower() == cname.lower()), None)
+        bad, st = _container_state(found)
+        return bad, f"{cname}: {st}", None, "", q
+    if m == "http_local":
+        url = str(rule.get("url") or "").strip()
+        if not url:
+            return None
+        if windows:
+            if not query(f"cm_probe_timestamp_seconds{{{labels}}}"):
+                return None
+            port = _local_port(url)
+            q = f'cm_http_local_code{{{labels},port="{port}"}}'
+            rows = query(q) or []
+            if not rows:
+                return True, f"ไม่มีโปรแกรมเปิดพอร์ต {port} บนเครื่อง", None, "", q
+            code = int(rows[0][1])
+            ms_rows = query(f'cm_http_local_ms{{{labels},port="{port}"}}') or []
+            ms = ms_rows[0][1] if ms_rows else None
+        else:
+            p = linux_probe(target, rules or [rule])
+            if not p or url not in p["http"]:
+                return None
+            code, ms = p["http"][url]
+            q = f"ssh: curl {url}"
+        if not code:
+            return True, f"{url} ไม่ตอบ (บนเครื่อง)", None, "", q
+        bad = code >= 500
+        return bad, f"{url} ตอบ HTTP {code}" + (f" ({ms:.0f} ms)" if ms is not None else ""), \
+            (round(ms, 1) if ms is not None else None), "ms" if ms is not None else "", q
     host = str(target.get("host") or "").strip()
     if m == "tcp_port":
         port = int(rule.get("port") or 0)
@@ -264,14 +404,13 @@ def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, qu
     """sensor ของกฎที่ใช้กับเครื่องนี้"""
     name = target["name"]
     out = []
-    for r in rule_list:
-        if not applies(r, target, windows):
-            continue
+    mine = [r for r in rule_list if applies(r, target, windows)]
+    for r in mine:
         meta = METRICS[r["metric"]]
         unit = str(r.get("unit") or "") if r["metric"] == "promql" else meta[1]
         try:
             if r["metric"] in STATE_METRICS:
-                res = _state(r, target, labels, query)
+                res = _state(r, target, labels, query, windows, mine)
                 vals = [] if res is None else [(None, res[:4], res[4])]
             else:
                 vals = _values(r, ex, labels, name, windows, query, ping_exprs)

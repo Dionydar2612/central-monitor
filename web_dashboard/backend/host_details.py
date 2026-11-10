@@ -647,6 +647,10 @@ def software(web):
         "*inst": f"timestamp(cm_software_installed{{{labels}}})",
         "*ports": f"timestamp(cm_port_listening{{{labels}}})",
         "inv": f"max(cm_inventory_timestamp_seconds{{{labels}}})",
+        "probe": f"max(cm_probe_timestamp_seconds{{{labels}}})",
+        "*docker": f"timestamp(cm_docker_container{{{labels}}})",
+        "*http": f"cm_http_local_code{{{labels}}}",
+        "*httpms": f"cm_http_local_ms{{{labels}}}",
         "*pcount": f"count by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}})",
         "*pmem": f"sum by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}})",
         "*pcpu": (f"sum by(process) (rate({{__name__=~\"windows_process_cpu_time(_seconds)?_total\",{labels},{skip}}}[2m]))"
@@ -667,6 +671,14 @@ def software(web):
                        "ports": sorted(listen.get(str(m.get("process") or "").lower(), ()))}
                       for m, v in r["*pcount"] or [] if m.get("process")),
                      key=lambda x: -(x["mem_mb"] or 0))
+    containers = sorted(({"name": m.get("name"), "image": m.get("image") or "", "state": m.get("state") or "",
+                          "status": m.get("status") or ""} for m in _fresh(r["*docker"], 120)),
+                        key=lambda x: (x["state"] == "running", str(x["name"]).lower()))
+    ms = {m.get("port"): v for m, v in r["*httpms"] or []}
+    owner = {str(p["port"]): p["process"] for p in ports}
+    local_http = sorted(({"port": int(m.get("port") or 0), "scheme": m.get("scheme") or "http", "code": int(v),
+                          "ms": _r(ms.get(m.get("port")), 0), "process": owner.get(m.get("port"), "")}
+                         for m, v in r["*http"] or [] if _finite(v)), key=lambda x: x["port"])
     history = []
     try:
         import json
@@ -680,7 +692,11 @@ def software(web):
     if r["inv"] is None:
         unsupported.append({"item": "Installed software / Listening ports",
                             "reason": "agent รุ่นนี้ยังไม่ส่งรายการโปรแกรม: ติดตั้ง agent ใหม่ด้วยคำสั่งล่าสุดจากหน้า Settings"})
+    if r["probe"] is None:
+        unsupported.append({"item": "Docker / Web on this machine",
+                            "reason": "agent รุ่นนี้ยังไม่ตรวจ Docker / เว็บบนเครื่อง: รันคำสั่งติดตั้ง agent ซ้ำ (Make command)"})
     if not running:
         unsupported.append({"item": "Running programs", "reason": "windows_exporter ไม่ได้เปิด collector process"})
-    return {"web": web, "supported": True, "inventory_time": r["inv"], "installed": installed, "ports": ports,
+    return {"web": web, "supported": True, "inventory_time": r["inv"], "probe_time": r["probe"], "containers": containers,
+            "local_http": local_http, "installed": installed, "ports": ports,
             "running": running, "history": list(reversed(history[-100:])), "unsupported": unsupported}

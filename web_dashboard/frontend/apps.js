@@ -6,8 +6,9 @@
    ===================================================================== */
 "use strict";
 const $ = id => document.getElementById(id);
-const A = { role: "viewer", items: [], filter: "all", find: "", type: "program", targets: [], at: 0 };
-const TYPE_TH = { program: "โปรแกรม", service: "Service", web: "เว็บ", port: "พอร์ต" };
+const A = { role: "viewer", items: [], filter: "all", find: "", type: "program", local: true, targets: [], at: 0, editing: null };
+const TYPE_TH = { program: "โปรแกรม", service: "Service", web: "เว็บ", port: "พอร์ต", docker: "Docker" };
+const LOCAL_METRICS = ["http_local", "port_listen"];
 const BAD = ["error", "down"], WARN = ["warning"];
 
 function esc(v) {
@@ -39,10 +40,11 @@ function ageText(x) {
 }
 
 function tile(x) {
-    const del = A.role === "admin" ? `<button type="button" class="apDel" data-del="${esc(x.rule)}" title="เลิกเฝ้าดู">× ลบ</button>` : "";
+    const del = A.role === "admin" ? `<button type="button" class="apEdit" data-edit="${esc(x.rule)}" title="แก้ไข">✎ แก้ไข</button>`
+        + `<button type="button" class="apDel" data-del="${esc(x.rule)}" title="เลิกเฝ้าดู">× ลบ</button>` : "";
     const href = x.web && x.web !== "-" && !x.web.includes(",") ? `/?web=${encodeURIComponent(x.web)}` : "#";
     return `<a class="apT ${cls(x.status)}" href="${href}"><span class="apDot"></span><div class="apMain"><b title="${esc(x.what)}">${esc(x.name)}</b>`
-        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}</small><p>${esc(x.message)}</p></div>`
+        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${x.metric === "http_local" ? " · localhost" : x.metric === "http_url" ? " · จาก central" : ""}</small><p>${esc(x.message)}</p></div>`
         + `<span class="apAge">${esc(ageText(x))}</span>${del}</a>`;
 }
 
@@ -77,41 +79,80 @@ const HINT = {
     program: ["ชื่อโปรแกรม", "เช่น sqlservr, java, w3wp", "ผิดปกติเมื่อไม่มี process ชื่อนี้ทำงาน (เครื่อง Windows) · รายการที่แนะนำมาจากโปรแกรมที่ทำงานอยู่บนเครื่องตอนนี้"],
     web: ["URL", "เช่น http://{host}:8080/health", "central เรียก URL นี้ทุก 30 วินาที ผิดปกติเมื่อเรียกไม่ได้ / เกิน 10 วินาที / HTTP 4xx-5xx · {host} = Host ของเครื่อง"],
     port: ["พอร์ต", "เช่น 1433", "ผิดปกติเมื่อพอร์ตนี้ไม่ได้เปิดรับบนเครื่อง (ดูจากรายการพอร์ตที่เครื่อง Windows ส่งมา)"],
-    service: ["ชื่อ service", "เช่น MSSQLSERVER, W3SVC", "ผิดปกติเมื่อ Windows service นี้ไม่ได้ Running"],
+    service: ["ชื่อ service", "เช่น MSSQLSERVER, W3SVC, nginx.service", "ผิดปกติเมื่อ Windows service นี้ไม่ได้ Running"],
+    docker: ["ชื่อ container", "เช่น web, postgres", "ผิดปกติเมื่อ container ไม่ได้ running หรือ unhealthy · Windows: เครื่องตรวจเองทุก 1 นาที · Linux: central ตรวจผ่าน SSH ทุก ~1 นาที (user SSH ต้องใช้คำสั่ง docker ได้)"],
+};
+const HINT_LOCAL = {
+    web: ["URL บนเครื่อง", "เช่น http://localhost:8080/health", "เครื่องตรวจเอง ไม่ต้องเปิด firewall · Windows: เรียก http://127.0.0.1:<พอร์ต>/ ทุก 1 นาที · Linux: central สั่ง curl ผ่าน SSH ทุก ~1 นาที · ผิดปกติเมื่อไม่ตอบ / HTTP 5xx"],
+    port: HINT.port,
+};
+const HINT_REMOTE = {
+    web: HINT.web,
+    port: ["พอร์ต", "เช่น 8080", "central ต่อ TCP ไปที่ Host (IP) ของเครื่องทุก 30 วินาที (เครื่องต้องมี Host ในหน้า Settings) ผิดปกติเมื่อต่อไม่ได้"],
 };
 async function suggest() {
     const dl = $("apSuggest"); dl.textContent = "";
     const web = $("apWeb").value;
-    if (!web || !["program", "port"].includes(A.type)) return;
+    if (!web || (A.type === "web" && !A.local)) return;
     try {
-        const d = await api("GET", `/api/host/${encodeURIComponent(web)}/software`);
-        const vals = A.type === "program" ? (d.running || []).map(p => p.name) : (d.ports || []).map(p => `${p.port}`);
-        [...new Set(vals)].slice(0, 300).forEach(v => { const o = document.createElement("option"); o.value = v; dl.append(o); });
+        const d = await api("GET", `/api/apps/suggest?web=${encodeURIComponent(web)}&type=${A.type}`);
+        (d.items || []).forEach(v => { const o = document.createElement("option"); o.value = v; dl.append(o); });
     } catch (e) { /* ไม่มีข้อมูล = ไม่แนะนำ */ }
+}
+function machineHost() {
+    const t = A.targets.find(x => x.name === $("apWeb").value);
+    return t && t.host ? t.host : "";
+}
+function refreshHint() {
+    const t = A.type, both = t === "web" || t === "port";
+    $("apWhere").hidden = !both;
+    const [label, ph, hint] = both ? (A.local ? HINT_LOCAL : HINT_REMOTE)[t] : HINT[t];
+    $("apValLabel").textContent = label; $("apVal").placeholder = ph;
+    const h = machineHost();
+    $("apHint").textContent = hint + (both && !A.local ? (h ? ` · Host ของเครื่องนี้: ${h} (ใช้ {host} ใน URL ได้)` : " · ⚠ เครื่องนี้ยังไม่มี Host ในหน้า Settings") : "");
+    $("apVal").inputMode = t === "port" ? "numeric" : "text";
 }
 function setType(t) {
     A.type = t;
     document.querySelectorAll("#apType button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
-    const [label, ph, hint] = HINT[t];
-    $("apValLabel").textContent = label; $("apVal").placeholder = ph; $("apHint").textContent = hint;
-    $("apVal").inputMode = t === "port" ? "numeric" : "text";
-    suggest();
+    refreshHint(); suggest();
 }
-async function openForm() {
+function setLocal(on) {
+    A.local = on;
+    document.querySelectorAll("#apLocal button").forEach(b => b.setAttribute("aria-pressed", String((b.dataset.l === "1") === on)));
+    refreshHint(); suggest();
+}
+async function openForm(edit) {
     $("apForm").hidden = false; $("apMsg").textContent = "";
     if (!A.targets.length) {
         try { A.targets = ((await api("GET", "/api/alert-rules")).targets || []); } catch (e) { A.targets = []; }
     }
     const sel = $("apWeb"); sel.textContent = "";
     A.targets.forEach(t => { const o = document.createElement("option"); o.value = t.name; o.textContent = t.name + (t.os === "windows" ? " (Windows)" : ""); sel.append(o); });
-    setType(A.type);
+    A.editing = edit ? edit.rule : null;
+    $("apSave").textContent = edit ? "บันทึก" : "เพิ่ม";
+    if (edit) {
+        sel.value = (edit.web || "").split(",")[0].trim();
+        $("apVal").value = edit.metric === "port_listen" || edit.metric === "tcp_port" ? String(edit.what).replace(/^.*:/, "") : edit.what;
+        $("apName").value = edit.name;
+        A.local = !["http_url", "tcp_port"].includes(edit.metric);
+        document.querySelectorAll("#apLocal button").forEach(b => b.setAttribute("aria-pressed", String((b.dataset.l === "1") === A.local)));
+        setType(edit.type);
+    } else {
+        $("apVal").value = ""; $("apName").value = "";
+        setType(A.type);
+    }
+    $("apForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
     $("apVal").focus();
 }
 async function save(ev) {
     ev.preventDefault();
     $("apMsg").textContent = ""; $("apSave").disabled = true;
     try {
-        await api("POST", "/api/apps", { type: A.type, web: $("apWeb").value, value: $("apVal").value.trim(), name: $("apName").value.trim() });
+        const body = { type: A.type, web: $("apWeb").value, value: $("apVal").value.trim(), name: $("apName").value.trim(), local: A.local };
+        if (A.editing) await api("PUT", `/api/apps/${encodeURIComponent(A.editing)}`, body);
+        else await api("POST", "/api/apps", body);
+        A.editing = null;
         $("apVal").value = ""; $("apName").value = ""; $("apForm").hidden = true;
         await load();
     } catch (e) {
@@ -141,12 +182,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         render();
     });
     $("apFind").addEventListener("input", e => { A.find = e.target.value; render(); });
-    $("apAddBtn").onclick = openForm;
-    $("apCancel").onclick = () => { $("apForm").hidden = true; };
+    $("apAddBtn").onclick = () => openForm(null);
+    $("apCancel").onclick = () => { $("apForm").hidden = true; A.editing = null; };
     $("apType").addEventListener("click", e => { const b = e.target.closest("[data-t]"); if (b) setType(b.dataset.t); });
-    $("apWeb").addEventListener("change", suggest);
+    $("apWeb").addEventListener("change", () => { refreshHint(); suggest(); });
+    $("apLocal").addEventListener("click", e => { const b = e.target.closest("[data-l]"); if (b) setLocal(b.dataset.l === "1"); });
     $("apForm").addEventListener("submit", save);
     $("apGrid").addEventListener("click", e => {
+        const ed = e.target.closest("[data-edit]");
+        if (ed) { e.preventDefault(); openForm(A.items.find(i => i.rule === ed.dataset.edit)); return; }
         const d = e.target.closest("[data-del]"); if (!d) return;
         e.preventDefault(); remove(d.dataset.del);
     });

@@ -1004,6 +1004,24 @@ function matchesFilter(x, f, isCheck) {
     return hay.some(v => String(v || "").toLowerCase().includes(f));
 }
 
+/* แถบ Apps & Web บนหน้าแรก: โปรแกรม / เว็บ / พอร์ต / Docker ที่เฝ้าดู (รายละเอียดที่ /apps) */
+async function loadApps() {
+    const box = q("#apStrip");
+    if (!box) return;
+    let items = [];
+    try { items = (await apiGet("/api/apps")).items || []; } catch (e) { return; }
+    box.hidden = !items.length;
+    if (!items.length) return;
+    const st = x => ["error", "down"].includes(x.status) ? "bad" : x.status === "warning" ? "wr" : x.status === "ok" ? "ok" : "";
+    const bad = items.filter(x => ["bad", "wr"].includes(st(x)));
+    box.className = "card apStrip " + (bad.some(x => st(x) === "bad") ? "bad" : bad.length ? "wr" : "ok");
+    setText("apsText", bad.length ? `Apps & Web: มีปัญหา ${bad.length}` : "Apps & Web: ทำงานปกติ");
+    setText("apsSub", `${items.filter(x => x.status === "ok").length} / ${items.length} ทำงาน · ดูทั้งหมด →`);
+    const MAX = 24;
+    q("#apsList").innerHTML = items.slice(0, MAX).map(x => `<a class="apsP ${st(x)}" href="/apps" title="${escapeHtml(`${x.web} · ${x.message}`)}"><i></i>${escapeHtml(x.name)}</a>`).join("")
+        + (items.length > MAX ? `<a class="apsP" href="/apps">+${items.length - MAX}</a>` : "");
+}
+
 function renderMachines(ov) {
     S.ov = ov || S.ov;
     ov = S.ov || {};
@@ -2160,4 +2178,6 @@ document.addEventListener("DOMContentLoaded", () => {
     loadCurrentUser();
     loadAll();
     setInterval(loadAll, 10000);
+    loadApps();
+    setInterval(() => { if (!document.hidden) loadApps(); }, 30000);
 });

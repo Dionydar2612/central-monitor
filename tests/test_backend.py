@@ -104,7 +104,7 @@ class Backend(unittest.TestCase):
         before = c.get("/api/alert-rules").json["rules"]
         self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "nope", "value": "x"}).status_code, 400)
         self.assertIn("value", c.post("/api/apps", json={"type": "port", "web": "app-01", "value": "99999"}).json["fields"])
-        r = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "{host}:8080/health"})
+        r = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "{host}:8080/health", "local": False})
         self.assertEqual(r.status_code, 201, r.json)
         rule = r.json["rule"]
         self.assertEqual((rule["metric"], rule["url"], rule["targets"], rule["name"]),
@@ -113,6 +113,15 @@ class Backend(unittest.TestCase):
         items = c.get("/api/apps").json["items"]
         self.assertTrue({("web", "nodata"), ("program", "nodata")} <= {(x["type"], x["status"]) for x in items})
         self.assertEqual(len(c.get("/api/alert-rules").json["rules"]), len(before) + 2)     # กฎเดิมยังอยู่
+        up = c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01", "value": "localhost:9000/ping", "local": True})
+        self.assertEqual(up.status_code, 200, up.json)
+        self.assertEqual((up.json["rule"]["metric"], up.json["rule"]["url"], up.json["rule"]["id"]),
+                         ("http_local", "http://localhost:9000/ping", rule["id"]))
+        self.assertIn("value", c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01",
+                                                                       "value": "http://example.com/", "local": True}).json["fields"])
+        dk = c.post("/api/apps", json={"type": "docker", "web": "app-01", "value": "postgres"})
+        self.assertEqual((dk.status_code, dk.json["rule"]["container"]), (201, "postgres"))
+        c.delete(f"/api/apps/{dk.json['rule']['id']}")
         self.assertEqual(c.delete(f"/api/apps/{rule['id']}").status_code, 200)
         self.assertEqual(c.delete("/api/apps/no-such").status_code, 404)
         self.assertNotIn("web", [x["type"] for x in c.get("/api/apps").json["items"]])

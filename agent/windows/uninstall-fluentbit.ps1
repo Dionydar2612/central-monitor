@@ -8,6 +8,10 @@ param([switch] $Purge, [switch] $KeepExporter)
 $ErrorActionPreference = "Stop"
 $ServiceName = "cm-agent"
 # รายการโปรแกรม / พอร์ต
+if (Get-ScheduledTask -TaskName "CentralMonitorProbe" -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName "CentralMonitorProbe" -Confirm:$false
+    Write-Host "ลบ scheduled task CentralMonitorProbe แล้ว"
+}
 if (Get-ScheduledTask -TaskName "CentralMonitorInventory" -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName "CentralMonitorInventory" -Confirm:$false
     Write-Host "ลบ scheduled task CentralMonitorInventory แล้ว"

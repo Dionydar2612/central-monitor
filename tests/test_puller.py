@@ -274,6 +274,37 @@ class SoftwareRules(unittest.TestCase):
         h = self.ev({"metric": "http_url", "url": f"http://127.0.0.1:{port}/"}, {})
         self.assertEqual(h[0]["status"], "error")
 
+    def test_docker_and_local_web(self):
+        probe = {"cm_probe_timestamp_seconds": [({}, 1.0)], "cm_docker_up": [({}, 1.0)]}
+        rows = dict(probe, **{"cm_docker_container": [({"name": "web", "state": "running", "status": "Up 2h (healthy)"}, 1),
+                                                      ({"name": "db", "state": "exited", "status": "Exited (1)"}, 1)]})
+        self.assertEqual(self.ev({"metric": "docker", "container": "web"}, rows)[0]["status"], "ok")
+        self.assertEqual(self.ev({"metric": "docker", "container": "db"}, rows)[0]["message"], "db: Exited (1)")
+        self.assertEqual(self.ev({"metric": "docker", "container": "gone"}, rows)[0]["status"], "error")
+        self.assertEqual(self.ev({"metric": "docker", "container": "web"}, {}), [])                    # agent เก่า
+        web = dict(probe, **{'cm_http_local_code{cm_web="w",port="8080"}': [({}, 503.0)]})
+        r = self.ev({"metric": "http_local", "url": "http://localhost:8080/health"}, web)
+        self.assertEqual((r[0]["status"], r[0]["message"]), ("error", "http://localhost:8080/health ตอบ HTTP 503"))
+        self.assertEqual(self.ev({"metric": "http_local", "url": "http://localhost:81/"}, probe)[0]["message"],
+                         "ไม่มีโปรแกรมเปิดพอร์ต 81 บนเครื่อง")
+        # Linux: ผ่าน SSH
+        out = ('##DOCKER\n{"Names":"api","State":"running","Status":"Up 1h"}\n##HTTP\n'
+               'http://localhost:3000/\t200 0.020\nhttp://localhost:4000/\t000 0.000\n')
+        orig = self.cr.linux_probe
+        self.cr.linux_probe = lambda t, rules, runner=None: orig(t, rules, lambda tt, cmd: out)
+        self.cr._probe_cache.clear()
+        try:
+            ev = lambda rule: self.cr.evaluate({"name": "l"}, [dict({"id": "r", "name": "R"}, **rule)], {}, "x", False,
+                                               lambda sid: None, 2, {}, lambda q: [], None)
+            self.assertEqual(ev({"metric": "docker", "container": "api"})[0]["status"], "ok")
+            self.assertEqual(ev({"metric": "http_local", "url": "http://localhost:3000/"})[0]["status"], "ok")
+            self.assertEqual(ev({"metric": "http_local", "url": "http://localhost:4000/"})[0]["status"], "error")
+        finally:
+            self.cr.linux_probe = orig
+            self.cr._probe_cache.clear()
+        p = self.cr.parse_probe("##DOCKER\npermission denied while trying to connect\n")
+        self.assertEqual((p["containers"], p["docker_error"][:17]), ({}, "permission denied"))
+
     def test_software_diff_and_run(self):
         self.assertEqual(self.sw.diff({"A|x64": "1", "B|x64": "2"}, {"A|x64": "1.1", "C|x86": "3"}),
                          [("updated", "A", "x64", "1", "1.1"), ("removed", "B", "x64", "2", ""), ("installed", "C", "x86", "", "3")])

@@ -216,6 +216,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/alert-rules$"), "settings.alert_rules", ()),
     ("POST", re.compile(r"^/api/apps$"), "apps.add", ("type", "web", "value", "name")),
     ("DELETE", re.compile(r"^/api/apps/(?P<t>[^/]+)$"), "apps.delete", ()),
+    ("PUT", re.compile(r"^/api/apps/(?P<t>[^/]+)$"), "apps.update", ("type", "web", "value", "name")),
     ("POST", re.compile(r"^/api/alert-rules/test$"), "settings.alert_rules_test", ("name",)),
     ("POST", re.compile(r"^/api/notify-settings/summary-now$"), "settings.notify_summary_now", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
@@ -510,6 +511,27 @@ def apps_add():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (201 if ok else 400)
+
+
+@app.get("/api/apps/suggest")
+def apps_suggest():
+    """ชื่อที่เลือกได้ในฟอร์มเพิ่ม (โปรแกรม / พอร์ต / container / service / เว็บบนเครื่อง)"""
+    web = request.args.get("web") or ""
+    if _known_target(web) is None:
+        return jsonify({"items": []})
+    return jsonify({"items": apps_service.suggest(web, request.args.get("type") or "")})
+
+
+@app.put("/api/apps/<rule_id>")
+def apps_update(rule_id):
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "ต้องส่งเป็น JSON"}), 400
+    try:
+        ok, out = apps_service.update_app(rule_id, body)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (200 if ok else 404 if out.get("error") == "ไม่พบรายการนี้" else 400)
 
 
 @app.delete("/api/apps/<rule_id>")
