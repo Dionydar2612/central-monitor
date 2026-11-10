@@ -182,6 +182,38 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="al_save" type="button">Save alerts</button><button class="st-btn" id="al_reset" type="button">ใช้ค่าเริ่มต้น</button></div>
 <div class="st-msg" id="al_msg" role="status"></div>
 </section>
+<!-- กฎแจ้งเตือนที่สร้างเอง (/api/alert-rules): puller.yaml -> alert_rules (ตัวตรวจ: puller/custom_rules.py) -->
+<section class="card svc">
+<div class="top"><h2>Custom alert rules</h2><button class="st-btn sm" id="r_add" type="button">+ Add rule</button></div>
+<div style="color:var(--mut);font-size:13px">สร้างกฎแจ้งเตือนเอง: เลือกค่าที่จะดู · เครื่อง / กลุ่ม · เกณฑ์ · นานแค่ไหน · ส่ง Teams ไหม · ข้อความบนการ์ด
+ผลขึ้นเป็น sensor ในหน้า Events (Acknowledge / ประวัติปัญหาได้เหมือน sensor ปกติ) · ตรวจทุก 30 วินาที</div>
+<div class="tblw"><table class="st-tbl rltbl"><thead><tr><th></th><th>กฎ</th><th>ค่าที่ดู</th><th>ใช้กับ</th><th>เงื่อนไข</th><th>นาน</th><th>Teams</th><th></th></tr></thead><tbody id="rlRows"></tbody></table></div>
+<div class="st-box" id="rlForm" hidden>
+<div class="st-h3" id="rl_title">กฎใหม่</div>
+<div class="st-grid">
+<div class="st-f" data-r2="name"><label for="rl_name">ชื่อกฎ</label><input id="rl_name" autocomplete="off" placeholder="เช่น Disk D: เครื่อง DB"><div class="st-err"></div></div>
+<div class="st-f" data-r2="metric"><label for="rl_metric">ค่าที่ดู</label><select id="rl_metric"></select><div class="st-err"></div></div>
+<div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="rl_enabled" checked> เปิดใช้กฎนี้</label></div>
+<div class="st-f rl-mount" data-r2="mount"><label for="rl_mount">ไดรฟ์ / mount</label><input id="rl_mount" autocomplete="off" placeholder="เช่น D: หรือ /var (ว่าง = ทุกไดรฟ์)"><div class="st-err"></div></div>
+<div class="st-f rl-service" data-r2="service" hidden><label for="rl_service">ชื่อ service (Windows)</label><input id="rl_service" autocomplete="off" placeholder="เช่น W3SVC, MSSQLSERVER"><div class="st-err"></div></div>
+<div class="st-f rl-service" hidden><label for="rl_level">ระดับเมื่อหยุด</label><select id="rl_level"><option value="error">Error</option><option value="warning">Warning</option></select></div>
+<div class="st-f rl-promql" data-r2="promql" style="grid-column:span 2" hidden><label for="rl_promql">PromQL (ใช้ $labels แทนตัวเลือกเครื่อง)</label><textarea id="rl_promql" class="st-code" rows="2" placeholder='เช่น node_load1{$labels}  หรือ  windows_process_working_set_private_bytes{$labels,process="sqlservr"} / 1e9'></textarea><div class="st-err"></div></div>
+<div class="st-f rl-promql" hidden><label for="rl_unit">หน่วย</label><input id="rl_unit" autocomplete="off" placeholder="เช่น %, GB, ms"></div>
+<div class="st-f rl-num" data-r2="op"><label for="rl_op">แจ้งเมื่อค่า</label><select id="rl_op"><option value=">">มากกว่าหรือเท่ากับ (≥)</option><option value="<">น้อยกว่าหรือเท่ากับ (≤)</option></select></div>
+<div class="st-f rl-num" data-r2="warning"><label for="rl_warn">Warning</label><input id="rl_warn" inputmode="decimal" placeholder="เว้นว่างได้"><div class="st-err"></div></div>
+<div class="st-f rl-num" data-r2="error"><label for="rl_err">Error</label><input id="rl_err" inputmode="decimal" placeholder="เว้นว่างได้"><div class="st-err"></div></div>
+<div class="st-f" data-r2="for_minutes"><label for="rl_for">ต้องเป็นต่อเนื่องนาน (นาที)</label><input id="rl_for" type="number" min="0.5" step="0.5" value="3"><div class="st-err"></div></div>
+<div class="st-f"><label for="rl_os">OS</label><select id="rl_os"><option value="any">ทุก OS</option><option value="windows">Windows</option><option value="linux">Linux</option></select></div>
+<div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="rl_notify" checked> ส่ง Microsoft Teams</label></div>
+<div class="st-f" style="grid-column:span 3"><label>ใช้กับเครื่อง (ไม่เลือกเลย = ทุกเครื่อง)</label><div class="nlv" id="rl_targets"></div></div>
+<div class="st-f" style="grid-column:span 3"><label>หรือทั้งกลุ่ม</label><div class="nlv" id="rl_groups"></div></div>
+<div class="st-f" data-r2="message" style="grid-column:span 3"><label for="rl_msg">ข้อความบนการ์ด Teams ของกฎนี้ (ว่าง = ใช้แบบทั้งระบบ)</label><input id="rl_msg" autocomplete="off" placeholder="เช่น {icon} {machine} · D: ใช้ไป {value}{unit} (เกณฑ์ {threshold}{unit})"><div class="st-err"></div></div>
+</div>
+<div class="st-actions" style="margin-top:10px"><button class="st-btn" id="rl_preview" type="button">Preview กับเครื่องตอนนี้</button><button class="st-btn primary" id="rl_save" type="button">Save rule</button><button class="st-btn" id="rl_cancel" type="button">Cancel</button></div>
+<div id="rl_pv"></div>
+</div>
+<div class="st-msg" id="rl_msgbox" role="status"></div>
+</section>
 <!-- แจ้งเตือน Microsoft Teams (/api/notify-settings): puller.yaml -> notify.teams (ตัวส่ง: puller/notify.py) -->
 <section class="card svc">
 <div class="top"><h2>Notifications (Microsoft Teams)</h2></div>
@@ -192,6 +224,13 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-f" data-n="enabled"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="n_on"> เปิดการแจ้งเตือน</label></div>
 <div class="st-f" data-n="summary_times"><label for="n_times">ส่งสรุปสถานะทุกวันเวลา</label><input id="n_times" autocomplete="off" placeholder="เช่น 08:30, 17:00 (เว้นว่าง = ไม่ส่ง)"><small>1 บรรทัดต่อเครื่อง: 🔴 Down/Error · 🟡 Warning · 🟢 ปกติ / กลับปกติ</small><div class="st-err"></div></div>
 <div class="st-f" data-n="levels" style="grid-column:span 2"><label>ส่งเมื่อ</label><div class="nlv" id="n_levels"></div><div class="st-err"></div></div>
+<div class="st-f" data-n="kinds" style="grid-column:span 3"><label>เรื่องที่ส่ง</label><div class="nlv" id="n_kinds"></div><div class="st-err"></div></div>
+<div class="st-f" data-n="machines"><label for="n_machines">เฉพาะเครื่อง (คั่นด้วย ,)</label><input id="n_machines" autocomplete="off" placeholder="เว้นว่าง = ทุกเครื่อง"><div class="st-err"></div></div>
+<div class="st-f" data-n="groups"><label for="n_groups">เฉพาะกลุ่ม (คั่นด้วย ,)</label><input id="n_groups" autocomplete="off" placeholder="เว้นว่าง = ทุกกลุ่ม" list="groupList"><div class="st-err"></div></div>
+<div class="st-f"></div>
+<div class="st-f" data-n="template_alert" style="grid-column:span 3"><label for="n_tpl_alert">ข้อความการ์ดแจ้งเตือน</label><input id="n_tpl_alert" autocomplete="off"><small id="n_tpl_alert_pv"></small><div class="st-err"></div></div>
+<div class="st-f" data-n="template_recovered" style="grid-column:span 3"><label for="n_tpl_rec">ข้อความการ์ดกลับปกติ</label><input id="n_tpl_rec" autocomplete="off"><small id="n_tpl_rec_pv"></small><div class="st-err"></div></div>
+<div class="st-f" style="grid-column:span 3"><small id="n_tpl_keys"></small></div>
 </div>
 <div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="n_save" type="button">Save notifications</button><button class="st-btn" id="n_test" type="button">Send test card</button><button class="st-btn" id="n_sumnow" type="button">ส่งสรุปตอนนี้</button><button class="st-btn" id="n_clear" type="button">ลบ webhook</button></div>
 <div class="st-msg" id="n_msg" role="status"></div>
@@ -214,5 +253,6 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 </div>
 <script src="/badges.js"></script>
 <script src="/settings.js"></script>
+<script src="/alert_rules.js"></script>
 </body>
 </html>

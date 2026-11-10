@@ -218,13 +218,21 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
 
-        if url.path not in ("/info-logs", "/processes"):
+        if url.path not in ("/info-logs", "/processes", "/rule-preview"):
             return self._send(404, {"error": "not found"})
 
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
             return self._send(403, {"error": "forbidden"})
 
         params = parse_qs(url.query)
+        if url.path == "/rule-preview":          # ทดลองกฎแจ้งเตือนที่สร้างเอง (Settings > Custom alert rules)
+            try:
+                import sensor_monitor
+                rule = json.loads(params.get("rule", ["{}"])[0])
+                return self._send(200, {"rows": sensor_monitor.preview_rule(rule)})
+            except Exception as e:
+                print(f"[ONDEMAND] rule-preview error={e!r}")
+                return self._send(400, {"error": f"ทดลองกฎไม่ได้: {e}"})
         name = params.get("target", [""])[0]
         target = next(
             (t for t in load_config().get("targets") or [] if t.get("name") == name), None

@@ -1208,3 +1208,10 @@ td.bad{color:#e5484d}
 .syshead small{display:block;color:var(--mut);font-size:12.5px}.syshead b{display:block;font-size:18px;font-weight:600;margin-top:2px;word-break:break-word}
 .syshead em{display:block;font-style:normal;color:var(--mut);font-size:12.5px;margin-top:2px}
 .nlv{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:4px}
+/* Settings > Custom alert rules */
+.rltbl{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:10px}
+.rltbl th{text-align:left;color:var(--mut);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line)}
+.rltbl td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.rltbl tr.off td{opacity:.5}.rltbl td.act{white-space:nowrap;text-align:right}.rltbl td.act .st-btn+.st-btn{margin-left:6px}
+.rltbl td.rlwhat{max-width:320px;word-break:break-word}
+#rlForm{margin-top:14px}

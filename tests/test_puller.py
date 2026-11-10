@@ -189,6 +189,39 @@ class Scheduler(unittest.TestCase):
 
 
 
+class CustomRules(unittest.TestCase):
+    import custom_rules as cr
+
+    def test_status(self):
+        st = self.cr._status
+        self.assertEqual(st(90, {"op": ">", "warning": 80, "error": 95}, None, 2), "warning")
+        self.assertEqual(st(96, {"op": ">", "warning": 80, "error": 95}, None, 2), "error")
+        self.assertEqual(st(94, {"op": ">", "warning": 80, "error": 95}, "error", 2), "error")    # hysteresis
+        self.assertEqual(st(79, {"op": ">", "warning": 80}, "warning", 2), "warning")
+        self.assertEqual(st(77, {"op": ">", "warning": 80}, "warning", 2), "ok")
+        self.assertEqual(st(8, {"op": "<", "warning": 15, "error": 5}, None, 2), "warning")
+        self.assertEqual(st(4, {"op": "<", "warning": 15, "error": 5}, None, 2), "error")
+        self.assertEqual(st(50, {"op": ">", "error": 95}, None, 2), "ok")
+
+    def test_applies(self):
+        ap = self.cr.applies
+        r = {"metric": "disk", "targets": ["a"], "groups": ["TQ"], "os": "any"}
+        self.assertTrue(ap(r, {"name": "a"}, False))
+        self.assertTrue(ap(r, {"name": "b", "group": "TQ/IT"}, False))
+        self.assertFalse(ap(r, {"name": "c", "group": "TQX"}, False))
+        self.assertFalse(ap({"metric": "service"}, {"name": "x"}, False))           # service = Windows เท่านั้น
+        self.assertTrue(ap({"metric": "cpu"}, {"name": "x"}, True))
+
+    def test_evaluate_disk_and_confirm(self):
+        rows = {"disk": [({"mountpoint": "C:"}, 88.0), ({"mountpoint": "D:"}, 40.0)]}
+        ex = {"disk": "disk"}
+        out = self.cr.evaluate({"name": "w"}, [{"id": "d", "name": "Disk", "metric": "disk", "op": ">", "warning": 80,
+                                                "for_minutes": 10}], ex, 'cm_web="w"', True, lambda sid: None, 2, {},
+                               lambda q: rows.get(q), None)
+        self.assertEqual([(s["id"], s["status"], s["confirm"]) for s in out],
+                         [("w:rule:d:C:", "warning", 20), ("w:rule:d:D:", "ok", 20)])
+
+
 class TeamsNotify(unittest.TestCase):
     CFG = {"notify": {"teams": {"webhook_url": "https://example.webhook.office.com/x", "levels": ["down", "error", "recovered"]}}}
 
@@ -247,6 +280,26 @@ class TeamsNotify(unittest.TestCase):
         finally:
             notify._enqueue = orig
         self.assertEqual([p["summary"] for p in sent], ["🟡 w · RAM ใช้ไป 89% (เกณฑ์ 80%)", "🔴 w · Disk C: เต็ม 93% (เกณฑ์ 90%)"])
+
+    def test_filters_and_template(self):
+        sent = []
+        orig = notify._enqueue
+        notify._enqueue = lambda url, payload, what: sent.append(payload["summary"])
+        cfg = {"notify": {"teams": {"webhook_url": "https://x", "kinds": ["disk", "custom"], "groups": ["TQ"],
+                                    "template_alert": "[{level}] {machine}: {text}"}}}
+        try:
+            notify.sensor_events([
+                {"web": "a", "group": "TQ/IT", "to": "warning", "level": "warning", "kind": "disk", "value": 85, "unit": "%",
+                 "warning": 80, "mount": "C:"},
+                {"web": "a", "group": "TQ/IT", "to": "warning", "level": "warning", "kind": "memory", "value": 85},   # ไม่ได้เลือก
+                {"web": "b", "group": "OTHER", "to": "error", "level": "error", "kind": "disk", "value": 99, "error": 90},  # คนละกลุ่ม
+                {"web": "a", "group": "TQ", "to": "error", "level": "error", "kind": "custom", "sensor": "Load",
+                 "value": 9, "error": 4, "template": "{icon} {machine} โหลด {value}"},
+                {"web": "a", "group": "TQ", "to": "error", "level": "error", "kind": "custom", "notify": False},
+            ], cfg)
+        finally:
+            notify._enqueue = orig
+        self.assertEqual(sent, ["[WARNING] a: Disk C: เต็ม 85% (เกณฑ์ 80%)", "🔴 a โหลด 9"])
 
     def test_disabled_without_url(self):
         self.assertFalse(notify.settings({"notify": {"teams": {"webhook_url": ""}}})["enabled"])

@@ -1,3 +1,10 @@
+# เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง + เลือกเรื่องที่ส่ง Teams + แต่งข้อความการ์ด
+- Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
+- Settings > Notifications: เลือกเรื่องที่ส่ง (ชนิด sensor) · เฉพาะเครื่อง / กลุ่ม · ข้อความการ์ดแจ้งเตือน / กลับปกติ แบบใส่ตัวแปร
+- รายละเอียด: `docs/NOTIFY-TH.md`
+
+---
+
 # เพิ่มเติม (6 พ.ย. 2026): แจ้งเตือน Microsoft Teams
 - Settings > **Notifications (Microsoft Teams)**: วาง webhook URL (Teams Workflows) เลือกระดับ (Down / Error / Warning / Recovered / Web-SSL check) ทดสอบส่งได้
 - ส่งการ์ด Adaptive Card ครั้งเดียวต่อการเปลี่ยนสถานะ รวมหลายเรื่องของเครื่องเดียวเป็นการ์ดเดียว มีปุ่มเปิด dashboard

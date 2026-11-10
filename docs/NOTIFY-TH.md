@@ -65,3 +65,30 @@ central ส่ง **การ์ด (Adaptive Card)** เข้าช่อง T
 - ดูการส่ง: `docker logs central-puller | grep NOTIFY`
 
 โค้ด: `start_push_log/puller/notify.py` (ส่งจริง) · `web_dashboard/backend/notify_service.py` (ตั้งค่า / ทดสอบ)
+
+## ตั้งให้ส่งเฉพาะบางเรื่อง / บางเครื่อง และแต่งข้อความ
+
+Settings > Notifications
+- **เรื่องที่ส่ง**: เลือกชนิด (เครื่อง Down, CPU, RAM, Disk, Service, Bottleneck, Ping, กฎที่สร้างเอง ...) ไม่ติ๊ก = ไม่ส่งเรื่องนั้น
+- **เฉพาะเครื่อง / เฉพาะกลุ่ม**: ว่าง = ทุกเครื่อง · กลุ่มรวมกลุ่มย่อย (`TQ` = `TQ/IT`, `TQ/HR`)
+- **ข้อความการ์ด** (แจ้งเตือน / กลับปกติ) ใส่ข้อความเองได้ มีตัวอย่างให้ดูทันที ตัวแปรที่ใช้ได้:
+  `{icon}` `{machine}` `{group}` `{host}` `{sensor}` `{text}` `{value}` `{unit}` `{threshold}` `{level}` `{time}` `{duration}`
+  เช่น `[{level}] {machine}: {text}` -> `[WARNING] host-window: RAM ใช้ไป 83% (เกณฑ์ 80%)`
+
+## กฎแจ้งเตือนที่สร้างเอง (Settings > Custom alert rules)
+
+| ช่อง | ความหมาย |
+|---|---|
+| ค่าที่ดู | CPU %, RAM ใช้ไป %, RAM ว่าง %, Disk ใช้ไป % / ว่าง GB / latency (ต่อไดรฟ์), Disk I/O %, CPU queue, Network %, TCP retransmit %, Ping loss / latency, Service หยุด (Windows), **PromQL เอง** |
+| ไดรฟ์ / mount | เฉพาะค่าของดิสก์ เช่น `D:` หรือ `/var` (ว่าง = ทุกไดรฟ์ แยก sensor ละไดรฟ์) |
+| PromQL | ใช้ `$labels` แทนตัวเลือกเครื่อง เช่น `node_load1{$labels}` หรือ `windows_process_working_set_private_bytes{$labels,process="sqlservr"} / 1e9` (หลายค่า -> ใช้ค่าที่แย่ที่สุด) |
+| แจ้งเมื่อค่า | ≥ (ค่ามากยิ่งแย่) หรือ ≤ (ค่าน้อยยิ่งแย่ เช่น Disk ว่าง GB) |
+| Warning / Error | ใส่อย่างน้อย 1 ค่า |
+| ต้องเป็นต่อเนื่องนาน | นาที (แยกจากค่าทั้งระบบในการ์ด Alerts) |
+| ใช้กับ | เลือกเครื่อง / กลุ่ม / OS (ไม่เลือก = ทุกเครื่อง) |
+| ส่ง Microsoft Teams | ปิดได้ทีละกฎ |
+| ข้อความบนการ์ด | ของกฎนี้โดยเฉพาะ (ว่าง = แบบทั้งระบบ) |
+
+- ปุ่ม **Preview กับเครื่องตอนนี้** = ดูค่าปัจจุบันและสถานะของทุกเครื่องที่ตรงกฎ ก่อนบันทึก
+- ผลของกฎเป็น sensor ชนิด "custom" ในหน้า Events (Acknowledge / ประวัติปัญหา / สรุปรายวันได้เหมือน sensor ปกติ)
+- เก็บใน `config/puller.yaml` -> `alert_rules:` · ตัวตรวจ `start_push_log/puller/custom_rules.py`

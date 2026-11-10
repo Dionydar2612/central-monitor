@@ -97,6 +97,32 @@ class Backend(unittest.TestCase):
         log = open(os.path.join(self.tmp, "state", "audit.log"), encoding="utf-8").read()
         self.assertNotIn("abc123456", log)                               # URL ไม่อยู่ใน Activity log
 
+    def test_alert_rules(self):
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        d = c.get("/api/alert-rules").json
+        self.assertIn("disk", [m["key"] for m in d["metrics"]])
+        bad = c.put("/api/alert-rules", json={"rules": [{"name": "", "metric": "disk", "warning": 90, "error": 80}]})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("rules.0.name", bad.json["fields"])
+        self.assertIn("rules.0.warning", bad.json["fields"])
+        ok = c.put("/api/alert-rules", json={"rules": [
+            {"name": "Disk D", "metric": "disk", "mount": "D:", "warning": 85, "error": 95, "for_minutes": 10, "targets": ["web-01"]},
+            {"name": "RAM ว่างน้อย", "metric": "mem_available", "op": "<", "warning": 15, "error": 5},
+            {"name": "IIS หยุด", "metric": "service", "service": "W3SVC", "level": "warning"},
+            {"name": "Load", "metric": "promql", "promql": "node_load1{$labels}", "warning": 4},
+        ]})
+        self.assertEqual(ok.status_code, 200, ok.json)
+        rules = ok.json["rules"]
+        self.assertEqual([r["metric"] for r in rules], ["disk", "mem_available", "service", "promql"])
+        self.assertEqual(rules[0]["for_minutes"], 10)
+        self.assertEqual(rules[2]["warning"], 1)
+        ids = [r["id"] for r in rules]
+        again = c.put("/api/alert-rules", json={"rules": rules}).json["rules"]
+        self.assertEqual([r["id"] for r in again], ids)                   # แก้แล้ว id เดิม
+        acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
+        self.assertIn("settings.alert_rules", acts)
+
     def test_password_hash(self):
         import users_service as u
         h = u.hash_password("secret-pass")

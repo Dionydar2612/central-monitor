@@ -80,6 +80,7 @@ import retention_service
 import agent_service
 import alert_settings_service
 import notify_service
+import alert_rules_service
 import host_details
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
@@ -171,7 +172,8 @@ def _required_role(method, path):
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
     if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention",
-                                                                     "/api/alert-settings", "/api/notify-settings")):
+                                                                     "/api/alert-settings", "/api/notify-settings",
+                                                                     "/api/alert-rules")):
         return "admin"
     if path.startswith("/api/checks"):
         return "viewer" if method == "GET" else "admin"
@@ -208,8 +210,9 @@ _AUDIT_RULES = [
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
      ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
-    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times")),
+    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times", "kinds", "machines", "groups")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
+    ("PUT", re.compile(r"^/api/alert-rules$"), "settings.alert_rules", ()),
     ("POST", re.compile(r"^/api/notify-settings/summary-now$"), "settings.notify_summary_now", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
@@ -476,6 +479,32 @@ def notify_settings_test():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)
+
+
+@app.get("/api/alert-rules")
+def alert_rules_get():
+    """กฎแจ้งเตือนที่สร้างเอง + รายการ metric / เครื่อง / กลุ่ม ให้ฟอร์มเลือก (admin)"""
+    try:
+        return jsonify(alert_rules_service.list_rules())
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.put("/api/alert-rules")
+def alert_rules_put():
+    """บันทึกกฎทั้งรายการ  body: {rules: [...]}"""
+    try:
+        ok, out = alert_rules_service.save_rules(request.get_json(silent=True) or {})
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (200 if ok else 400)
+
+
+@app.post("/api/alert-rules/preview")
+def alert_rules_preview():
+    """ทดลองกฎ 1 ข้อกับทุกเครื่อง ณ ตอนนี้ (ไม่บันทึก)"""
+    status, data = alert_rules_service.preview(request.get_json(silent=True) or {})
+    return jsonify(data), status
 
 
 @app.post("/api/notify-settings/summary-now")

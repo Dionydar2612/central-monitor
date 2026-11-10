@@ -54,6 +54,7 @@ from datetime import datetime
 from config import CHECKPOINT_FILE, STATE_DIR, SYSTEM_DIR, load_config, parse_interval
 from events import append_events
 import notify
+import custom_rules
 
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
@@ -178,6 +179,7 @@ def _win_exprs(l):
         "disk_latency_vec": f'label_replace({busy_t} / {ops} * 1000 and {ops} >= 1, "mountpoint", "$1", "volume", "(.*)")',
         "disk_queue": f"max(windows_logical_disk_requests_queued{{{vol}}})",
         "disk_busy": f"max(100 - clamp_max(rate(windows_logical_disk_idle_seconds_total{{{vol}}}[5m]), 1) * 100)",
+        "disk_free_gb": (f'label_replace(windows_logical_disk_free_bytes{{{vol}}} / 1e9, "mountpoint", "$1", "volume", "(.*)")'),
         "cpu_queue_per_core": f'max({{__name__=~"windows_system_processor_queue(_length)?",{l}}}) / {cores}',
         "pages_in": f"sum(rate(windows_memory_swap_pages_read_total{{{l}}}[5m]))",
         "commit_pct": f"max(windows_memory_committed_bytes{{{l}}}) / max(windows_memory_commit_limit_bytes{{{l}}}) * 100",
@@ -207,6 +209,7 @@ def _linux_exprs(l):
         "disk_latency_vec": f'label_replace({busy_t} / {ops} * 1000 and {ops} >= 1, "mountpoint", "$1", "device", "(.*)")',
         "disk_queue": f"max(rate(node_disk_io_time_weighted_seconds_total{{{dk}}}[5m]))",
         "disk_busy": f"max(rate(node_disk_io_time_seconds_total{{{dk}}}[5m]) * 100)",
+        "disk_free_gb": f"node_filesystem_avail_bytes{{{fs}}} / 1e9",
         "cpu_queue_per_core": f'max(node_load1{{{l}}}) / count(node_cpu_seconds_total{{{l},mode="idle"}})',
         "pages_in": f"sum(rate(node_vmstat_pswpin{{{l}}}[5m])) + sum(rate(node_vmstat_pswpout{{{l}}}[5m]))",
         "commit_pct": f"max(node_memory_Committed_AS_bytes{{{l}}}) / max(node_memory_CommitLimit_bytes{{{l}}}) * 100",
@@ -274,7 +277,7 @@ def _options(config):
     crit = s.get("critical_services")
     if not isinstance(crit, list):
         crit = DEFAULT_CRITICAL_SERVICES
-    return {"confirm": confirm, "hyst": hyst, "retention": retention,
+    return {"confirm": confirm, "hyst": hyst, "retention": retention, "rules": custom_rules.rules(config),
             "critical_services": [str(x) for x in crit if str(x).strip()],
             "bottleneck": s.get("bottleneck", True) is not False}
 
@@ -545,6 +548,12 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, opts):
     if opts["bottleneck"]:
         _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, windows, add)
 
+    # --- กฎแจ้งเตือนที่ผู้ใช้สร้างเอง (Settings > Custom alert rules) ---
+    if opts.get("rules"):
+        out.extend(custom_rules.evaluate(
+            t, opts["rules"], ex, labels, windows,
+            lambda sid: (previous.get(sid) or {}).get("status"), hyst, base, _query, _ping_exprs))
+
     if agent:
         return out                       # agent ไม่ใช้ SSH -> ไม่มี sensor Log pull
     last = _last_contact(name, checkpoints)
@@ -718,13 +727,14 @@ def run_once(previous):
             same = _group(pend.get("status")) == _group(raw)
             count = pend.get("count", 0) + 1 if same else 1
             first_seen = pend.get("first", now) if same else now
-            if count >= opts["confirm"]:
+            need = s.get("confirm") or opts["confirm"]          # กฎที่สร้างเองตั้งระยะเวลาเองได้
+            if count >= need:
                 new = raw
                 s["pending"] = None
             else:
                 new = confirmed
-                s["pending"] = {"status": raw, "count": count, "need": opts["confirm"], "first": first_seen}
-                s["message"] += f" · {STATUS_TEXT.get(raw, raw)} seen {count}/{opts['confirm']} checks"
+                s["pending"] = {"status": raw, "count": count, "need": need, "first": first_seen}
+                s["message"] += f" · {STATUS_TEXT.get(raw, raw)} seen {count}/{need} checks"
         s["status"] = new
         s["since"] = old.get("since", now) if new == confirmed else first_seen
 
@@ -757,7 +767,9 @@ def run_once(previous):
                   "sensor": s["name"], "from": confirmed, "to": new,
                   # ใช้ทำข้อความสั้นในการ์ด Teams (notify.py)
                   "sid": s["id"], "kind": s.get("kind"), "value": s.get("value"), "unit": s.get("unit"),
-                  "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error")}
+                  "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error"),
+                  "low": s.get("low_is_bad"), "notify": s.get("notify", True), "template": s.get("template"),
+                  "host": s.get("host")}
         if new == "ok" and closed and closed[-1]["id"] == s["id"]:
             c = closed[-1]
             pk = f" · peak {c['peak']:.1f}{'%' if c.get('unit') == '%' else ''}" if c.get("peak") is not None else ""
@@ -787,6 +799,32 @@ def run_once(previous):
     except Exception as e:
         print(f"[NOTIFY ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
+
+
+def preview_rule(rule):
+    """ทดลองกฎ 1 ข้อกับทุกเครื่อง ณ ตอนนี้ (หน้า Settings ปุ่ม Preview) -> [{machine, name, value, unit, status, message}]"""
+    config = load_config()
+    hyst = _options(config)["hyst"]
+    rule = dict(rule, id=rule.get("id") or "preview", enabled=True)
+    out = []
+    for t in config.get("targets") or []:
+        if not isinstance(t, dict) or not t.get("name") or t.get("paused"):
+            continue
+        windows = _is_windows_target(t)
+        agent = str(t.get("type") or "ssh") == "agent"
+        if not custom_rules.applies(rule, t, windows):
+            continue
+        prom = t.get("prometheus") or {}
+        labels = f'cm_web="{t["name"]}"' if agent else f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
+        ex = _win_exprs(labels) if windows and agent else _linux_exprs(labels)
+        rows = custom_rules.evaluate(t, [rule], ex, labels, windows, lambda sid: None, hyst, {}, _query, _ping_exprs)
+        if not rows:
+            out.append({"machine": t["name"], "name": None, "value": None, "unit": "", "status": "nodata",
+                        "message": "ไม่มีข้อมูล"})
+        for r in rows:
+            out.append({"machine": t["name"], "name": r["name"], "value": r["value"], "unit": r["unit"],
+                        "status": r["status"], "message": r["message"]})
+    return out
 
 
 def _summary_extra(targets):
