@@ -70,8 +70,10 @@ if (-not $tcp.TcpTestSucceeded) {
 Say "2/7 เตรียม Fluent Bit $Version"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not $ZipPath) {
-    $local = Join-Path $Here "fluent-bit-$Version-win64.zip"
-    if (Test-Path $local) { $ZipPath = $local }
+    foreach ($dir in @($Here, (Join-Path $env:USERPROFILE "Downloads"))) {
+        $local = Join-Path $dir "fluent-bit-$Version-win64.zip"
+        if (-not $ZipPath -and (Test-Path $local)) { $ZipPath = $local }
+    }
 }
 if (-not $ZipPath) {
     $ZipPath = Join-Path $env:TEMP "fluent-bit-$Version-win64.zip"
@@ -190,8 +192,10 @@ if ($NoExporter) {
 
         # ไฟล์ .exe: -ExporterExe > วางไว้ข้างสคริปต์ > ดาวน์โหลด
         if (-not $ExporterExe) {
-            $local = Join-Path $Here "windows_exporter-$ExporterVersion-amd64.exe"
-            if (Test-Path $local) { $ExporterExe = $local }
+            foreach ($dir in @($Here, (Join-Path $env:USERPROFILE "Downloads"))) {
+                $local = Join-Path $dir "windows_exporter-$ExporterVersion-amd64.exe"
+                if (-not $ExporterExe -and (Test-Path $local)) { $ExporterExe = $local }
+            }
         }
         if (-not $ExporterExe) {
             $ExporterExe = Join-Path $env:TEMP "windows_exporter-$ExporterVersion-amd64.exe"

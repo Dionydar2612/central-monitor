@@ -75,6 +75,8 @@ Settings > **+ Add target**
 
 ## ขั้นที่ 2: ติดตั้งบนเครื่อง Windows
 
+> ไม่ต้องแตก zip เอง: กด Download installer (zip) แล้วปล่อยไว้ใน Downloads · คำสั่งจาก Make command จะหา `cm-agent-windows*.zip` ล่าสุดใน Downloads ของ user ที่รัน แตกไปที่ `%TEMP%\cm-agent` แล้วติดตั้งให้ (เครื่องไม่มีอินเทอร์เน็ต: วาง `fluent-bit-5.1.5-win64.zip` / `windows_exporter-0.32.1-amd64.exe` ไว้ใน Downloads ด้วย)
+
 1. กด **Download installer (zip)** แล้วคัดลอกไปที่เครื่อง Windows แตกไฟล์
    - เครื่องออกอินเทอร์เน็ตไม่ได้: วาง `windows_exporter-0.32.1-amd64.exe`
      (https://github.com/prometheus-community/windows_exporter/releases/tag/v0.32.1) และ `fluent-bit-5.1.5-win64.zip` จาก

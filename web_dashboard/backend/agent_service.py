@@ -86,8 +86,12 @@ def setup_info(target, central):
     logs = ";".join(agent.get("logs") or [])
     channels = ",".join(agent.get("channels") or ["System", "Application"])
     tok = token()
+    # ไม่ต้องแตกไฟล์เอง: หา zip ล่าสุดใน Downloads -> แตกไปที่ %TEMP%\cm-agent -> รันสคริปต์
+    unzip = ("$z=Get-ChildItem \"$env:USERPROFILE\\Downloads\\cm-agent-windows*.zip\" | Sort-Object LastWriteTime -Descending | "
+             "Select-Object -First 1; if(-not $z){throw 'cm-agent-windows.zip not found in Downloads - click Download installer first'}; "
+             "$d=\"$env:TEMP\\cm-agent\"; Expand-Archive $z.FullName $d -Force; ")
     parts = [
-        "powershell -ExecutionPolicy Bypass -File .\\install-fluentbit.ps1",
+        unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\install-fluentbit.ps1\"",
         f"-Central {central or '<IP-ของ-central>'}",
         f"-Port {AGENT_PORT}" if str(AGENT_PORT) != "4318" else "",
         f"-Token {tok or '<CENTRAL_AGENT_TOKEN>'}",
