@@ -1,7 +1,8 @@
 # เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง (Custom alert rules) + ส่ง Teams ต่อกฎ
 - Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
+- เอา Apps & Web ออกจากตาราง WEB status ในหน้าแรก (ดูที่แถบ Apps & Web / หน้า /apps)
 - ป๊อปอัปแจ้งเตือนมุมขวาล่างทุกหน้า ขึ้นเองอัตโนมัติ เรื่องเดียวกับ Teams · ตั้งค่า / แจ้งเตือนของ Windows / ทดลอง ที่ Settings > Notifications (เอาปุ่ม 🔔 ออก)
-- Apps & Web: ป๊อปอัปรายละเอียด + uptime + กราฟทุกประเภท (ไม่ใช่แค่เว็บ) · ทุกรายการขึ้นในตาราง WEB status · metrics เปลี่ยนเป็น cm_app_*
+- Apps & Web: ป๊อปอัปรายละเอียด + uptime + กราฟทุกประเภท (ไม่ใช่แค่เว็บ) · metrics เปลี่ยนเป็น cm_app_*
 - Monitor เว็บดูได้เหมือนเครื่อง: การ์ดมีกราฟเวลาตอบ + uptime 24h · หน้ารายละเอียด (กราฟ 1h-30d, uptime 24h/7d/30d, ประวัติปัญหา) · แถวในตาราง WEB status + กล่อง Web · เฝ้าดูหลายพอร์ตทีเดียวจากแท็บ Software · ตั้งค่าเพิ่มเติม (คำในหน้า, ตอบช้า, SSL ใกล้หมด, นาทีต่อเนื่อง) · puller ส่ง cm_app_* ให้ Prometheus
 - Monitor เว็บ: เลือกโหมดจาก URL เอง (localhost = บนเครื่อง / อื่นๆ = จาก central) · normalize URL (`8090` -> `http://localhost:8090`) · ปุ่มเลือกพอร์ตจาก cm-probe (`GET /api/host/<เครื่อง>/probe-ports`) · ข้อความสถานะแยก 4 กรณี · 2xx/3xx = ทำงาน, 4xx/5xx/0 = ไม่ทำงาน · Monitor เก่าแปลงตอนโหลด
 - Apps & Web: แก้ไขรายการได้ · เว็บบนเครื่อง (localhost) และ Docker container (Windows: cm-probe.ps1 ทุก 1 นาที, Linux: ผ่าน SSH) · แถบสรุปบนหน้าแรก · แท็บ Software มี Docker / เว็บบนเครื่อง

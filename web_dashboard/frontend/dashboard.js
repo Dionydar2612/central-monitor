@@ -1044,9 +1044,7 @@ async function loadApps() {
     if (!box) return;
     let items = [];
     try { items = (await apiGet("/api/apps")).items || []; } catch (e) { return; }
-    /* Monitor เว็บแสดงในต้นไม้ WEB status ด้วย (ตามกลุ่มของเครื่อง) */
-    S.wm = items.map(toWebmon);
-    if (S.ov) renderMachines();
+    /* Apps & Web ไม่แสดงในตาราง WEB status (ผู้ใช้ขอ) ดูที่แถบด้านบน / หน้า /apps */
     box.hidden = !items.length;
     if (!items.length) return;
     const st = x => ["error", "down"].includes(x.status) ? "bad" : x.status === "warning" ? "wr" : x.status === "ok" ? "ok" : "";
