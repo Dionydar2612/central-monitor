@@ -44,9 +44,9 @@ function tile(x) {
     const del = A.role === "admin" ? `<button type="button" class="apEdit" data-edit="${esc(x.rule)}" title="แก้ไข">✎ แก้ไข</button>`
         + `<button type="button" class="apDel" data-del="${esc(x.rule)}" title="เลิกเฝ้าดู">× ลบ</button>` : "";
     const href = x.web && x.web !== "-" && !x.web.includes(",") ? `/?web=${encodeURIComponent(x.web)}` : "#";
-    const isWeb = x.type === "web" && x.id;
+    const isWeb = !!x.id;                       // ทุกประเภทที่มีสถานะแล้ว: กราฟเล็ก + uptime + คลิกดูรายละเอียด
     const up = x.uptime_24h, upc = up == null ? "" : up >= 99.9 ? "ok" : up >= 99 ? "wr" : "cr";
-    const stat = isWeb ? `<div class="apStat">${spark(x.spark)}<span>uptime <b class="${upc}">${up == null ? "-" : up.toFixed(up >= 99.9 ? 2 : 1) + "%"}</b> 24h</span>`
+    const stat = isWeb ? `<div class="apStat">${spark(x.spark) || strip(x)}<span>uptime <b class="${upc}">${up == null ? "-" : up.toFixed(up >= 99.9 ? 2 : 1) + "%"}</b> 24h</span>`
         + `${x.code != null ? `<span>HTTP <b class="${x.code && x.code < 400 ? "ok" : "cr"}">${esc(x.code)}</b></span>` : ""}</div>` : "";
     const attrs = isWeb ? `href="/apps?open=${encodeURIComponent(x.rule)}&web=${encodeURIComponent(x.web)}" data-open="${esc(x.rule)}" data-oweb="${esc(x.web)}"` : `href="${href}"`;
     return `<a class="apT ${cls(x.status)}" ${attrs}><span class="apDot"></span><div class="apMain"><b title="${esc(x.what)}">${esc(x.name)}</b>`
@@ -54,6 +54,11 @@ function tile(x) {
         + `<span class="apAge">${esc(ageText(x))}</span>${del}</a>`;
 }
 
+function strip(x) {
+    /* ไม่มีกราฟเวลาตอบ (โปรแกรม / Service / Docker): แถบสถานะปัจจุบัน */
+    const c = cls(x.status) || "na";
+    return `<span class="apStrip1 ${c}" aria-hidden="true"></span>`;
+}
 function spark(pts) {
     if (!pts || pts.length < 2) return "";
     const W = 90, H = 22, mx = Math.max(...pts, 1);
@@ -76,6 +81,14 @@ function dur(sec) {
 function chartSvg(series, range) {
     const ms = series.ms || [], up = series.up || [];
     if (!ms.length && !up.length) return `<div class="apEmpty">ยังไม่มีข้อมูลกราฟ (เริ่มเก็บหลังอัปเดตระบบ · ทุก 30 วินาที)</div>`;
+    if (!ms.length) {                           // โปรแกรม / Service / Docker / พอร์ตบนเครื่อง: แถบทำงาน / ไม่ทำงาน ตามเวลา
+        const t0 = up[0][0], t1 = Math.max(up[up.length - 1][0], t0 + 1), W = 900, H = 70, L = 8, R = 8;
+        const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), step = up.length > 1 ? up[1][0] - up[0][0] : 60;
+        const bars = up.map(p => `<rect class="${p[1] >= 1 ? "upb" : "dn2"}" x="${X(p[0] - step / 2).toFixed(1)}" y="8" width="${Math.max(1.5, X(p[0] + step / 2) - X(p[0] - step / 2)).toFixed(1)}" height="34"><title>${p[1] >= 1 ? "ทำงาน" : "ไม่ทำงาน"} ${fmtT(p[0], "1h")}</title></rect>`).join("");
+        const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => { const t = t0 + (t1 - t0) * f;
+            return `<text x="${X(t).toFixed(1)}" y="${H - 6}" text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}">${fmtT(t, range)}</text>`; }).join("");
+        return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="ช่วงที่ทำงาน (เขียว) และไม่ทำงาน (แดง)">${bars}${ticks}</svg>`;
+    }
     const all = ms.concat(up);
     const t0 = Math.min(...all.map(p => p[0])), t1 = Math.max(...all.map(p => p[0]), t0 + 1);
     const W = 900, H = 220, L = 46, R = 8, T = 10, B = 24, mx = Math.max(10, ...ms.map(p => p[1])) * 1.1;
@@ -98,16 +111,20 @@ async function loadDetail() {
     const d = D.data, x = d.item, c = cls(x.status);
     $("adDot").className = "apBig " + c;
     $("adName").textContent = x.name;
-    $("adSub").textContent = `${x.what} · ${x.web} · ${x.metric === "http_local" ? "ตรวจบนเครื่อง" : "ตรวจจาก central"}`;
+    const where = ["http_local", "port_listen"].includes(x.metric) ? "ตรวจบนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? "ตรวจจาก central" : TYPE_TH[x.type] || "";
+    $("adSub").textContent = `${x.what} · ${x.web} · ${where}`;
     const pct = v => v == null ? "-" : `${v.toFixed(v >= 99.9 ? 2 : 1)}%`;
     const pc = v => v == null ? "" : v >= 99.9 ? "ok" : v >= 99 ? "wr" : "cr";
     const st = { ok: ["ทำงาน", "ok"], warning: ["ทำงาน (เตือน)", "wr"], error: ["ไม่ทำงาน", "cr"], down: ["ไม่ทำงาน", "cr"] }[x.status] || ["รอข้อมูล", ""];
     const u = d.uptime || {};
+    const timed = x.type === "web" || x.metric === "tcp_port";
     $("adStats").innerHTML = [
         ["สถานะ", `<b class="${st[1]}">${st[0]}</b>`],
-        ["HTTP ล่าสุด", `<b class="${x.code && x.code < 400 ? "ok" : x.code != null ? "cr" : ""}">${x.code ?? "-"}</b>`],
-        ["เวลาตอบล่าสุด", `<b>${x.ms != null && x.code ? Math.round(x.ms) + " ms" : "-"}</b>`],
-        [`สูงสุด (${D.range})`, `<b>${d.max_ms != null ? d.max_ms + " ms" : "-"}</b>`],
+        x.type === "web" ? ["HTTP ล่าสุด", `<b class="${x.code && x.code < 400 ? "ok" : x.code != null ? "cr" : ""}">${x.code ?? "-"}</b>`]
+            : ["ประเภท", `<b>${esc(TYPE_TH[x.type] || x.type)}</b>`],
+        timed ? ["เวลาตอบล่าสุด", `<b>${x.ms != null && (x.code == null || x.code) ? Math.round(x.ms) + " ms" : "-"}</b>`]
+            : ["ตรวจ", `<b>${esc(x.what || "-")}</b>`],
+        timed ? [`สูงสุด (${D.range})`, `<b>${d.max_ms != null ? d.max_ms + " ms" : "-"}</b>`] : ["เครื่อง", `<b>${esc(x.web)}</b>`],
         ["Uptime 24h", `<b class="${pc(u.h24)}">${pct(u.h24)}</b><small>7d ${pct(u.d7)} · 30d ${pct(u.d30)}</small>`],
         [x.status === "ok" || x.status === "warning" ? "ทำงานมา" : "เป็นแบบนี้มา", `<b>${x.since ? ago(x.since) : "-"}</b>`],
     ].map(([k, v]) => `<div><small>${k}</small>${v}</div>`).join("");
@@ -121,7 +138,7 @@ async function loadDetail() {
     const set = [`ระดับเมื่อไม่ทำงาน: ${x.level === "warning" ? "Warning" : "Error"}`, `ต้องผิดปกติต่อเนื่อง ${x.for_minutes ?? 3} นาที`,
         x.keyword ? `ต้องมีคำ "${x.keyword}"` : "", x.slow_ms ? `เตือนเมื่อช้ากว่า ${x.slow_ms} ms` : "", x.ssl_days ? `เตือน SSL ก่อนหมดอายุ ${x.ssl_days} วัน` : "",
         x.ssl_days_left != null ? `SSL เหลือ ${x.ssl_days_left} วัน` : ""].filter(Boolean);
-    $("adSet").textContent = "ตั้งค่า: " + set.join(" · ") + " · 2xx / 3xx = ทำงาน, 4xx / 5xx / ไม่ตอบ = ไม่ทำงาน";
+    $("adSet").textContent = "ตั้งค่า: " + set.join(" · ") + (x.type === "web" ? " · 2xx / 3xx = ทำงาน, 4xx / 5xx / ไม่ตอบ = ไม่ทำงาน" : "");
     $("adEdit").hidden = A.role !== "admin";
 }
 function openDetail(rule, web) {

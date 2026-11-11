@@ -569,8 +569,10 @@ def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, qu
                     "error" if _num(r.get("error")) is not None or _num(r.get("warning")) is None else "warning"
                 bad, msg, shown, sunit = value
                 st = "unknown" if bad is None else "warning" if bad == "warning" else level if bad else "ok"
-                if r["metric"] in ("http_local", "http_url") and bad is not None:
+                if bad is not None:                                          # ทุกประเภทใน Apps & Web: กราฟขึ้น-ลง / uptime
                     extra = dict(extra or {}, up=bad is not True)          # ช้า / SSL ใกล้หมด = ยังทำงาน
+                    if sunit == "ms" and shown is not None and "ms" not in extra:
+                        extra["ms"] = round(shown)
                 unit = sunit
                 warning, error = None, None
             else:

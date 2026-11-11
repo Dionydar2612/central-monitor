@@ -1328,10 +1328,7 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .cmToast small{color:var(--mut);font-size:11px}.cmToast b{font-size:14px;font-weight:600;overflow-wrap:anywhere}
 .cmToast .cmTb>span{font-size:13px;color:var(--mut);overflow-wrap:anywhere}
 .cmToast .cmTx{border:0;background:none;color:var(--mut);font-size:18px;line-height:1;cursor:pointer;padding:0 2px}.cmToast .cmTx:hover{color:var(--ink)}
-.cmBellWrap{position:relative;display:inline-flex}
-.cmBell{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 9px;cursor:pointer;font-size:15px;line-height:1}
-.cmBellMenu{position:absolute;top:calc(100% + 6px);right:0;z-index:60;width:290px;background:var(--card);border:1px solid var(--line);border-radius:10px;
-  box-shadow:0 10px 30px rgba(15,26,51,.18);padding:12px 14px;display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--ink)}
-.cmBellMenu label{display:flex;gap:8px;align-items:flex-start;cursor:pointer}.cmBellMenu label.dis{color:var(--mut);cursor:not-allowed}
-.cmBellMenu small{color:var(--mut);font-size:11px;margin-top:-4px;padding-left:24px}
-.cmBellMenu button{align-self:flex-start;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.apChart .upb{fill:rgba(16,194,122,.55)}.apChart .dn2{fill:#e5484d}
+.apStrip1{display:inline-block;width:70px;height:8px;border-radius:4px;background:#9aa7bf;flex:none}
+.apStrip1.ok{background:rgba(16,194,122,.6)}.apStrip1.wr{background:#e5a000}.apStrip1.bad{background:#e5484d}
+.apMHead h2 b{font-weight:600}

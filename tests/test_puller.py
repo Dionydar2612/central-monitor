@@ -281,6 +281,8 @@ class SoftwareRules(unittest.TestCase):
         self.assertEqual(self.ev({"metric": "docker", "container": "web"}, rows)[0]["status"], "ok")
         self.assertEqual(self.ev({"metric": "docker", "container": "db"}, rows)[0]["message"], "db: Exited (1)")
         self.assertEqual(self.ev({"metric": "docker", "container": "gone"}, rows)[0]["status"], "error")
+        self.assertEqual([self.ev({"metric": "docker", "container": n}, rows)[0]["details"]["up"] for n in ("web", "db")],
+                         [True, False])                                                       # กราฟ / uptime ทุกประเภท
         self.assertEqual(self.ev({"metric": "docker", "container": "web"}, {}), [])                    # agent เก่า
         # Linux: ผ่าน SSH
         out = ('##DOCKER\n{"Names":"api","State":"running","Status":"Up 1h"}\n##HTTP\n'

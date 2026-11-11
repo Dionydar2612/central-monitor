@@ -75,7 +75,7 @@ def _why_nodata(rule, targets):
 
 
 # ---------------------------------------------------------------------------
-# Monitor เว็บ: uptime + กราฟเวลาตอบ (จาก cm_webmon_* ที่ puller ส่งให้ Prometheus ทุก 30 วินาที)
+# Apps & Web: uptime + กราฟ (จาก cm_app_* ที่ puller ส่งให้ Prometheus ทุก 30 วินาที) ทุกประเภท
 #   uptime = สัดส่วนเวลาที่ตรวจแล้วตอบ 2xx / 3xx ของเว็บนั้นเอง (ไม่รวมกับเว็บอื่น)
 # ---------------------------------------------------------------------------
 
@@ -90,10 +90,10 @@ def _web_stats(items):
     import time as _t
     stats = {}
     try:
-        for m, v in prom_vector("avg_over_time(cm_webmon_up[24h])"):
+        for m, v in prom_vector("avg_over_time(cm_app_up[24h])"):
             stats.setdefault(_key(m), {})["uptime_24h"] = round(v * 100, 2)
         end = _t.time()
-        res = prometheus_query_range("cm_webmon_response_ms", end - 3600, end, 120)["data"]["result"]
+        res = prometheus_query_range("cm_app_response_ms", end - 3600, end, 120)["data"]["result"]
         for row in res:
             pts = [round(float(v)) for _t2, v in row.get("values") or [] if v not in ("NaN", "+Inf", "-Inf")]
             stats.setdefault(_key(row.get("metric") or {}), {})["spark"] = pts
@@ -129,17 +129,17 @@ def detail(rule_id, web, range_key="24h"):
         except Exception as e:
             print(f"[APPS] detail {q}: {e!r}")
             return []
-    out["series"]["ms"] = rng(f"cm_webmon_response_ms{{{sel}}}")
-    out["series"]["up"] = rng(f"min_over_time(cm_webmon_up{{{sel}}}[{step}s])")
-    out["series"]["code"] = rng(f"max_over_time(cm_webmon_http_code{{{sel}}}[{step}s])")
+    out["series"]["ms"] = rng(f"cm_app_response_ms{{{sel}}}")
+    out["series"]["up"] = rng(f"min_over_time(cm_app_up{{{sel}}}[{step}s])")
+    out["series"]["code"] = rng(f"max_over_time(cm_app_http_code{{{sel}}}[{step}s])")
     for k, w in (("h24", "24h"), ("d7", "7d"), ("d30", "30d")):
         try:
-            v = prom_value(f"avg_over_time(cm_webmon_up{{{sel}}}[{w}])")
+            v = prom_value(f"avg_over_time(cm_app_up{{{sel}}}[{w}])")
             out["uptime"][k] = None if v is None else round(v * 100, 2)
         except Exception:
             out["uptime"][k] = None
     try:
-        mx = prom_value(f"max_over_time(cm_webmon_response_ms{{{sel}}}[{range_key}])")
+        mx = prom_value(f"max_over_time(cm_app_response_ms{{{sel}}}[{range_key}])")
         out["max_ms"] = None if mx is None else round(mx)
     except Exception:
         out["max_ms"] = None
@@ -213,7 +213,7 @@ def list_apps(web=None, with_stats=False):
                           "since": None, "value": None, "unit": ""})
     items.sort(key=lambda x: (ORDER.get(x["status"], 9), x["name"].lower(), x["web"] or ""))
     if with_stats:
-        _web_stats([x for x in items if x["type"] == "web" and x.get("id")])
+        _web_stats([x for x in items if x.get("id")])
     bad = sum(1 for x in items if x["status"] in ("error", "down", "warning"))
     # หมายเหตุ: รายการ "รอข้อมูล" ไม่นับเป็นทำงานปกติ
     ok = sum(1 for x in items if x["status"] == "ok")

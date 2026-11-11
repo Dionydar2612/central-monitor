@@ -44,7 +44,17 @@ def get_settings():
     return {"enabled": t.get("enabled", True) is not False and bool(url), "url_set": bool(url), "url_hint": _hint(url),
             "levels": [str(x) for x in levels],
             "summary_times": [str(x) for x in t.get("summary_times") or []],
-            "all_levels": list(LEVELS)}
+            "all_levels": list(LEVELS),
+            # ป๊อปอัปบนหน้าเว็บ (popup.js): เรื่องเดียวกับ Teams ("ส่งเมื่อ") · ปริยายเปิด · ไม่ต้องมี webhook
+            "popup": t.get("popup", True) is not False}
+
+
+def popup_settings():
+    """ค่าที่ popup.js ใช้ (ทุก role อ่านได้ ไม่มีความลับ)"""
+    y = targets_service._yaml()
+    t = _teams(targets_service._load_doc(y))
+    levels = t.get("levels") if isinstance(t.get("levels"), list) else list(LEVELS)
+    return {"enabled": t.get("popup", True) is not False, "levels": [str(x) for x in levels]}
 
 
 def _clean_url(value, errors, field="webhook_url"):
@@ -63,6 +73,8 @@ def update_settings(payload):
     errors, vals = {}, {}
     if "enabled" in payload:
         vals["enabled"] = bool(payload["enabled"])
+    if "popup" in payload:
+        vals["popup"] = bool(payload["popup"])
     url = payload.get("webhook_url")
     if url not in (None, ""):
         if str(url).strip() == "-":

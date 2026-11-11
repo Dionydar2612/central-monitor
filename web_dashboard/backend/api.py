@@ -211,7 +211,7 @@ _AUDIT_RULES = [
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
      ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
-    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times")),
+    ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times", "popup")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
     ("PUT", re.compile(r"^/api/alert-rules$"), "settings.alert_rules", ()),
     ("POST", re.compile(r"^/api/apps$"), "apps.add", ("type", "web", "value", "name")),
@@ -456,6 +456,15 @@ def alert_settings_put():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (200 if ok else 400)
+
+
+@app.get("/api/popup-settings")
+def popup_settings_get():
+    """ป๊อปอัปแจ้งเตือนบนหน้าเว็บ: เปิดไหม + เรื่องที่แจ้ง (เหมือน Teams) ทุก role อ่านได้"""
+    try:
+        return jsonify(notify_service.popup_settings())
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
 
 
 @app.get("/api/notify-settings")

@@ -652,6 +652,10 @@ function renderNotify(d) {
     $("n_on").checked = !!d.enabled || !d.url_set;
     $("n_url").value = "";
     $("n_times").value = (d.summary_times || []).join(", ");
+    $("n_popup").checked = d.popup !== false;
+    const os = $("n_popos"), secure = window.isSecureContext && "Notification" in window;
+    os.disabled = !secure;
+    os.checked = !!(window.cmPopup && window.cmPopup.osOn());
     $("n_hint").textContent = d.url_set ? `บันทึกไว้แล้ว: ${d.url_hint}` : "ยังไม่ได้ตั้ง";
     const box = $("n_levels"); box.textContent = "";
     (d.all_levels || Object.keys(N_LABEL)).forEach(k => box.append(
@@ -668,7 +672,7 @@ function notifyErrors(e) {
 async function saveNotify(extra) {
     notifyErrors(null);
     const body = Object.assign({
-        enabled: $("n_on").checked, summary_times: $("n_times").value,
+        enabled: $("n_on").checked, summary_times: $("n_times").value, popup: $("n_popup").checked,
         levels: [...$("n_levels").querySelectorAll("input:checked")].map(i => i.value),
     }, $("n_url").value.trim() ? { webhook_url: $("n_url").value.trim() } : {}, extra || {});
     $("n_save").disabled = true;
@@ -722,6 +726,14 @@ document.addEventListener("DOMContentLoaded", () => {
     $("al_reset").onclick = resetAlerts;
     $("n_save").onclick = () => saveNotify();
     $("n_test").onclick = testNotify;
+    $("n_popos").addEventListener("change", async e => {
+        if (!window.cmPopup) return;
+        const want = e.target.checked, ok = await window.cmPopup.setOs(want);
+        e.target.checked = ok;
+        say("n_msg", ok ? "เปิดแจ้งเตือนของ Windows บน browser นี้แล้ว"
+            : want ? "browser ไม่อนุญาต: กดไอคอนแม่กุญแจหน้า URL > Notifications > Allow แล้วติ๊กใหม่" : "ปิดแจ้งเตือนของ Windows บน browser นี้แล้ว", ok || !want ? "ok" : "bad");
+    });
+    $("n_poptest").onclick = () => { if (window.cmPopup) window.cmPopup.test(); };
     $("n_sumnow").onclick = async () => {
         try { const d = await api("POST", "/api/notify-settings/summary-now", {}); say("n_msg", d.message, "ok"); }
         catch (e) { say("n_msg", "ส่งไม่ได้: " + e.message, "bad"); }

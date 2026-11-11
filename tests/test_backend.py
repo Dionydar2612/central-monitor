@@ -82,6 +82,11 @@ class Backend(unittest.TestCase):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)
         self.assertEqual(c.post("/api/notify-settings/summary-now", json={}).status_code, 400)   # ยังไม่มี URL
+        # ป๊อปอัป: ปริยายเปิด · ปิดได้ใน Notifications · ทุก role อ่าน /api/popup-settings ได้
+        self.assertTrue(c.get("/api/popup-settings").json["enabled"])
+        self.assertFalse(c.put("/api/notify-settings", json={"popup": False}).json["popup"])
+        self.assertFalse(c.get("/api/popup-settings").json["enabled"])
+        self.assertTrue(c.put("/api/notify-settings", json={"popup": True}).json["popup"])
         bad = c.put("/api/notify-settings", json={"webhook_url": "http://x", "summary_times": "25:00"})
         self.assertEqual(bad.status_code, 400)
         self.assertIn("webhook_url", bad.json["fields"])
