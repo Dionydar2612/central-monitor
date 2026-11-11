@@ -1,5 +1,6 @@
 # เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง (Custom alert rules) + ส่ง Teams ต่อกฎ
 - Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
+- Monitor เว็บดูได้เหมือนเครื่อง: การ์ดมีกราฟเวลาตอบ + uptime 24h · หน้ารายละเอียด (กราฟ 1h-30d, uptime 24h/7d/30d, ประวัติปัญหา) · แถวในตาราง WEB status + กล่อง Web · เฝ้าดูหลายพอร์ตทีเดียวจากแท็บ Software · ตั้งค่าเพิ่มเติม (คำในหน้า, ตอบช้า, SSL ใกล้หมด, นาทีต่อเนื่อง) · puller ส่ง cm_webmon_* ให้ Prometheus
 - Monitor เว็บ: เลือกโหมดจาก URL เอง (localhost = บนเครื่อง / อื่นๆ = จาก central) · normalize URL (`8090` -> `http://localhost:8090`) · ปุ่มเลือกพอร์ตจาก cm-probe (`GET /api/host/<เครื่อง>/probe-ports`) · ข้อความสถานะแยก 4 กรณี · 2xx/3xx = ทำงาน, 4xx/5xx/0 = ไม่ทำงาน · Monitor เก่าแปลงตอนโหลด
 - Apps & Web: แก้ไขรายการได้ · เว็บบนเครื่อง (localhost) และ Docker container (Windows: cm-probe.ps1 ทุก 1 นาที, Linux: ผ่าน SSH) · แถบสรุปบนหน้าแรก · แท็บ Software มี Docker / เว็บบนเครื่อง
 - หน้า Apps & Web (`/apps`): ภาพรวมแบบมินิมอลว่าโปรแกรม / เว็บ / พอร์ต / Service ยังทำงานไหม · admin เพิ่ม / ลบได้ในหน้าเดียว (สร้าง Custom alert rule ให้) · การ์ด Watched apps ในแท็บ Software

@@ -78,3 +78,22 @@ pull_cycle_timestamp = Gauge(
     "pull_cycle_timestamp",
     "Unix timestamp of the last completed pull cycle",
 )
+
+
+# --- Monitor เว็บ (Apps & Web) : ผลตรวจล่าสุดทุก 30 วินาที -> กราฟเวลาตอบ / uptime ในหน้าเว็บ ---------
+# sensor_monitor ตั้งค่าใหม่ทุกรอบ (Monitor ที่ลบแล้วหายไปเอง) · ยังบอกไม่ได้ (unknown) = ไม่มีค่า
+webmon_up = Gauge(
+    "cm_webmon_up",
+    "Web monitor result: 1 = up (2xx/3xx), 0 = down",
+    ["rule", "web"],
+)
+webmon_response_ms = Gauge(
+    "cm_webmon_response_ms",
+    "Web monitor response time in milliseconds",
+    ["rule", "web"],
+)
+webmon_http_code = Gauge(
+    "cm_webmon_http_code",
+    "Web monitor last HTTP status code (0 = no response)",
+    ["rule", "web"],
+)

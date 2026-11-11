@@ -274,10 +274,16 @@
                 + `<td class="${c.state === "running" && !/unhealthy/i.test(c.status) ? "ok" : "cr"}">${esc(c.state || "-")}</td><td>${esc(c.status || "-")}</td></tr>`)),
             `<span class="cnt">${dk.filter(c => c.state === "running").length} / ${dk.length} running</span>`);
         const lw = (d.local_http || []).filter(w => w.code > 0);
-        const webs = card("Web on this machine (localhost)", table(["Port", "URL", "HTTP", "Time", "Program"],
-            lw.map(w => `<tr><td><b>${esc(w.port)}</b></td><td>${esc(`${w.scheme}://localhost:${w.port}/`)}</td>`
-                + `<td class="${w.code >= 500 ? "cr" : w.code >= 400 ? "wr" : "ok"}">${esc(w.code)}</td><td>${num(w.ms, 0, " ms")}</td><td>${esc(w.process || "-")}</td></tr>`)),
-            `<span class="cnt">ตรวจทุก 1 นาที</span>`);
+        /* เฝ้าดูหลายเว็บทีเดียว: ติ๊กพอร์ตแล้วกด "เฝ้าดูที่เลือก" (admin) */
+        const wmSet = new Set((d.apps || []).filter(a => a.metric === "http_local").map(a => String((/:(\d+)/.exec(a.what) || [])[1] || "")));
+        const admin = (S.role || "") === "admin";
+        const pick = w => !admin ? "" : wmSet.has(String(w.port)) ? `<td><small>เฝ้าดูอยู่</small></td>`
+            : `<td><input type="checkbox" class="wmpick" value="${esc(w.port)}" aria-label="เฝ้าดูพอร์ต ${esc(w.port)}"></td>`;
+        const webs = card("Web on this machine (localhost)", table((admin ? [""] : []).concat(["Port", "URL", "HTTP", "Time", "Program"]),
+            lw.map(w => `<tr>${pick(w)}<td><b>${esc(w.port)}</b></td><td>${esc(`${w.scheme}://localhost:${w.port}`)}</td>`
+                + `<td class="${w.code >= 400 ? "cr" : "ok"}">${esc(w.code)}</td><td>${num(w.ms, 0, " ms")}</td><td>${esc(w.process || "-")}</td></tr>`)),
+            `<span class="cnt">ตรวจทุก 1 นาที</span>` + (admin && lw.some(w => !wmSet.has(String(w.port)))
+                ? `<button type="button" class="svbtn sm wmbulk" style="margin-left:auto">เฝ้าดูที่เลือก</button>` : ""));
         const hist = card("Software changes", table(["Time", "Change", "Program", "Version"],
             (d.history || []).map(h => { const [t, c] = SW_ACT[h.action] || [h.action, ""];
                 return `<tr><td>${ts(h.time)}</td><td class="${c}">${esc(t)}</td><td>${esc(h.name)}${h.arch === "x86" ? " <small>(x86)</small>" : ""}</td>`
@@ -318,6 +324,7 @@
        แถว (dl.kv) ที่ไม่มีค่า -> ลบ · คอลัมน์ตารางที่ไม่มีค่าทุกแถว -> ลบ · ช่องที่เหลือ -> "-"
        การ์ดที่ไม่เหลือข้อมูล -> ลบ */
     function blank(node) {
+        if (node.querySelector && node.querySelector("input,button,svg")) return false;
         const c = node.cloneNode(true);
         c.querySelectorAll(".na").forEach(n => n.remove());
         return !/[0-9A-Za-z\u0E00-\u0E7F]/.test(c.textContent);
@@ -427,6 +434,20 @@
         tabs.addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) show(b.dataset.tab); });
         const sw = q("#pnSw");
         if (sw) sw.addEventListener("input", e => { if (e.target.matches(".swq")) { P.swq = e.target.value; swFilter(sw); } });
+        if (sw) sw.addEventListener("click", async e => {
+            const b = e.target.closest(".wmbulk"); if (!b) return;
+            const ports = [...sw.querySelectorAll(".wmpick:checked")].map(i => Number(i.value));
+            if (!ports.length) { alert("ติ๊กพอร์ตที่ต้องการเฝ้าดูก่อน"); return; }
+            b.disabled = true;
+            try {
+                const r = await fetch("/api/apps/bulk", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ web: S.web, ports }) });
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(j.error || Object.values(j.fields || {}).join(" · ") || `HTTP ${r.status}`);
+                b.textContent = `เพิ่มแล้ว ${j.added.length} เว็บ`;
+                setTimeout(() => load("software", true), 800);
+            } catch (err) { alert("เพิ่มไม่สำเร็จ: " + err.message); b.disabled = false; }
+        });
         tabs.addEventListener("keydown", e => {
             if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
             const i = PANES.indexOf(P.tab), n = PANES[(i + (e.key === "ArrowRight" ? 1 : PANES.length - 1)) % PANES.length];

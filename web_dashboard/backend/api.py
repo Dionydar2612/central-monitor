@@ -217,6 +217,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/apps$"), "apps.add", ("type", "web", "value", "name")),
     ("DELETE", re.compile(r"^/api/apps/(?P<t>[^/]+)$"), "apps.delete", ()),
     ("PUT", re.compile(r"^/api/apps/(?P<t>[^/]+)$"), "apps.update", ("type", "web", "value", "name")),
+    ("POST", re.compile(r"^/api/apps/bulk$"), "apps.bulk_add", ("web", "ports")),
     ("POST", re.compile(r"^/api/alert-rules/test$"), "settings.alert_rules_test", ("name",)),
     ("POST", re.compile(r"^/api/notify-settings/summary-now$"), "settings.notify_summary_now", ()),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
@@ -496,7 +497,7 @@ def apps_page():
 def apps_list():
     """โปรแกรม / เว็บ / พอร์ต ที่เฝ้าดู + สถานะ"""
     try:
-        return jsonify(apps_service.list_apps(request.args.get("web") or None))
+        return jsonify(apps_service.list_apps(request.args.get("web") or None, with_stats=request.args.get("stats") != "0"))
     except (OSError, YAMLError) as e:
         return _config_error(e)
 
@@ -508,6 +509,31 @@ def apps_add():
         if body is None:
             return jsonify({"error": "ต้องส่งเป็น JSON"}), 400
         ok, out = apps_service.add_app(body)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (201 if ok else 400)
+
+
+@app.get("/api/apps/<rule_id>/detail")
+def apps_detail(rule_id):
+    """หน้ารายละเอียด Monitor: สถานะ + กราฟเวลาตอบ / ขึ้น-ลง + uptime + ประวัติปัญหา  ?web=&range=1h|24h|7d|30d"""
+    try:
+        d = apps_service.detail(rule_id, request.args.get("web") or None, request.args.get("range") or "24h")
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if d is None:
+        return jsonify({"error": "ไม่พบรายการนี้"}), 404
+    return jsonify(d)
+
+
+@app.post("/api/apps/bulk")
+def apps_bulk():
+    """เฝ้าดูหลายเว็บบนเครื่องเดียว  body: {web, ports: [...]}"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "ต้องส่งเป็น JSON"}), 400
+    try:
+        ok, out = apps_service.bulk_add(body)
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (201 if ok else 400)

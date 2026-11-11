@@ -209,6 +209,22 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None
         elif url_port(u) == -1:
             errors["url"] = "พอร์ตไม่ถูกต้อง (1 - 65535)"
         rule["url"] = u
+        # ตั้งค่าเพิ่มเติม (ไม่บังคับ): คำที่ต้องมีในหน้า / เตือนเมื่อช้า / เตือน SSL ก่อนหมดอายุ
+        kw = str(data.get("keyword") or "").strip()
+        if len(kw) > 200:
+            errors["keyword"] = "ไม่เกิน 200 ตัวอักษร"
+        if kw:
+            if metric == "http_local":
+                errors["keyword"] = "ตรวจคำในหน้าได้เฉพาะเว็บที่ตรวจจาก central"
+            rule["keyword"] = kw
+        slow = _num(data.get("slow_ms"), "slow_ms", errors, 1, 600000)
+        if slow is not None:
+            rule["slow_ms"] = slow
+        sd = _num(data.get("ssl_days"), "ssl_days", errors, 1, 365)
+        if sd is not None:
+            if not u.lower().startswith("https://") or metric == "http_local":
+                errors["ssl_days"] = "เตือน SSL ได้เฉพาะ https:// ที่ตรวจจาก central"
+            rule["ssl_days"] = sd
     if metric == "docker":
         cn = str(data.get("container") or "").strip().lstrip("/")
         if not CONTAINER_RE.match(cn):

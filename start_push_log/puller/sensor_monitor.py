@@ -802,10 +802,35 @@ def run_once(previous):
     except Exception as e:
         print(f"[NOTIFY ERROR] {e!r}")
     try:
+        _webmon_metrics(sensors)
+    except Exception as e:
+        print(f"[WEBMON ERROR] {e!r}")
+    try:
         _software(targets, config)
     except Exception as e:
         print(f"[SOFTWARE ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
+
+
+def _webmon_metrics(sensors):
+    """ผล Monitor เว็บ -> Prometheus (cm_webmon_*) ให้หน้าเว็บทำกราฟ / uptime"""
+    try:
+        import metrics as pm
+    except Exception:
+        return                                       # ไม่มี prometheus_client (เช่นตอนทดสอบ)
+    for g in (pm.webmon_up, pm.webmon_response_ms, pm.webmon_http_code):
+        g.clear()
+    for s in sensors:
+        d = s.get("details") or {}
+        if s.get("kind") != "custom" or d.get("metric") not in ("http_local", "http_url") or "up" not in d:
+            continue
+        lb = {"rule": str(d.get("rule")), "web": str(s.get("web"))}
+        code = d.get("code")
+        pm.webmon_up.labels(**lb).set(1 if d.get("up") else 0)
+        if code is not None:
+            pm.webmon_http_code.labels(**lb).set(int(code))
+        if d.get("ms") is not None and code:
+            pm.webmon_response_ms.labels(**lb).set(float(d["ms"]))
 
 
 def _software(targets, config):

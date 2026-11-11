@@ -41,11 +41,30 @@
 <div class="apBtns"><button type="submit" class="primary" id="apSave">เพิ่ม</button><button type="button" id="apCancel">ยกเลิก</button></div>
 <div class="apWhere" id="apWhere" hidden><span>ตรวจจาก</span><span class="seg" id="apLocal"><button type="button" data-l="1" aria-pressed="true">บนเครื่องเอง (localhost)</button><button type="button" data-l="0" aria-pressed="false">central เรียก IP ของเครื่อง</button></span></div>
 <div class="apPorts" id="apPorts" hidden></div>
+<details class="apMore" id="apMore" hidden><summary>ตั้งค่าเพิ่มเติม (ไม่บังคับ)</summary>
+<div class="apMoreGrid">
+<label>คำที่ต้องมีในหน้า<input id="apKw" autocomplete="off" placeholder="เช่น Login (เฉพาะตรวจจาก central)"></label>
+<label>เตือนเมื่อตอบช้ากว่า (ms)<input id="apSlow" inputmode="numeric" placeholder="เช่น 2000"></label>
+<label>เตือน SSL ก่อนหมดอายุ (วัน)<input id="apSsl" inputmode="numeric" placeholder="เช่น 14 (เฉพาะ https จาก central)"></label>
+<label>ต้องผิดปกติต่อเนื่อง (นาที)<input id="apFor" inputmode="decimal" placeholder="2"></label>
+</div></details>
 <div class="apHint" id="apHint"></div>
 <div class="apMsg" id="apMsg"></div>
 </form>
 
 <div class="apGrid" id="apGrid"></div>
+
+<!-- หน้ารายละเอียดของ Monitor เว็บ (คลิกการ์ดเว็บ หรือ /apps?open=<rule>&web=<เครื่อง>) -->
+<div class="apModal" id="apDetail" hidden><div class="apMBox card" role="dialog" aria-modal="true" aria-labelledby="adName">
+<div class="apMHead"><span class="apBig" id="adDot"></span><div style="min-width:0;flex:1"><h2 id="adName">-</h2><small id="adSub"></small></div>
+<div class="tabs" id="adRange"><button type="button" data-r="1h">1h</button><button type="button" data-r="24h" aria-pressed="true">24h</button><button type="button" data-r="7d">7d</button><button type="button" data-r="30d">30d</button></div>
+<button type="button" class="svbtn" id="adEdit" hidden>✎ แก้ไข</button><button type="button" class="svbtn" id="adClose">ปิด</button></div>
+<div class="apStats" id="adStats"></div>
+<div class="apChart" id="adChart"></div>
+<div class="apMsgLine" id="adMsg"></div>
+<h3 class="apH3">ประวัติปัญหา (30 วัน)</h3><div id="adInc"></div>
+<div class="apSet" id="adSet"></div>
+</div></div>
 </div>
 <script src="/badges.js"></script>
 <script src="/apps.js"></script>

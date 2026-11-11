@@ -34,7 +34,8 @@ async function api(method, url, body) {
 function cls(st) { return BAD.includes(st) ? "bad" : WARN.includes(st) ? "wr" : st === "ok" ? "ok" : ""; }
 function ageText(x) {
     if (x.status === "ok") return x.since ? `ทำงาน ${ago(x.since)}` : "ทำงาน";
-    if (BAD.includes(x.status) || WARN.includes(x.status)) return x.since ? `หยุด ${ago(x.since)}` : "หยุด";
+    if (WARN.includes(x.status)) return x.since ? `เตือน ${ago(x.since)}` : "เตือน";
+    if (BAD.includes(x.status)) return x.since ? `หยุด ${ago(x.since)}` : "หยุด";
     if (x.status === "paused") return "ปิดอยู่";
     return "รอข้อมูล";
 }
@@ -43,9 +44,96 @@ function tile(x) {
     const del = A.role === "admin" ? `<button type="button" class="apEdit" data-edit="${esc(x.rule)}" title="แก้ไข">✎ แก้ไข</button>`
         + `<button type="button" class="apDel" data-del="${esc(x.rule)}" title="เลิกเฝ้าดู">× ลบ</button>` : "";
     const href = x.web && x.web !== "-" && !x.web.includes(",") ? `/?web=${encodeURIComponent(x.web)}` : "#";
-    return `<a class="apT ${cls(x.status)}" href="${href}"><span class="apDot"></span><div class="apMain"><b title="${esc(x.what)}">${esc(x.name)}</b>`
-        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${["http_local", "port_listen"].includes(x.metric) ? " · บนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? " · จาก central" : ""}</small><p>${esc(x.message)}</p></div>`
+    const isWeb = x.type === "web" && x.id;
+    const up = x.uptime_24h, upc = up == null ? "" : up >= 99.9 ? "ok" : up >= 99 ? "wr" : "cr";
+    const stat = isWeb ? `<div class="apStat">${spark(x.spark)}<span>uptime <b class="${upc}">${up == null ? "-" : up.toFixed(up >= 99.9 ? 2 : 1) + "%"}</b> 24h</span>`
+        + `${x.code != null ? `<span>HTTP <b class="${x.code && x.code < 400 ? "ok" : "cr"}">${esc(x.code)}</b></span>` : ""}</div>` : "";
+    const attrs = isWeb ? `href="/apps?open=${encodeURIComponent(x.rule)}&web=${encodeURIComponent(x.web)}" data-open="${esc(x.rule)}" data-oweb="${esc(x.web)}"` : `href="${href}"`;
+    return `<a class="apT ${cls(x.status)}" ${attrs}><span class="apDot"></span><div class="apMain"><b title="${esc(x.what)}">${esc(x.name)}</b>`
+        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${["http_local", "port_listen"].includes(x.metric) ? " · บนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? " · จาก central" : ""}</small><p>${esc(x.message)}</p>${stat}</div>`
         + `<span class="apAge">${esc(ageText(x))}</span>${del}</a>`;
+}
+
+function spark(pts) {
+    if (!pts || pts.length < 2) return "";
+    const W = 90, H = 22, mx = Math.max(...pts, 1);
+    const d = pts.map((v, i) => `${i ? "L" : "M"}${(i * W / (pts.length - 1)).toFixed(1)},${(H - 1 - v / mx * (H - 4)).toFixed(1)}`).join("");
+    return `<svg class="apSpark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d}"/></svg>`;
+}
+
+/* ---------- หน้ารายละเอียดของ Monitor เว็บ ---------- */
+const D = { rule: null, web: null, range: "24h", data: null };
+function fmtT(t, range) {
+    const d = new Date(t * 1000);
+    return ["7d", "30d"].includes(range) ? d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })
+        : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+function dur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${sec}s`;
+}
+function chartSvg(series, range) {
+    const ms = series.ms || [], up = series.up || [];
+    if (!ms.length && !up.length) return `<div class="apEmpty">ยังไม่มีข้อมูลกราฟ (เริ่มเก็บหลังอัปเดตระบบ · ทุก 30 วินาที)</div>`;
+    const all = ms.concat(up);
+    const t0 = Math.min(...all.map(p => p[0])), t1 = Math.max(...all.map(p => p[0]), t0 + 1);
+    const W = 900, H = 220, L = 46, R = 8, T = 10, B = 24, mx = Math.max(10, ...ms.map(p => p[1])) * 1.1;
+    const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), Y = v => T + (1 - v / mx) * (H - T - B);
+    const step = up.length > 1 ? up[1][0] - up[0][0] : 60;
+    const down = up.filter(p => p[1] < 1).map(p => `<rect class="dn" x="${X(p[0] - step / 2).toFixed(1)}" y="${T}" width="${Math.max(2, X(p[0] + step / 2) - X(p[0] - step / 2)).toFixed(1)}" height="${H - T - B}"><title>ไม่ทำงาน ${fmtT(p[0], "1h")}</title></rect>`).join("");
+    const line = ms.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    const area = ms.length ? `${line}L${X(ms[ms.length - 1][0]).toFixed(1)},${H - B}L${X(ms[0][0]).toFixed(1)},${H - B}Z` : "";
+    const grid = [0, 0.5, 1].map(f => { const v = mx * f, y = Y(v);
+        return `<line class="gl" x1="${L}" x2="${W - R}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text x="${L - 6}" y="${(y + 4).toFixed(1)}" text-anchor="end">${Math.round(v)}</text>`; }).join("");
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => { const t = t0 + (t1 - t0) * f;
+        return `<text x="${X(t).toFixed(1)}" y="${H - 6}" text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}">${fmtT(t, range)}</text>`; }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="เวลาตอบ (ms) และช่วงที่ไม่ทำงาน">${grid}${down}`
+        + (area ? `<path class="ar" d="${area}"/><path class="ln" d="${line}"/>` : "") + `${ticks}<text x="${L + 4}" y="${T + 10}">ms</text></svg>`;
+}
+async function loadDetail() {
+    try {
+        D.data = await api("GET", `/api/apps/${encodeURIComponent(D.rule)}/detail?web=${encodeURIComponent(D.web || "")}&range=${D.range}`);
+    } catch (e) { if (e.message !== "auth") $("adMsg").textContent = "โหลดไม่ได้: " + e.message; return; }
+    const d = D.data, x = d.item, c = cls(x.status);
+    $("adDot").className = "apBig " + c;
+    $("adName").textContent = x.name;
+    $("adSub").textContent = `${x.what} · ${x.web} · ${x.metric === "http_local" ? "ตรวจบนเครื่อง" : "ตรวจจาก central"}`;
+    const pct = v => v == null ? "-" : `${v.toFixed(v >= 99.9 ? 2 : 1)}%`;
+    const pc = v => v == null ? "" : v >= 99.9 ? "ok" : v >= 99 ? "wr" : "cr";
+    const st = { ok: ["ทำงาน", "ok"], warning: ["ทำงาน (เตือน)", "wr"], error: ["ไม่ทำงาน", "cr"], down: ["ไม่ทำงาน", "cr"] }[x.status] || ["รอข้อมูล", ""];
+    const u = d.uptime || {};
+    $("adStats").innerHTML = [
+        ["สถานะ", `<b class="${st[1]}">${st[0]}</b>`],
+        ["HTTP ล่าสุด", `<b class="${x.code && x.code < 400 ? "ok" : x.code != null ? "cr" : ""}">${x.code ?? "-"}</b>`],
+        ["เวลาตอบล่าสุด", `<b>${x.ms != null && x.code ? Math.round(x.ms) + " ms" : "-"}</b>`],
+        [`สูงสุด (${D.range})`, `<b>${d.max_ms != null ? d.max_ms + " ms" : "-"}</b>`],
+        ["Uptime 24h", `<b class="${pc(u.h24)}">${pct(u.h24)}</b><small>7d ${pct(u.d7)} · 30d ${pct(u.d30)}</small>`],
+        [x.status === "ok" || x.status === "warning" ? "ทำงานมา" : "เป็นแบบนี้มา", `<b>${x.since ? ago(x.since) : "-"}</b>`],
+    ].map(([k, v]) => `<div><small>${k}</small>${v}</div>`).join("");
+    $("adChart").innerHTML = chartSvg(d.series || {}, D.range);
+    $("adMsg").textContent = x.message || "";
+    const inc = d.incidents || [];
+    $("adInc").innerHTML = inc.length ? `<div class="tblw"><table class="ptbl"><thead><tr><th>เริ่ม</th><th>จบ</th><th>นาน</th><th>ระดับ</th></tr></thead><tbody>${
+        inc.map(i => `<tr><td>${esc(new Date(i.start * 1000).toLocaleString("en-GB"))}</td><td>${i.end ? esc(new Date(i.end * 1000).toLocaleString("en-GB")) : "<b>ยังไม่หาย</b>"}</td>`
+            + `<td>${i.duration ? esc(dur(i.duration)) : "-"}</td><td>${esc(i.worst || "-")}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="apMsgLine">ไม่มีปัญหาใน 30 วันที่ผ่านมา</div>`;
+    const set = [`ระดับเมื่อไม่ทำงาน: ${x.level === "warning" ? "Warning" : "Error"}`, `ต้องผิดปกติต่อเนื่อง ${x.for_minutes ?? 3} นาที`,
+        x.keyword ? `ต้องมีคำ "${x.keyword}"` : "", x.slow_ms ? `เตือนเมื่อช้ากว่า ${x.slow_ms} ms` : "", x.ssl_days ? `เตือน SSL ก่อนหมดอายุ ${x.ssl_days} วัน` : "",
+        x.ssl_days_left != null ? `SSL เหลือ ${x.ssl_days_left} วัน` : ""].filter(Boolean);
+    $("adSet").textContent = "ตั้งค่า: " + set.join(" · ") + " · 2xx / 3xx = ทำงาน, 4xx / 5xx / ไม่ตอบ = ไม่ทำงาน";
+    $("adEdit").hidden = A.role !== "admin";
+}
+function openDetail(rule, web) {
+    D.rule = rule; D.web = web; D.data = null;
+    $("adStats").innerHTML = ""; $("adChart").innerHTML = `<div class="apEmpty">กำลังโหลด...</div>`; $("adInc").innerHTML = ""; $("adMsg").textContent = "";
+    $("apDetail").hidden = false;
+    try { history.replaceState(null, "", `/apps?open=${encodeURIComponent(rule)}&web=${encodeURIComponent(web || "")}`); } catch (e) { /* ignore */ }
+    loadDetail();
+}
+function closeDetail() {
+    $("apDetail").hidden = true; D.rule = null;
+    try { history.replaceState(null, "", "/apps"); } catch (e) { /* ignore */ }
 }
 
 function render() {
@@ -157,6 +245,7 @@ function machineHost() {
 function refreshHint() {
     const t = A.type, both = t === "port";          // เว็บ: เลือกโหมดจาก URL เอง ไม่มีตัวเลือก
     $("apWhere").hidden = !both;
+    $("apMore").hidden = t !== "web";
     const [label, ph, hint] = both ? (A.local ? HINT_LOCAL : HINT_REMOTE)[t] : HINT[t];
     $("apValLabel").textContent = label; $("apVal").placeholder = ph;
     const h = machineHost();
@@ -187,11 +276,15 @@ async function openForm(edit) {
         sel.value = (edit.web || "").split(",")[0].trim();
         $("apVal").value = edit.metric === "port_listen" || edit.metric === "tcp_port" ? String(edit.what).replace(/^.*:/, "") : edit.what;
         $("apName").value = edit.name;
+        $("apKw").value = edit.keyword || ""; $("apSlow").value = edit.slow_ms || ""; $("apSsl").value = edit.ssl_days || "";
+        $("apFor").value = edit.for_minutes || "";
+        $("apMore").open = !!(edit.keyword || edit.slow_ms || edit.ssl_days);
         A.local = !["http_url", "tcp_port"].includes(edit.metric);
         document.querySelectorAll("#apLocal button").forEach(b => b.setAttribute("aria-pressed", String((b.dataset.l === "1") === A.local)));
         setType(edit.type);
     } else {
         $("apVal").value = ""; $("apName").value = "";
+        ["apKw", "apSlow", "apSsl", "apFor"].forEach(id => { $(id).value = ""; }); $("apMore").open = false;
         setType(A.type);
     }
     $("apForm").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -204,6 +297,8 @@ async function save(ev) {
         const v = $("apVal").value.trim();
         const body = { type: A.type, web: $("apWeb").value, value: A.type === "web" ? normUrl(v) : v, name: $("apName").value.trim(),
                        local: A.type === "web" ? isLocalUrl(v) : A.local };
+        if (A.type === "web") Object.assign(body, { keyword: $("apKw").value.trim(), slow_ms: $("apSlow").value.trim(),
+                                                    ssl_days: $("apSsl").value.trim(), for_minutes: $("apFor").value.trim() });
         if (A.editing) await api("PUT", `/api/apps/${encodeURIComponent(A.editing)}`, body);
         else await api("POST", "/api/apps", body);
         A.editing = null;
@@ -253,12 +348,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
     $("apLocal").addEventListener("click", e => { const b = e.target.closest("[data-l]"); if (b) setLocal(b.dataset.l === "1"); });
     $("apForm").addEventListener("submit", save);
+    $("adClose").onclick = closeDetail;
+    $("apDetail").addEventListener("click", e => { if (e.target === $("apDetail")) closeDetail(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("apDetail").hidden) closeDetail(); });
+    $("adRange").addEventListener("click", e => {
+        const b = e.target.closest("[data-r]"); if (!b) return;
+        D.range = b.dataset.r;
+        document.querySelectorAll("#adRange [data-r]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+        loadDetail();
+    });
+    $("adEdit").onclick = () => { const x = D.data && D.data.item; closeDetail(); if (x) openForm(x); };
     $("apGrid").addEventListener("click", e => {
+        if (!e.target.closest("[data-edit],[data-del]")) {
+            const o = e.target.closest("[data-open]");
+            if (o) { e.preventDefault(); openDetail(o.dataset.open, o.dataset.oweb); return; }
+        }
         const ed = e.target.closest("[data-edit]");
         if (ed) { e.preventDefault(); openForm(A.items.find(i => i.rule === ed.dataset.edit)); return; }
         const d = e.target.closest("[data-del]"); if (!d) return;
         e.preventDefault(); remove(d.dataset.del);
     });
     load();
-    setInterval(() => { if (!document.hidden) load(); }, 30000);
+    const qs = new URLSearchParams(location.search);
+    if (qs.get("open")) openDetail(qs.get("open"), qs.get("web"));
+    setInterval(() => { if (!document.hidden) { load(); if (D.rule) loadDetail(); } }, 30000);
 });

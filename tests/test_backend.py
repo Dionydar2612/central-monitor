@@ -146,6 +146,33 @@ class Backend(unittest.TestCase):
         self.assertEqual(extra.status_code, 201, extra.json)
         self.assertEqual(c.delete(f"/api/apps/{extra.json['rule']['id']}").status_code, 200)
         self.assertEqual(c.delete("/api/apps/legacy-noport").status_code, 200)
+        # ตั้งค่าเพิ่มเติม
+        kw = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "localhost:8090", "keyword": "Login"})
+        self.assertEqual(kw.status_code, 400)
+        self.assertIn("keyword", kw.json["fields"])
+        sd = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "http://x.local", "ssl_days": 14})
+        self.assertIn("ssl_days", sd.json["fields"])
+        ok = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "https://x.local/health", "keyword": "OK",
+                                        "slow_ms": "1500", "ssl_days": "14", "for_minutes": "5"})
+        self.assertEqual(ok.status_code, 201, ok.json)
+        r2 = ok.json["rule"]
+        self.assertEqual((r2["keyword"], r2["slow_ms"], r2["ssl_days"], r2["for_minutes"]), ("OK", 1500, 14, 5))
+        ed = c.put(f"/api/apps/{r2['id']}", json={"type": "web", "web": "app-01", "value": "https://x.local/health", "name": "X"})
+        self.assertEqual((ed.json["rule"]["keyword"], ed.json["rule"]["slow_ms"]), ("OK", 1500))       # ไม่ส่ง = คงเดิม
+        det = c.get(f"/api/apps/{r2['id']}/detail?web=app-01&range=24h")
+        self.assertEqual(det.status_code, 200, det.json)
+        self.assertTrue({"item", "series", "uptime", "incidents"} <= set(det.json))
+        self.assertEqual(c.get("/api/apps/nope/detail").status_code, 404)
+        c.delete(f"/api/apps/{r2['id']}")
+        # เฝ้าดูหลายพอร์ตทีเดียว (ข้ามที่มีอยู่แล้ว)
+        b1 = c.post("/api/apps/bulk", json={"web": "app-01", "ports": [18090, "19090", "x"]})
+        self.assertEqual((b1.status_code, b1.json["added"]), (201, [18090, 19090]))
+        b2 = c.post("/api/apps/bulk", json={"web": "app-01", "ports": [18090, 17000]})
+        self.assertEqual((b2.json["added"], b2.json["skipped"]), ([17000], [18090]))
+        self.assertEqual(c.post("/api/apps/bulk", json={"web": "app-01", "ports": []}).status_code, 400)
+        for x in c.get("/api/apps").json["items"]:
+            if x["metric"] == "http_local" and x["name"].startswith("เว็บ :"):
+                c.delete(f"/api/apps/{x['rule']}")
         self.assertEqual(c.delete("/api/apps/legacy-web").status_code, 200)
         dk = c.post("/api/apps", json={"type": "docker", "web": "app-01", "value": "postgres"})
         self.assertEqual((dk.status_code, dk.json["rule"]["container"]), (201, "postgres"))

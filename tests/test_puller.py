@@ -374,6 +374,30 @@ class SoftwareRules(unittest.TestCase):
         self.assertEqual([self.cr.up_code(c) for c in (200, 302, 399, 400, 404, 500, 0)],
                          [True, True, True, False, False, False, False])
 
+    def test_web_extras(self):
+        wr = self.cr.web_result
+        self.assertEqual(wr("u", 200, 2500, {"slow_ms": 2000})[:2], ("warning", "u ตอบ HTTP 200 (2500 ms) · ช้ากว่า 2000 ms"))
+        self.assertEqual(wr("u", 200, 100, {"keyword": "Login"}, body="<h1>login page</h1>")[0], False)
+        self.assertEqual(wr("u", 200, 100, {"keyword": "Login"}, body="<h1>hello</h1>")[:2], (True, 'u ตอบ HTTP 200 (100 ms) · ไม่พบคำ "Login" ในหน้า'))
+        self.assertEqual(wr("u", 200, 100, {"ssl_days": 14}, ssl_days_left=5)[:2], ("warning", "u ตอบ HTTP 200 (100 ms) · SSL หมดอายุใน 5 วัน"))
+        self.assertEqual(wr("u", 200, 100, {"ssl_days": 14}, ssl_days_left=-1)[0], True)
+        self.assertEqual(wr("u", 503, 100, {"slow_ms": 50})[0], True)                     # ไม่ทำงานสำคัญกว่าช้า
+        # ผ่าน evaluate: ช้า = warning (ไม่ใช่ระดับของกฎ) และยังนับว่า "up"
+        now = time.time()
+        data = {"max_over_time(cm_probe_timestamp": [({}, now - 10)],
+                "timestamp(cm_http_local_code": [({"port": "8090", "scheme": "http"}, now - 10)],
+                "cm_http_local_code": [({"port": "8090", "scheme": "http"}, 200)],
+                "cm_http_local_ms": [({"port": "8090", "scheme": "http"}, 3000)]}
+        query = lambda q: next((v for k, v in data.items() if q.startswith(k)), [])
+        out = self.cr.evaluate({"name": "w"}, [{"id": "r", "name": "R", "metric": "http_local", "url": "localhost:8090",
+                                                "slow_ms": 1000, "level": "error"}], {}, 'cm_web="w"', True,
+                               lambda sid: None, 2, {}, query, None)
+        self.assertEqual((out[0]["status"], out[0]["details"]["up"], out[0]["details"]["code"]), ("warning", True, 200))
+        data["cm_http_local_code"] = [({"port": "8090", "scheme": "http"}, 500)]
+        out = self.cr.evaluate({"name": "w"}, [{"id": "r", "name": "R", "metric": "http_local", "url": "localhost:8090",
+                                                "level": "error"}], {}, 'cm_web="w"', True, lambda sid: None, 2, {}, query, None)
+        self.assertEqual((out[0]["status"], out[0]["details"]["up"]), ("error", False))
+
     def test_software_diff_and_run(self):
         self.assertEqual(self.sw.diff({"A|x64": "1", "B|x64": "2"}, {"A|x64": "1.1", "C|x86": "3"}),
                          [("updated", "A", "x64", "1", "1.1"), ("removed", "B", "x64", "2", ""), ("installed", "C", "x86", "", "3")])

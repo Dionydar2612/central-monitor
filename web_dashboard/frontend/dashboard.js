@@ -988,10 +988,42 @@ function checkRows(list) {
         }).join("") + `</tbody></table>`;
 }
 
+/* Monitor เว็บ (Apps & Web) ในต้นไม้ WEB status: แถวละเว็บ คลิก = หน้ารายละเอียดของเว็บ */
+const WM_STATUS = { ok: "up", warning: "warning", error: "down", down: "down" };
+function toWebmon(x) {
+    return { wm: true, rule: x.rule, web: x.web, name: x.name, url: x.what, group: x.group || "", metric: x.metric,
+             status: WM_STATUS[x.status] || "pending", message: x.message, code: x.code, ms: x.ms, spark: x.spark || [],
+             uptime_24h: x.uptime_24h };
+}
+function sparkSvg(pts) {
+    if (!pts || pts.length < 2) return "";
+    const W = 70, H = 18, mx = Math.max(...pts, 1);
+    const d = pts.map((v, i) => `${i ? "L" : "M"}${(i * W / (pts.length - 1)).toFixed(1)},${(H - 1 - v / mx * (H - 3)).toFixed(1)}`).join("");
+    return `<svg class="wmspark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d}"/></svg>`;
+}
+function wmRows(list) {
+    return `<table class="ovtbl chk wm"><thead><tr><th>Web</th><th>URL</th><th>ตรวจจาก</th><th>Status</th><th>HTTP</th><th>Response</th><th>Uptime 24h</th><th>Machine</th></tr></thead><tbody>` +
+        list.map(c => {
+            const [label, cls] = CHECK_LABEL[c.status] || ["รอข้อมูล", ""];
+            const up = hasValue(c.uptime_24h) ? Number(c.uptime_24h) : null;
+            return `<tr class="wmrow" data-wm="${escapeHtml(c.rule)}" data-wmweb="${escapeHtml(c.web)}" role="link" tabindex="0" title="${escapeHtml(c.message || "")}">`
+                + `<td><b>${escapeHtml(c.name)}</b></td><td class="url">${escapeHtml(c.url)}</td>`
+                + `<td>${c.metric === "http_local" ? "บนเครื่อง" : "จาก central"}</td>`
+                + `<td><span class="ovst ${cls}">${escapeHtml(label)}</span></td><td>${hasValue(c.code) ? escapeHtml(c.code) : "-"}</td>`
+                + `<td class="wmresp">${hasValue(c.ms) && c.code ? escapeHtml(Math.round(c.ms)) + " ms" : "-"}${sparkSvg(c.spark)}</td>`
+                + `<td class="ovv ${up == null ? "" : up >= 99.9 ? "ok" : up >= 99 ? "wr" : "cr"}">${up == null ? "-" : up.toFixed(up >= 99.9 ? 2 : 1) + "%"}</td>`
+                + `<td>${escapeHtml(c.web)}</td></tr>`;
+        }).join("") + `</tbody></table>`;
+}
+function checkTables(list) {
+    const real = list.filter(c => !c.wm), wm = list.filter(c => c.wm);
+    return (real.length ? `<div class="tblw">${checkRows(real)}</div>` : "") + (wm.length ? `<div class="tblw">${wmRows(wm)}</div>` : "");
+}
+
 function groupHtml(n, cur, depth, forceOpen) {
     const open = forceOpen || !S.closed.has(n.path);
     const body = !open ? "" :
-        `<div class="gbody">${n.servers.length ? `<div class="tblw">${serverRows(n.servers, cur)}</div>` : ""}${n.checks.length ? `<div class="tblw">${checkRows(n.checks)}</div>` : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
+        `<div class="gbody">${n.servers.length ? `<div class="tblw">${serverRows(n.servers, cur)}</div>` : ""}${n.checks.length ? checkTables(n.checks) : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
     const items = n.servers.length + n.checks.length;
     return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
 }
@@ -1010,6 +1042,9 @@ async function loadApps() {
     if (!box) return;
     let items = [];
     try { items = (await apiGet("/api/apps")).items || []; } catch (e) { return; }
+    /* Monitor เว็บแสดงในต้นไม้ WEB status ด้วย (ตามกลุ่มของเครื่อง) */
+    S.wm = items.filter(x => x.type === "web").map(toWebmon);
+    if (S.ov) renderMachines();
     box.hidden = !items.length;
     if (!items.length) return;
     const st = x => ["error", "down"].includes(x.status) ? "bad" : x.status === "warning" ? "wr" : x.status === "ok" ? "ok" : "";
@@ -1028,7 +1063,9 @@ function renderMachines(ov) {
     S.ov = ov || S.ov;
     ov = S.ov || {};
     const webs = Array.isArray(ov.servers) ? ov.servers : [];
-    const checks = SHOW_CHECKS && Array.isArray(ov.checks) ? ov.checks : [];
+    const realChecks = SHOW_CHECKS && Array.isArray(ov.checks) ? ov.checks : [];
+    const wms = S.wm || [];
+    const checks = realChecks.concat(wms);
     S.webs = webs;
     if (ov.pull_interval) S.pullInterval = Number(ov.pull_interval) || 3600;
     /* ไม่เลือกเครื่องให้อัตโนมัติ: รายละเอียดแสดงเมื่อผู้ใช้คลิกเครื่อง (หรือเปิดด้วย /?web=) */
@@ -1041,7 +1078,8 @@ function renderMachines(ov) {
     q("#detail").hidden = !cur; q("#meta").hidden = !cur;
     renderLogWebs(webs);
 
-    const cb = c => checks.filter(x => x.status === c).length;
+    const cb = c => realChecks.filter(x => x.status === c).length;
+    const wb = c => wms.filter(x => x.status === c).length;
     const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
     const okCount = webs.filter(w => w.state === "HEALTHY").length;
     q("#ovTiles").innerHTML =
@@ -1051,7 +1089,8 @@ function renderMachines(ov) {
         tile("Warning", ov.warning || 0, "nok", "≥ warning threshold") +
         tile("Critical", ov.problem || 0, "dn", "≥ error threshold") +
         tile("Paused", ov.paused || 0, "ps", "not monitored") +
-        (SHOW_CHECKS ? tile("Web checks", checks.length, "chk", checks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "");
+        (SHOW_CHECKS ? tile("Web checks", realChecks.length, "chk", realChecks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "") +
+        (wms.length ? `<a class="ovtilelink" href="/apps">${tile("Web", wms.length, wb("down") ? "dn" : wb("warning") ? "nok" : "up", `${wb("up")} up · ${wb("warning")} warn · ${wb("down")} down`)}</a>` : "");
     q("#ovTiles").classList.add("many");
 
     const f = (S.ovq || "").trim().toLowerCase();
@@ -1059,7 +1098,7 @@ function renderMachines(ov) {
     const tops = [...tree.kids.values()].sort((a, b) => a.name.localeCompare(b.name));
     /* เครื่อง/check ที่ไม่ได้ตั้งกลุ่ม: แสดงตารางตรง ๆ ไม่มีหัวกลุ่ม (กลุ่มแสดงเฉพาะที่ตั้งชื่อไว้) */
     const loose = (tree.servers.length ? `<div class="tblw gloose">${serverRows(tree.servers, cur)}</div>` : "") +
-        (tree.checks.length ? `<div class="tblw gloose">${checkRows(tree.checks)}</div>` : "");
+        (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "");
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
         : (tops.length || loose) ? loose + tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
@@ -2103,10 +2142,12 @@ document.addEventListener("DOMContentLoaded", () => {
     setupChart();
     setLbl();
     q("#mach").addEventListener("keydown", e => {
-        if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-web],[data-group]")) { e.preventDefault(); e.target.click(); }
+        if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-web],[data-group],[data-wm]")) { e.preventDefault(); e.target.click(); }
     });
     q("#mach").addEventListener("click", e => {
         if (e.target.closest("a")) return;
+        const wr = e.target.closest("tr[data-wm]");
+        if (wr) { location.href = `/apps?open=${encodeURIComponent(wr.dataset.wm)}&web=${encodeURIComponent(wr.dataset.wmweb)}`; return; }
         const sh = e.target.closest("th[data-sort]");
         if (sh) {
             /* คลิกซ้ำวน: เรียงปริยาย (ตัวเลขมาก->น้อย, ชื่อ ก->ฮ) -> กลับด้าน -> ไม่เรียง */

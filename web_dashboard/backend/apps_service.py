@@ -74,7 +74,114 @@ def _why_nodata(rule, targets):
     return generic
 
 
-def list_apps(web=None):
+# ---------------------------------------------------------------------------
+# Monitor เว็บ: uptime + กราฟเวลาตอบ (จาก cm_webmon_* ที่ puller ส่งให้ Prometheus ทุก 30 วินาที)
+#   uptime = สัดส่วนเวลาที่ตรวจแล้วตอบ 2xx / 3xx ของเว็บนั้นเอง (ไม่รวมกับเว็บอื่น)
+# ---------------------------------------------------------------------------
+
+def _key(m):
+    return (m.get("rule"), m.get("web"))
+
+
+def _web_stats(items):
+    if not items:
+        return
+    from clients import prom_vector, prometheus_query_range
+    import time as _t
+    stats = {}
+    try:
+        for m, v in prom_vector("avg_over_time(cm_webmon_up[24h])"):
+            stats.setdefault(_key(m), {})["uptime_24h"] = round(v * 100, 2)
+        end = _t.time()
+        res = prometheus_query_range("cm_webmon_response_ms", end - 3600, end, 120)["data"]["result"]
+        for row in res:
+            pts = [round(float(v)) for _t2, v in row.get("values") or [] if v not in ("NaN", "+Inf", "-Inf")]
+            stats.setdefault(_key(row.get("metric") or {}), {})["spark"] = pts
+    except Exception as e:
+        print(f"[APPS] web stats: {e!r}")
+    for x in items:
+        st = stats.get((x["rule"], x["web"])) or {}
+        x["uptime_24h"] = st.get("uptime_24h")
+        x["spark"] = st.get("spark") or []
+
+
+RANGES = {"1h": (3600, 30), "24h": (86400, 300), "7d": (7 * 86400, 1800), "30d": (30 * 86400, 7200)}
+
+
+def detail(rule_id, web, range_key="24h"):
+    """หน้ารายละเอียดของ Monitor เว็บ: สถานะ + กราฟเวลาตอบ / ขึ้น-ลง + uptime 24 ชม. / 7 วัน / 30 วัน + ประวัติปัญหา"""
+    from clients import prom_value, prometheus_query_range
+    import time as _t
+    items = [x for x in list_apps(web, with_stats=True)["items"] if x["rule"] == rule_id and (not web or x["web"] == web)]
+    if not items:
+        return None
+    item = items[0]
+    sel = f'rule="{rule_id}",web="{item["web"]}"'
+    seconds, step = RANGES.get(range_key, RANGES["24h"])
+    end = _t.time()
+    out = {"item": item, "range": range_key, "series": {}, "uptime": {}, "incidents": []}
+
+    def rng(q):
+        try:
+            res = prometheus_query_range(q, end - seconds, end, step)["data"]["result"]
+            return [[float(t), round(float(v), 2)] for t, v in (res[0]["values"] if res else [])
+                    if v not in ("NaN", "+Inf", "-Inf")]
+        except Exception as e:
+            print(f"[APPS] detail {q}: {e!r}")
+            return []
+    out["series"]["ms"] = rng(f"cm_webmon_response_ms{{{sel}}}")
+    out["series"]["up"] = rng(f"min_over_time(cm_webmon_up{{{sel}}}[{step}s])")
+    out["series"]["code"] = rng(f"max_over_time(cm_webmon_http_code{{{sel}}}[{step}s])")
+    for k, w in (("h24", "24h"), ("d7", "7d"), ("d30", "30d")):
+        try:
+            v = prom_value(f"avg_over_time(cm_webmon_up{{{sel}}}[{w}])")
+            out["uptime"][k] = None if v is None else round(v * 100, 2)
+        except Exception:
+            out["uptime"][k] = None
+    try:
+        mx = prom_value(f"max_over_time(cm_webmon_response_ms{{{sel}}}[{range_key}])")
+        out["max_ms"] = None if mx is None else round(mx)
+    except Exception:
+        out["max_ms"] = None
+    out["incidents"] = [i for i in sensors_service.get_incidents(hours=24 * 30, web=item["web"]) if i.get("id") == item.get("id")][:50]
+    return out
+
+
+def bulk_add(data):
+    """เฝ้าดูหลายเว็บบนเครื่องเดียวทีเดียว: {web, ports: [8090, 9090]} -> http://localhost:<port> (ข้ามที่มีอยู่แล้ว)"""
+    data = data or {}
+    web = str(data.get("web") or "").strip()
+    ports = []
+    for p in data.get("ports") or []:
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= p <= 65535 and p not in ports:
+            ports.append(p)
+    if not ports:
+        return False, {"error": "เลือกพอร์ตอย่างน้อย 1 พอร์ต"}
+    have = {(r.get("url"), tuple(r.get("targets") or [])) for r in _rules()}
+    current = alert_rules_service.list_rules()["rules"]
+    added, skipped = [], []
+    for p in ports[:50]:
+        url = f"http://localhost:{p}"
+        if (url, (web,)) in have:
+            skipped.append(p)
+            continue
+        rule, errors = _build({"type": "web", "web": web, "value": url, "name": f"เว็บ :{p} ({web})"})
+        if rule is None or errors:
+            return False, {"error": "ค่าไม่ถูกต้อง", "fields": errors}
+        current.append(rule)
+        added.append(p)
+    if added:
+        ok, out = alert_rules_service.save_rules({"rules": current})
+        if not ok:
+            return False, out
+    return True, {"added": added, "skipped": skipped}
+
+
+def list_apps(web=None, with_stats=False):
     rules = _rules()
     by_rule = {}
     for s in sensors_service.load_sensors().get("sensors", []):
@@ -88,10 +195,14 @@ def list_apps(web=None):
         sens = by_rule.get(r["id"]) or []
         if web:
             sens = [s for s in sens if s.get("web") == web]
+        if base["type"] == "web":
+            base.update({k: r.get(k) for k in ("keyword", "slow_ms", "ssl_days", "for_minutes", "level") if r.get(k) is not None})
         for s in sens:
+            d = s.get("details") or {}
             items.append({**base, "id": s.get("id"), "web": s.get("web"), "group": s.get("group") or "",
                           "status": s.get("status") or "unknown", "message": s.get("message") or "",
-                          "since": s.get("since"), "value": s.get("value"), "unit": s.get("unit") or ""})
+                          "since": s.get("since"), "value": s.get("value"), "unit": s.get("unit") or "",
+                          "code": d.get("code"), "ms": d.get("ms"), "ssl_days_left": d.get("ssl_days_left")})
         if not sens:
             targets = r.get("targets") or []
             if web and targets and web not in targets:
@@ -101,6 +212,8 @@ def list_apps(web=None):
                           "message": "ปิดอยู่" if not base["enabled"] else _why_nodata(r, targets),
                           "since": None, "value": None, "unit": ""})
     items.sort(key=lambda x: (ORDER.get(x["status"], 9), x["name"].lower(), x["web"] or ""))
+    if with_stats:
+        _web_stats([x for x in items if x["type"] == "web" and x.get("id")])
     bad = sum(1 for x in items if x["status"] in ("error", "down", "warning"))
     # หมายเหตุ: รายการ "รอข้อมูล" ไม่นับเป็นทำงานปกติ
     ok = sum(1 for x in items if x["status"] == "ok")
@@ -122,6 +235,9 @@ def _build(data, keep=None):
                          "message": ""})
     for k in ("process", "service", "url", "port", "container", "op", "warning", "error"):
         rule.pop(k, None)
+    if typ != "web":
+        for k in ("keyword", "slow_ms", "ssl_days"):
+            rule.pop(k, None)
     rule["targets"] = [web]
     if keep is None:
         rule["notify"] = data.get("notify", True) is not False
@@ -139,6 +255,13 @@ def _build(data, keep=None):
         # โหมดเลือกจาก URL: localhost / 127.0.0.1 / ::1 = บนเครื่อง · อื่นๆ = จาก central (ไม่มีตัวเลือกในฟอร์มแล้ว)
         value = alert_rules_service.normalize_url(value)
         rule.update(metric=alert_rules_service.web_metric(value), url=value)
+        for k in ("keyword", "slow_ms", "ssl_days"):              # ตั้งค่าเพิ่มเติม (ไม่ส่งมา = คงค่าเดิมตอนแก้ไข)
+            if k in data:
+                rule.pop(k, None)
+                if str(data.get(k) or "").strip():
+                    rule[k] = data[k]
+        if str(data.get("for_minutes") or "").strip():
+            rule["for_minutes"] = data["for_minutes"]
         u = urllib.parse.urlsplit(value.replace("{host}", web))
         default = (u.netloc + u.path.rstrip("/")) or value
     elif typ == "port":

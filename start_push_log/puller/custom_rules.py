@@ -171,7 +171,7 @@ def ports_text(ports, limit=12):
     return (", ".join(web[:limit]) + (" ..." if len(web) > limit else "")) if web else "ไม่พบเว็บบนเครื่อง"
 
 
-def local_web_state(url, query, labels, now=None):
+def local_web_state(url, query, labels, now=None, rule=None):
     """Monitor เว็บโหมดบนเครื่อง (Windows / cm-probe) -> (ผิดปกติ?, ข้อความ, ms, หน่วย, ที่มา)
     ผิดปกติ = None -> ยังบอกไม่ได้ (สถานะ unknown) เช่น agent ยังไม่ส่ง / ผลเก่า / URL ไม่มีพอร์ต"""
     now = now or time.time()
@@ -191,17 +191,60 @@ def local_web_state(url, query, labels, now=None):
     q = f'cm_http_local_code{{{labels},port="{port}"}}'
     if hit is None:
         return True, f"ไม่พบเว็บที่พอร์ต {port} บนเครื่องนี้ · พอร์ตที่พบ: {ports_text(ports)}", None, "", q
-    return web_result(url, hit["code"], hit["ms"]) + (q,)
+    return web_result(url, hit["code"], hit["ms"], rule) + (q, {"code": hit["code"], "ms": hit["ms"]})
 
 
-def web_result(url, code, ms):
-    """ข้อความ + สถานะจากรหัส HTTP (แสดงรหัสเสมอ)"""
+def web_result(url, code, ms, rule=None, body=None, ssl_days_left=None):
+    """ข้อความ + สถานะจากรหัส HTTP (แสดงรหัสเสมอ) -> (ผิดปกติ, ข้อความ, ms, หน่วย)
+    ผิดปกติ: True = ไม่ทำงาน · "warning" = ทำงานแต่ช้า / SSL ใกล้หมดอายุ · False = ปกติ
+    rule (ตั้งค่าเพิ่มเติม): keyword = คำที่ต้องมีในหน้า · slow_ms = เตือนเมื่อตอบช้ากว่า · ssl_days = เตือน SSL ก่อนหมดอายุ"""
+    rule = rule or {}
     code = int(code or 0)
     ms_t = f" ({ms:.0f} ms)" if ms is not None else ""
+    shown, unit = (round(ms, 1) if ms is not None else None), ("ms" if ms is not None else "")
     if not code:
         return True, f"{url} ไม่ตอบ (HTTP 0)", None, ""
-    return (not up_code(code)), f"{url} ตอบ HTTP {code}{ms_t}", (round(ms, 1) if ms is not None else None), \
-        ("ms" if ms is not None else "")
+    msg = f"{url} ตอบ HTTP {code}{ms_t}"
+    if not up_code(code):
+        return True, msg, shown, unit
+    kw = str(rule.get("keyword") or "").strip()
+    if kw and body is not None and kw.lower() not in body.lower():
+        return True, f"{msg} · ไม่พบคำ \"{kw}\" ในหน้า", shown, unit
+    if ssl_days_left is not None and ssl_days_left < 0:
+        return True, f"{msg} · SSL หมดอายุแล้ว", shown, unit
+    notes = []
+    slow = _num(rule.get("slow_ms"))
+    if slow and ms is not None and ms >= slow:
+        notes.append(f"ช้ากว่า {slow:.0f} ms")
+    sd = _num(rule.get("ssl_days"))
+    if sd and ssl_days_left is not None and ssl_days_left <= sd:
+        notes.append(f"SSL หมดอายุใน {ssl_days_left} วัน")
+    if notes:
+        return "warning", f"{msg} · " + " · ".join(notes), shown, unit
+    return False, msg, shown, unit
+
+
+_ssl_cache = {}
+SSL_TTL = 3600
+
+
+def _ssl_days_left(url):
+    """วันที่เหลือก่อนใบรับรอง HTTPS หมดอายุ (cache 1 ชม.)  อ่านไม่ได้ -> None"""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != "https" or not u.hostname:
+        return None
+    key = (u.hostname, u.port or 443)
+    hit = _ssl_cache.get(key)
+    if hit and time.time() - hit[0] < SSL_TTL:
+        return hit[1]
+    try:
+        import web_checks
+        days = web_checks.ssl_info(u.hostname, u.port or 443, 5).get("days_left")
+    except Exception as e:
+        print(f"[RULE SSL] {url}: {e!r}")
+        days = None
+    _ssl_cache[key] = (time.time(), days)
+    return days
 
 
 def rules(config):
@@ -446,12 +489,12 @@ def _state(rule, target, labels, query, windows=True, rules=None):
         if not url:
             return None
         if windows:
-            return local_web_state(url, query, labels)
+            return local_web_state(url, query, labels, rule=rule)
         p = linux_probe(target, rules or [rule])
         if not p or url not in p["http"]:
             return None
         code, ms = p["http"][url]
-        return web_result(url, code, ms) + (f"ssh: curl {url}",)
+        return web_result(url, code, ms, rule) + (f"ssh: curl {url}", {"code": code, "ms": ms})
     host = str(target.get("host") or "").strip()
     if m == "tcp_port":
         port = int(rule.get("port") or 0)
@@ -479,14 +522,19 @@ def _state(rule, target, labels, query, windows=True, rules=None):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "central-monitor"})
             opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), _NoRedirect)
+            body = None
             with opener.open(req, timeout=HTTP_TIMEOUT) as r:
                 code = r.status
+                if rule.get("keyword"):
+                    body = r.read(512 * 1024).decode(r.headers.get_content_charset() or "utf-8", "replace")
         except urllib.error.HTTPError as e:
             code = e.code
         except Exception as e:
             reason = getattr(e, "reason", None) or e.__class__.__name__
             return True, f"{url} ไม่ตอบ (HTTP 0 · {reason})", None, "", url
-        return web_result(url, code, (time.time() - t0) * 1000) + (url,)
+        ms = (time.time() - t0) * 1000
+        days = _ssl_days_left(url) if rule.get("ssl_days") and up_code(code) else None
+        return web_result(url, code, ms, rule, body, days) + (url, {"code": code, "ms": round(ms), "ssl_days_left": days})
     return None
 
 
@@ -507,20 +555,22 @@ def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, qu
         try:
             if r["metric"] in STATE_METRICS:
                 res = _state(r, target, labels, query, windows, mine)
-                vals = [] if res is None else [(None, res[:4], res[4])]
+                vals = [] if res is None else [(None, res[:4], res[4], res[5] if len(res) > 5 else {})]
             else:
-                vals = _values(r, ex, labels, name, windows, query, ping_exprs)
+                vals = [(p, v, q, {}) for p, v, q in _values(r, ex, labels, name, windows, query, ping_exprs)]
         except Exception as e:
             print(f"[RULE ERROR] {r.get('id')} {name}: {e!r}")
             continue
-        for part, value, q in vals:
+        for part, value, q, extra in vals:
             sid = f"{name}:rule:{r['id']}" + (f":{part}" if part else "")
             label = str(r.get("name") or r["id"]) + (f" ({part})" if part and not r.get("mount") else "")
             if r["metric"] in STATE_METRICS:
                 level = r.get("level") if r.get("level") in ("warning", "error") else \
                     "error" if _num(r.get("error")) is not None or _num(r.get("warning")) is None else "warning"
                 bad, msg, shown, sunit = value
-                st = "unknown" if bad is None else level if bad else "ok"
+                st = "unknown" if bad is None else "warning" if bad == "warning" else level if bad else "ok"
+                if r["metric"] in ("http_local", "http_url") and bad is not None:
+                    extra = dict(extra or {}, up=bad is not True)          # ช้า / SSL ใกล้หมด = ยังทำงาน
                 unit = sunit
                 warning, error = None, None
             else:
@@ -535,5 +585,5 @@ def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, qu
                         "warning": warning, "error": error,
                         "confirm": _confirm(r), "notify": r.get("notify", True) is not False,
                         "template": str(r.get("message") or "") or None,
-                        "details": {"rule": r["id"], "metric": r["metric"]}})
+                        "details": {"rule": r["id"], "metric": r["metric"], **(extra or {})}})
     return out
