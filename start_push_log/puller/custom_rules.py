@@ -92,11 +92,123 @@ def proc_regex(name):
     return rx.replace("\\", "\\\\").replace('"', '\\"')        # อยู่ใน "..." ของ PromQL -> \ ต้องเป็น \\
 
 
+# ---------------------------------------------------------------------------
+# URL ของ Monitor เว็บ: normalize + เลือกโหมดจาก host (ต้องตรงกับ web_dashboard/backend/alert_rules_service.py)
+#   "8090" / ":8090" / "localhost:8090" -> http://localhost:8090
+#   host = localhost / 127.0.0.1 / ::1 -> ตรวจบนเครื่อง (http_local)   อย่างอื่น -> ตรวจจาก central (http_url)
+# ---------------------------------------------------------------------------
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+PROBE_STALE = 300               # ผล cm-probe เก่ากว่านี้ = agent อาจหยุดทำงาน
+PROBE_FRESH = 120               # series ที่ไม่มีค่าใหม่เกินนี้ (เทียบกับตัวล่าสุด) = พอร์ตนั้นหายไปแล้ว
+
+
+def normalize_url(value):
+    v = str(value or "").strip()
+    if re.match(r"^:?\d{1,5}$", v):
+        v = "localhost:" + v.lstrip(":")
+    elif v.startswith(":") and re.match(r"^:\d{1,5}(/.*)?$", v):
+        v = "localhost" + v
+    if v and not re.match(r"^[a-z][a-z0-9+.-]*://", v, re.I):
+        v = "http://" + v
+    return v
+
+
+def url_host(url):
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def url_port(url):
+    """พอร์ตที่ระบุใน URL (ไม่ระบุ / ผิด -> None)"""
+    try:
+        return urllib.parse.urlsplit(url).port
+    except ValueError:
+        return None
+
+
+def is_local_url(url):
+    return url_host(url) in LOCAL_HOSTS
+
+
+def web_metric(url):
+    return "http_local" if is_local_url(url) else "http_url"
+
+
+def migrate_rule(r):
+    """Monitor เว็บที่บันทึกแบบเก่า (URL ไม่มี http:// / เลือกโหมดผิด) -> แบบใหม่ ตอนโหลด (ไม่แก้ไฟล์)"""
+    if r.get("metric") in ("http_local", "http_url") and r.get("url"):
+        url = normalize_url(r["url"])
+        r = dict(r, url=url, metric=web_metric(url))
+    return r
+
+
+def up_code(code):
+    """2xx / 3xx = ทำงาน · 4xx / 5xx / 0 (ไม่ตอบ) = ไม่ทำงาน"""
+    return 200 <= int(code or 0) < 400
+
+
+def probe_ports(query, labels, keep=PROBE_FRESH):
+    """ผล cm-probe ล่าสุดของเครื่อง Windows -> [{port, scheme, code, ms}] (เฉพาะ series ที่ยังส่งมาอยู่)"""
+    stamps = {(lb.get("port"), lb.get("scheme")): ts for lb, ts in query(f"timestamp(cm_http_local_code{{{labels}}})") or []}
+    if not stamps:
+        return []
+    newest = max(stamps.values())
+    codes = {(lb.get("port"), lb.get("scheme")): v for lb, v in query(f"cm_http_local_code{{{labels}}}") or []}
+    ms = {(lb.get("port"), lb.get("scheme")): v for lb, v in query(f"cm_http_local_ms{{{labels}}}") or []}
+    out = []
+    for k, ts in stamps.items():
+        if ts < newest - keep or k not in codes or not str(k[0] or "").isdigit():
+            continue
+        out.append({"port": int(k[0]), "scheme": k[1] or "http", "code": int(codes[k]),
+                    "ms": round(ms[k]) if k in ms else None})
+    return sorted(out, key=lambda x: x["port"])
+
+
+def ports_text(ports, limit=12):
+    web = [str(p["port"]) for p in ports if p["code"]]
+    return (", ".join(web[:limit]) + (" ..." if len(web) > limit else "")) if web else "ไม่พบเว็บบนเครื่อง"
+
+
+def local_web_state(url, query, labels, now=None):
+    """Monitor เว็บโหมดบนเครื่อง (Windows / cm-probe) -> (ผิดปกติ?, ข้อความ, ms, หน่วย, ที่มา)
+    ผิดปกติ = None -> ยังบอกไม่ได้ (สถานะ unknown) เช่น agent ยังไม่ส่ง / ผลเก่า / URL ไม่มีพอร์ต"""
+    now = now or time.time()
+    q = f"max_over_time(cm_probe_timestamp_seconds{{{labels}}}[1d])"
+    rows = query(q) or []
+    if not rows:
+        return (None, "agent ยังไม่ส่งผลตรวจเว็บ · ติดตั้ง agent ซ้ำ (Settings > เครื่อง > Download zip + Make command)",
+                None, "", q)
+    age = now - rows[0][1]
+    if age > PROBE_STALE:
+        return None, f"ผลตรวจจากเครื่องล่าสุด {int(age // 60)} นาทีที่แล้ว · ตรวจว่า agent ยังทำงานอยู่", None, "", q
+    ports = probe_ports(query, labels)
+    port = url_port(url)
+    if port is None:
+        return None, f"{url} ไม่ได้ระบุพอร์ต · แก้ไข Monitor แล้วเลือกพอร์ต (พอร์ตที่พบ: {ports_text(ports)})", None, "", q
+    hit = next((p for p in ports if p["port"] == port), None)
+    q = f'cm_http_local_code{{{labels},port="{port}"}}'
+    if hit is None:
+        return True, f"ไม่พบเว็บที่พอร์ต {port} บนเครื่องนี้ · พอร์ตที่พบ: {ports_text(ports)}", None, "", q
+    return web_result(url, hit["code"], hit["ms"]) + (q,)
+
+
+def web_result(url, code, ms):
+    """ข้อความ + สถานะจากรหัส HTTP (แสดงรหัสเสมอ)"""
+    code = int(code or 0)
+    ms_t = f" ({ms:.0f} ms)" if ms is not None else ""
+    if not code:
+        return True, f"{url} ไม่ตอบ (HTTP 0)", None, ""
+    return (not up_code(code)), f"{url} ตอบ HTTP {code}{ms_t}", (round(ms, 1) if ms is not None else None), \
+        ("ms" if ms is not None else "")
+
+
 def rules(config):
     out = []
     for r in config.get("alert_rules") or []:
         if isinstance(r, dict) and r.get("id") and r.get("enabled", True) is not False and r.get("metric") in METRICS:
-            out.append(r)
+            out.append(migrate_rule(r))
     return out
 
 
@@ -197,11 +309,6 @@ def _values(rule, ex, labels, name, windows, query, ping_exprs):
 # ---------------------------------------------------------------------------
 PROBE_TTL = 55
 _probe_cache = {}
-
-
-def _local_port(url):
-    u = urllib.parse.urlsplit(url)
-    return u.port or (443 if u.scheme == "https" else 80)
 
 
 def parse_probe(out):
@@ -335,31 +442,16 @@ def _state(rule, target, labels, query, windows=True, rules=None):
         bad, st = _container_state(found)
         return bad, f"{cname}: {st}", None, "", q
     if m == "http_local":
-        url = str(rule.get("url") or "").strip()
+        url = normalize_url(rule.get("url"))
         if not url:
             return None
         if windows:
-            if not query(f"cm_probe_timestamp_seconds{{{labels}}}"):
-                return None
-            port = _local_port(url)
-            q = f'cm_http_local_code{{{labels},port="{port}"}}'
-            rows = query(q) or []
-            if not rows:
-                return True, f"ไม่มีโปรแกรมเปิดพอร์ต {port} บนเครื่อง", None, "", q
-            code = int(rows[0][1])
-            ms_rows = query(f'cm_http_local_ms{{{labels},port="{port}"}}') or []
-            ms = ms_rows[0][1] if ms_rows else None
-        else:
-            p = linux_probe(target, rules or [rule])
-            if not p or url not in p["http"]:
-                return None
-            code, ms = p["http"][url]
-            q = f"ssh: curl {url}"
-        if not code:
-            return True, f"{url} ไม่ตอบ (บนเครื่อง)", None, "", q
-        bad = code >= 500
-        return bad, f"{url} ตอบ HTTP {code}" + (f" ({ms:.0f} ms)" if ms is not None else ""), \
-            (round(ms, 1) if ms is not None else None), "ms" if ms is not None else "", q
+            return local_web_state(url, query, labels)
+        p = linux_probe(target, rules or [rule])
+        if not p or url not in p["http"]:
+            return None
+        code, ms = p["http"][url]
+        return web_result(url, code, ms) + (f"ssh: curl {url}",)
     host = str(target.get("host") or "").strip()
     if m == "tcp_port":
         port = int(rule.get("port") or 0)
@@ -373,7 +465,7 @@ def _state(rule, target, labels, query, windows=True, rules=None):
         ms = (time.time() - t0) * 1000
         return False, f"ต่อ {host}:{port} ได้ ({ms:.0f} ms)", round(ms, 1), "ms", f"tcp://{host}:{port}"
     if m == "http_url":
-        url = str(rule.get("url") or "").strip()
+        url = normalize_url(rule.get("url"))
         if "{host}" in url:
             if not host:
                 return None
@@ -384,20 +476,24 @@ def _state(rule, target, labels, query, windows=True, rules=None):
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE        # เว็บภายในมักใช้ใบรับรองของตัวเอง (ตรวจแค่ว่าตอบไหม)
         t0 = time.time()
-        code = None
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "central-monitor"})
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=ctx) as r:
+            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), _NoRedirect)
+            with opener.open(req, timeout=HTTP_TIMEOUT) as r:
                 code = r.status
         except urllib.error.HTTPError as e:
             code = e.code
         except Exception as e:
             reason = getattr(e, "reason", None) or e.__class__.__name__
-            return True, f"{url} ไม่ตอบ ({reason})", None, "", url
-        ms = (time.time() - t0) * 1000
-        bad = code >= 400
-        return bad, f"{url} ตอบ HTTP {code} ({ms:.0f} ms)", round(ms, 1), "ms", url
+            return True, f"{url} ไม่ตอบ (HTTP 0 · {reason})", None, "", url
+        return web_result(url, code, (time.time() - t0) * 1000) + (url,)
     return None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """ไม่ตาม redirect: 3xx = เว็บตอบแล้ว (เหมือน cm-probe บนเครื่อง)"""
+    def redirect_request(self, *a, **k):
+        return None
 
 
 def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, query, ping_exprs):
@@ -424,7 +520,7 @@ def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, qu
                 level = r.get("level") if r.get("level") in ("warning", "error") else \
                     "error" if _num(r.get("error")) is not None or _num(r.get("warning")) is None else "warning"
                 bad, msg, shown, sunit = value
-                st = level if bad else "ok"
+                st = "unknown" if bad is None else level if bad else "ok"
                 unit = sunit
                 warning, error = None, None
             else:

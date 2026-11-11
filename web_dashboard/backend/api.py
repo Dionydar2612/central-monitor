@@ -615,6 +615,21 @@ def _known_target(web):
     return next((t for t in load_web_targets() if t.get("name") == web), None)
 
 
+@app.get("/api/host/<web>/probe-ports")
+def host_probe_ports(web):
+    """พอร์ตเว็บที่ cm-probe บนเครื่อง Windows เจอล่าสุด [{port, scheme, code, ms}] (ปุ่มเลือกพอร์ตในหน้า Apps & Web)"""
+    if _known_target(web) is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        data = host_details.probe_ports(web)
+    except Exception as e:
+        print(f"[HOST] probe-ports {web}: {e!r}")
+        return jsonify({"error": f"อ่านข้อมูลจาก Prometheus ไม่ได้: {e}"}), 502
+    if data is None:
+        return jsonify({"error": "ไม่มีการตั้งค่า metrics ของเครื่องนี้"}), 404
+    return jsonify(data)
+
+
 @app.get("/api/host/<web>/<kind>")
 def host_detail(web, kind):
     """kind = performance | hardware | system | software | bottleneck   ค่าที่ไม่มี = null + รายการ unsupported"""

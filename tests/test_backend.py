@@ -117,8 +117,36 @@ class Backend(unittest.TestCase):
         self.assertEqual(up.status_code, 200, up.json)
         self.assertEqual((up.json["rule"]["metric"], up.json["rule"]["url"], up.json["rule"]["id"]),
                          ("http_local", "http://localhost:9000/ping", rule["id"]))
-        self.assertIn("value", c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01",
-                                                                       "value": "http://example.com/", "local": True}).json["fields"])
+        # โหมดเลือกจาก URL (ไม่สน local ที่ส่งมา) + normalize
+        ex = c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01", "value": "http://example.com/", "local": True})
+        self.assertEqual((ex.json["rule"]["metric"], ex.json["rule"]["url"]), ("http_url", "http://example.com/"))
+        p8 = c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01", "value": ":8090"})
+        self.assertEqual((p8.json["rule"]["metric"], p8.json["rule"]["url"]), ("http_local", "http://localhost:8090"))
+        nop = c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01", "value": "localhost"})
+        self.assertEqual(nop.status_code, 400)
+        self.assertIn("ใส่พอร์ต", nop.json["fields"]["value"])
+        # Monitor ที่บันทึกแบบเก่า (localhost + โหมด central) -> อ่านเป็นบนเครื่องตอนโหลด
+        import targets_service
+        from ruamel.yaml.comments import CommentedMap
+        y = targets_service._yaml()
+        with targets_service._locked():
+            doc = targets_service._load_doc(y)
+            doc["alert_rules"].append(CommentedMap(id="legacy-web", name="Legacy", metric="http_url", url="localhost:8091",
+                                                   targets=["app-01"], level="error", for_minutes=2, enabled=True))
+            targets_service._write_doc(y, doc)
+        lg = next(x for x in c.get("/api/apps").json["items"] if x["rule"] == "legacy-web")
+        self.assertEqual((lg["metric"], lg["what"]), ("http_local", "http://localhost:8091"))
+        # Monitor เก่าแบบไม่มีพอร์ต ไม่ขวางการบันทึกรายการอื่น
+        with targets_service._locked():
+            doc = targets_service._load_doc(y)
+            doc["alert_rules"].append(CommentedMap(id="legacy-noport", name="NoPort", metric="http_url", url="localhost",
+                                                   targets=["app-01"], level="error", for_minutes=2, enabled=True))
+            targets_service._write_doc(y, doc)
+        extra = c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "java"})
+        self.assertEqual(extra.status_code, 201, extra.json)
+        self.assertEqual(c.delete(f"/api/apps/{extra.json['rule']['id']}").status_code, 200)
+        self.assertEqual(c.delete("/api/apps/legacy-noport").status_code, 200)
+        self.assertEqual(c.delete("/api/apps/legacy-web").status_code, 200)
         dk = c.post("/api/apps", json={"type": "docker", "web": "app-01", "value": "postgres"})
         self.assertEqual((dk.status_code, dk.json["rule"]["container"]), (201, "postgres"))
         c.delete(f"/api/apps/{dk.json['rule']['id']}")

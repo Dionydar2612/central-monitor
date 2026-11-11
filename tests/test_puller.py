@@ -282,11 +282,6 @@ class SoftwareRules(unittest.TestCase):
         self.assertEqual(self.ev({"metric": "docker", "container": "db"}, rows)[0]["message"], "db: Exited (1)")
         self.assertEqual(self.ev({"metric": "docker", "container": "gone"}, rows)[0]["status"], "error")
         self.assertEqual(self.ev({"metric": "docker", "container": "web"}, {}), [])                    # agent เก่า
-        web = dict(probe, **{'cm_http_local_code{cm_web="w",port="8080"}': [({}, 503.0)]})
-        r = self.ev({"metric": "http_local", "url": "http://localhost:8080/health"}, web)
-        self.assertEqual((r[0]["status"], r[0]["message"]), ("error", "http://localhost:8080/health ตอบ HTTP 503"))
-        self.assertEqual(self.ev({"metric": "http_local", "url": "http://localhost:81/"}, probe)[0]["message"],
-                         "ไม่มีโปรแกรมเปิดพอร์ต 81 บนเครื่อง")
         # Linux: ผ่าน SSH
         out = ('##DOCKER\n{"Names":"api","State":"running","Status":"Up 1h"}\n##HTTP\n'
                'http://localhost:3000/\t200 0.020\nhttp://localhost:4000/\t000 0.000\n')
@@ -299,11 +294,85 @@ class SoftwareRules(unittest.TestCase):
             self.assertEqual(ev({"metric": "docker", "container": "api"})[0]["status"], "ok")
             self.assertEqual(ev({"metric": "http_local", "url": "http://localhost:3000/"})[0]["status"], "ok")
             self.assertEqual(ev({"metric": "http_local", "url": "http://localhost:4000/"})[0]["status"], "error")
+            self.assertEqual(ev({"metric": "http_local", "url": "http://localhost:4000/"})[0]["message"],
+                             "http://localhost:4000/ ไม่ตอบ (HTTP 0)")
         finally:
             self.cr.linux_probe = orig
             self.cr._probe_cache.clear()
         p = self.cr.parse_probe("##DOCKER\npermission denied while trying to connect\n")
         self.assertEqual((p["containers"], p["docker_error"][:17]), ({}, "permission denied"))
+
+    def test_web_url_normalize_and_mode(self):
+        n, wm = self.cr.normalize_url, self.cr.web_metric
+        self.assertEqual(n("8090"), "http://localhost:8090")
+        self.assertEqual(n(":8090"), "http://localhost:8090")
+        self.assertEqual(n(":8090/health"), "http://localhost:8090/health")
+        self.assertEqual(n("localhost:8090"), "http://localhost:8090")
+        self.assertEqual(n("https://app.local/x"), "https://app.local/x")
+        self.assertEqual(n("10.0.0.5:8080"), "http://10.0.0.5:8080")
+        self.assertEqual([wm(n(x)) for x in ("localhost:8090", "127.0.0.1:80", "http://[::1]:81", "{host}:8080", "app.local")],
+                         ["http_local", "http_local", "http_local", "http_url", "http_url"])
+        self.assertIsNone(self.cr.url_port("http://localhost"))
+        # บันทึกแบบเก่า: "localhost:8090" โหมด central -> บนเครื่อง ตอนโหลด
+        rs = self.cr.rules({"alert_rules": [{"id": "a", "metric": "http_url", "url": "localhost:8090"},
+                                            {"id": "b", "metric": "http_local", "url": "http://10.0.0.5"}]})
+        self.assertEqual([(r["metric"], r["url"]) for r in rs],
+                         [("http_local", "http://localhost:8090"), ("http_url", "http://10.0.0.5")])
+        # สองฝั่ง (puller / backend) ต้องให้ผลเหมือนกัน
+        sys.path.insert(0, os.path.join(ROOT, "web_dashboard", "backend"))
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("ars_copy", os.path.join(ROOT, "web_dashboard", "backend",
+                                                                                   "alert_rules_service.py"))
+            src = open(spec.origin, encoding="utf-8").read()
+            a, b = src.index("LOCAL_HOSTS = "), src.index("def url_host")
+            ns = {"re": __import__("re")}
+            exec(src[a:b], ns)
+            for x in ("8090", ":8090", "localhost:8090", "app:1", "https://x", " 1.2.3.4 ", ":8090/a"):
+                self.assertEqual(ns["normalize_url"](x), n(x), x)
+        finally:
+            sys.path.pop(0)
+
+    def test_local_web_status(self):
+        now = 10_000.0
+        L = 'cm_web="w"'
+
+        def q(data):
+            return lambda s: next((v for k, v in data.items() if s.startswith(k)), [])
+        st = lambda url, data: self.cr.local_web_state(url, q(data), L, now)
+        # 1) agent ยังไม่ส่งผล probe
+        r = st("http://localhost:8090", {})
+        self.assertIsNone(r[0])
+        self.assertIn("agent ยังไม่ส่งผลตรวจเว็บ", r[1])
+        # 2) ผลเก่ากว่า 5 นาที
+        r = st("http://localhost:8090", {"max_over_time(cm_probe_timestamp": [({}, now - 900)]})
+        self.assertEqual((r[0], r[1]), (None, "ผลตรวจจากเครื่องล่าสุด 15 นาทีที่แล้ว · ตรวจว่า agent ยังทำงานอยู่"))
+        fresh = {"max_over_time(cm_probe_timestamp": [({}, now - 30)],
+                 "timestamp(cm_http_local_code": [({"port": "8090", "scheme": "http"}, now - 30),
+                                                  ({"port": "9090", "scheme": "http"}, now - 30),
+                                                  ({"port": "135", "scheme": "http"}, now - 30),
+                                                  ({"port": "7000", "scheme": "http"}, now - 900)],   # stale
+                 "cm_http_local_code": [({"port": "8090", "scheme": "http"}, 302), ({"port": "9090", "scheme": "http"}, 404),
+                                        ({"port": "135", "scheme": "http"}, 0), ({"port": "7000", "scheme": "http"}, 200)],
+                 "cm_http_local_ms": [({"port": "8090", "scheme": "http"}, 5), ({"port": "9090", "scheme": "http"}, 7)]}
+        # 3) ไม่มีพอร์ตนั้น (และพอร์ต stale ไม่นับ)
+        r = st("http://localhost:7000", fresh)
+        self.assertEqual((r[0], r[1]), (True, "ไม่พบเว็บที่พอร์ต 7000 บนเครื่องนี้ · พอร์ตที่พบ: 8090, 9090"))
+        # 4) ปกติ: 3xx = ทำงาน, 4xx = ไม่ทำงาน, แสดงรหัสเสมอ
+        r = st("http://localhost:8090", fresh)
+        self.assertEqual((r[0], r[1], r[2]), (False, "http://localhost:8090 ตอบ HTTP 302 (5 ms)", 5))
+        r = st("http://localhost:9090/x", fresh)
+        self.assertEqual((r[0], r[1]), (True, "http://localhost:9090/x ตอบ HTTP 404 (7 ms)"))
+        # URL ไม่มีพอร์ต (บันทึกแบบเก่า) -> บอกพอร์ตที่พบ
+        r = st("http://localhost", fresh)
+        self.assertIsNone(r[0])
+        self.assertIn("พอร์ตที่พบ: 8090, 9090", r[1])
+        # ผ่าน evaluate: ยังบอกไม่ได้ = unknown
+        out = self.cr.evaluate({"name": "w"}, [{"id": "r", "name": "R", "metric": "http_local", "url": "localhost"}], {}, L,
+                               True, lambda sid: None, 2, {}, q({}), None)
+        self.assertEqual(out[0]["status"], "unknown")
+        self.assertEqual([self.cr.up_code(c) for c in (200, 302, 399, 400, 404, 500, 0)],
+                         [True, True, True, False, False, False, False])
 
     def test_software_diff_and_run(self):
         self.assertEqual(self.sw.diff({"A|x64": "1", "B|x64": "2"}, {"A|x64": "1.1", "C|x86": "3"}),

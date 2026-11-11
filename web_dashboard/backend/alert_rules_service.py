@@ -9,6 +9,7 @@ alert_rules_service.py - กฎแจ้งเตือนที่ผู้ใ�
 import hashlib
 import json
 import re
+import urllib.parse
 
 import notify_service
 import targets_service
@@ -58,7 +59,7 @@ def _doc():
 def list_rules():
     doc = _doc()
     rules = targets_service._plain(doc.get("alert_rules") or [])
-    rules = rules if isinstance(rules, list) else []
+    rules = [migrate_rule(r) for r in rules] if isinstance(rules, list) else []
     for r in rules:                              # webhook ของกฎเป็นความลับ: ไม่ส่ง URL เต็มกลับไป
         url = str(r.pop("teams_url", "") or "")
         r["teams_url_set"] = bool(url)
@@ -91,7 +92,69 @@ def _slug(name):
     return (base or "rule") + "-" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:6]
 
 
-def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
+# ---------------------------------------------------------------------------
+# URL ของ Monitor เว็บ (ต้องตรงกับ start_push_log/puller/custom_rules.py: normalize_url / web_metric)
+# ---------------------------------------------------------------------------
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def normalize_url(value):
+    """"8090" / ":8090" / "localhost:8090" -> http://localhost:8090 · ไม่มี scheme -> เติม http://"""
+    v = str(value or "").strip()
+    if re.match(r"^:?\d{1,5}$", v):
+        v = "localhost:" + v.lstrip(":")
+    elif v.startswith(":") and re.match(r"^:\d{1,5}(/.*)?$", v):
+        v = "localhost" + v
+    if v and not re.match(r"^[a-z][a-z0-9+.-]*://", v, re.I):
+        v = "http://" + v
+    return v
+
+
+def url_host(url):
+    try:
+        return (urllib.parse.urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def url_port(url):
+    try:
+        return urllib.parse.urlsplit(url).port
+    except ValueError:
+        return -1
+
+
+def is_local_url(url):
+    return url_host(url) in LOCAL_HOSTS
+
+
+def web_metric(url):
+    """โหมดตรวจเลือกจาก URL: localhost / 127.0.0.1 / ::1 -> บนเครื่อง (http_local) · อื่นๆ -> จาก central (http_url)"""
+    return "http_local" if is_local_url(url) else "http_url"
+
+
+def migrate_rule(r):
+    """Monitor เว็บที่บันทึกแบบเก่า -> แบบใหม่ตอนโหลด (ไม่แก้ไฟล์จนกว่าจะบันทึกครั้งถัดไป)"""
+    if isinstance(r, dict) and r.get("metric") in ("http_local", "http_url") and r.get("url"):
+        url = normalize_url(r["url"])
+        r["url"], r["metric"] = url, web_metric(url)
+    return r
+
+
+def _probe_ports_text(targets):
+    """พอร์ตเว็บที่ cm-probe เจอบนเครื่องแรกของกฎ (ใส่ในข้อความ error)"""
+    try:
+        import host_details
+        for t in targets or []:
+            ports = [str(p["port"]) for p in (host_details.probe_ports(t) or {}).get("ports") or [] if p.get("code")]
+            if ports:
+                return " · พอร์ตที่พบบน " + t + ": " + ", ".join(ports[:12])
+    except Exception as e:
+        print(f"[RULES] probe ports: {e!r}")
+    return ""
+
+
+def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None):
     """ตรวจ + จัดรูปกฎ 1 ข้อ -> (rule, errors)"""
     data = data or {}
     errors = {}
@@ -99,6 +162,10 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
     if not NAME_RE.match(name):
         errors["name"] = "ใส่ชื่อกฎ (ไม่เกิน 60 ตัวอักษร)"
     metric = str(data.get("metric") or "")
+    web_url = ""
+    if metric in ("http_local", "http_url"):                 # โหมดตรวจเลือกจาก URL เสมอ
+        web_url = normalize_url(data.get("url"))
+        metric = web_metric(web_url) if web_url else metric
     if metric not in METRICS:
         errors["metric"] = "เลือก metric"
     meta = METRICS.get(metric, ("", "", False, ">", "any"))
@@ -132,17 +199,15 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url=""):
         if port is None and "port" not in errors:
             errors["port"] = "ใส่หมายเลขพอร์ต 1 - 65535"
         rule["port"] = int(port or 0)
-    if metric == "http_url":
-        u = str(data.get("url") or "").strip()
-        if not re.match(r"^https?://[^\s\"'<>]{1,500}$", u):
-            errors["url"] = "ใส่ URL เช่น http://{host}:8080/health ({host} = Host ของเครื่อง)"
-        rule["url"] = u
-    if metric == "http_local":
-        u = str(data.get("url") or "").strip()
-        if u and not re.match(r"^https?://", u):
-            u = "http://" + u
-        if not re.match(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?(/[^\s\"'<>]*)?$", u):
-            errors["url"] = "ใส่ URL บนเครื่อง เช่น http://localhost:8080/health (Windows ตรวจ http://127.0.0.1:<พอร์ต>/)"
+    if metric in ("http_url", "http_local"):
+        u = web_url
+        if not re.match(r"^https?://[^\s\"'<>]{1,500}$", u) or not (url_host(u) or "{host}" in u):
+            errors["url"] = "ใส่ URL เช่น http://localhost:8090 (บนเครื่อง) หรือ http://{host}:8080/health (จาก central)"
+        elif metric == "http_local" and url_port(u) is None and normalize_url(old_web_url or "") != u:
+            # Monitor เดิมที่บันทึกไว้แบบไม่มีพอร์ตยังบันทึกผ่าน (การ์ดบอกให้เลือกพอร์ต) ไม่ขวางการบันทึกกฎอื่น
+            errors["url"] = "ใส่พอร์ตของเว็บบนเครื่อง เช่น http://localhost:8090" + _probe_ports_text(data.get("targets"))
+        elif url_port(u) == -1:
+            errors["url"] = "พอร์ตไม่ถูกต้อง (1 - 65535)"
         rule["url"] = u
     if metric == "docker":
         cn = str(data.get("container") or "").strip().lstrip("/")
@@ -209,14 +274,16 @@ def save_rules(payload):
     items = (payload or {}).get("rules")
     if not isinstance(items, list) or len(items) > 200:
         return False, {"error": "rules ต้องเป็นรายการ (ไม่เกิน 200 กฎ)"}
-    old = {str(r.get("id")): str(r.get("teams_url") or "")
-           for r in targets_service._plain(_doc().get("alert_rules") or []) if isinstance(r, dict)}
+    stored = [r for r in targets_service._plain(_doc().get("alert_rules") or []) if isinstance(r, dict)]
+    old = {str(r.get("id")): str(r.get("teams_url") or "") for r in stored}
+    old_web = {str(r.get("id")): str(r.get("url") or "") for r in stored if r.get("metric") in ("http_local", "http_url")}
     out, fields, ids = [], {}, set()
     for i, item in enumerate(items):
         rid = str((item or {}).get("id") or "").strip() or None
         if rid and (rid in ids or not re.match(r"^[a-z0-9-]{1,60}$", rid)):
             rid = None
-        rule, errors = clean_rule(item, ids, keep_id=rid, old_url=old.get(rid or "", ""))
+        rule, errors = clean_rule(item, ids, keep_id=rid, old_url=old.get(rid or "", ""),
+                                  old_web_url=old_web.get(rid or ""))
         for k, v in errors.items():
             fields[f"rules.{i}.{k}"] = v
         ids.add(rule["id"])

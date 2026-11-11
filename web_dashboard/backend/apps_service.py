@@ -9,7 +9,6 @@ apps_service.py - หน้า Apps & Web: โปรแกรม / เว็บ 
     DELETE /api/apps/<rule id>   ลบกฎ (admin)
 """
 
-import re
 import urllib.parse
 
 import alert_rules_service
@@ -23,7 +22,7 @@ ORDER = {"error": 0, "down": 0, "warning": 1, "unknown": 2, "nodata": 3, "paused
 
 def _rules():
     rules = targets_service._plain(alert_rules_service._doc().get("alert_rules") or [])
-    return [r for r in rules if isinstance(r, dict) and r.get("metric") in TYPE_OF]
+    return [alert_rules_service.migrate_rule(r) for r in rules if isinstance(r, dict) and r.get("metric") in TYPE_OF]
 
 
 def _what(r):
@@ -137,9 +136,9 @@ def _build(data, keep=None):
         rule.update(metric="docker", container=value)
         default = f"docker {value}"
     elif typ == "web":
-        if value and not re.match(r"^https?://", value):
-            value = "http://" + value
-        rule.update(metric="http_local" if local else "http_url", url=value)
+        # โหมดเลือกจาก URL: localhost / 127.0.0.1 / ::1 = บนเครื่อง · อื่นๆ = จาก central (ไม่มีตัวเลือกในฟอร์มแล้ว)
+        value = alert_rules_service.normalize_url(value)
+        rule.update(metric=alert_rules_service.web_metric(value), url=value)
         u = urllib.parse.urlsplit(value.replace("{host}", web))
         default = (u.netloc + u.path.rstrip("/")) or value
     elif typ == "port":
@@ -210,7 +209,7 @@ def suggest(web, typ):
             elif typ == "docker":
                 out = [c["name"] for c in d.get("containers") or []]
             else:
-                out = [f"http://localhost:{w['port']}/" for w in d.get("local_http") or [] if w.get("code")]
+                out = [f"http://localhost:{w['port']}" for w in d.get("local_http") or [] if w.get("code")]
         if typ == "service":
             snap = system_state.load_system_snapshot(web)
             out = [s.get("name") for s in (snap or {}).get("services") or [] if s.get("name")]

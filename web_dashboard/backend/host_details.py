@@ -700,3 +700,41 @@ def software(web):
     return {"web": web, "supported": True, "inventory_time": r["inv"], "probe_time": r["probe"], "containers": containers,
             "local_http": local_http, "installed": installed, "ports": ports,
             "running": running, "history": list(reversed(history[-100:])), "unsupported": unsupported}
+
+
+# ---------------------------------------------------------------------------
+# พอร์ตเว็บที่ cm-probe (Windows) เจอล่าสุด -> ปุ่มเลือกพอร์ตในฟอร์ม Monitor เว็บ (GET /api/host/<web>/probe-ports)
+# ---------------------------------------------------------------------------
+
+PROBE_FRESH = 120               # ต้องตรงกับ custom_rules.PROBE_FRESH
+
+
+def probe_ports(web):
+    """{ports: [{port, scheme, code, ms}], probe_time, age, supported}  ซ่อน series ที่ไม่ส่งมาแล้ว"""
+    labels, win = _context(web)
+    if labels is None:
+        return None
+    if not win:
+        return {"web": web, "supported": False, "ports": [], "probe_time": None, "age": None}
+    r = _run({
+        "*ts": f"timestamp(cm_http_local_code{{{labels}}})",
+        "*code": f"cm_http_local_code{{{labels}}}",
+        "*ms": f"cm_http_local_ms{{{labels}}}",
+        "probe": f"max(max_over_time(cm_probe_timestamp_seconds{{{labels}}}[1d]))",
+    })
+    key = lambda m: (m.get("port"), m.get("scheme"))
+    stamps = {key(m): v for m, v in r["*ts"] or [] if _finite(v)}
+    codes = {key(m): v for m, v in r["*code"] or [] if _finite(v)}
+    ms = {key(m): v for m, v in r["*ms"] or [] if _finite(v)}
+    ports = []
+    if stamps:
+        newest = max(stamps.values())
+        for k, ts in stamps.items():
+            if ts < newest - PROBE_FRESH or k not in codes or not str(k[0] or "").isdigit():
+                continue
+            ports.append({"port": int(k[0]), "scheme": k[1] or "http", "code": int(codes[k]),
+                          "ms": round(ms[k]) if k in ms else None})
+    ports.sort(key=lambda x: x["port"])
+    probe = r["probe"]
+    return {"web": web, "supported": True, "ports": ports, "probe_time": probe,
+            "age": round(time.time() - probe) if probe else None}

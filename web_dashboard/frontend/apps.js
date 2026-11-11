@@ -44,7 +44,7 @@ function tile(x) {
         + `<button type="button" class="apDel" data-del="${esc(x.rule)}" title="เลิกเฝ้าดู">× ลบ</button>` : "";
     const href = x.web && x.web !== "-" && !x.web.includes(",") ? `/?web=${encodeURIComponent(x.web)}` : "#";
     return `<a class="apT ${cls(x.status)}" href="${href}"><span class="apDot"></span><div class="apMain"><b title="${esc(x.what)}">${esc(x.name)}</b>`
-        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${x.metric === "http_local" ? " · localhost" : x.metric === "http_url" ? " · จาก central" : ""}</small><p>${esc(x.message)}</p></div>`
+        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${["http_local", "port_listen"].includes(x.metric) ? " · บนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? " · จาก central" : ""}</small><p>${esc(x.message)}</p></div>`
         + `<span class="apAge">${esc(ageText(x))}</span>${del}</a>`;
 }
 
@@ -84,10 +84,59 @@ const HINT = {
     service: ["ชื่อ service", "เช่น MSSQLSERVER, W3SVC, nginx.service", "ผิดปกติเมื่อ Windows service นี้ไม่ได้ Running"],
     docker: ["ชื่อ container", "เช่น web, postgres", "ผิดปกติเมื่อ container ไม่ได้ running หรือ unhealthy · Windows: เครื่องตรวจเองทุก 1 นาที · Linux: central ตรวจผ่าน SSH ทุก ~1 นาที (user SSH ต้องใช้คำสั่ง docker ได้)"],
 };
-const HINT_LOCAL = {
-    web: ["URL บนเครื่อง", "เช่น http://localhost:8080/health", "เครื่องตรวจเอง ไม่ต้องเปิด firewall · Windows: เรียก http://127.0.0.1:<พอร์ต>/ ทุก 1 นาที · Linux: central สั่ง curl ผ่าน SSH ทุก ~1 นาที · ผิดปกติเมื่อไม่ตอบ / HTTP 5xx"],
-    port: HINT.port,
-};
+const HINT_LOCAL = { port: HINT.port };
+HINT.web = ["URL", "เช่น http://localhost:8090 หรือ http://{host}:8080/health",
+    "localhost / 127.0.0.1 = ตรวจบนเครื่อง · ที่อื่น = central เรียก · 2xx / 3xx = ทำงาน · 4xx / 5xx / ไม่ตอบ = ไม่ทำงาน"];
+
+/* ---------- Monitor เว็บ: โหมดเลือกจาก URL (ต้องตรงกับ alert_rules_service.normalize_url / web_metric) ---------- */
+const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
+function normUrl(v) {
+    v = String(v || "").trim();
+    if (/^:?\d{1,5}$/.test(v)) v = "localhost:" + v.replace(/^:/, "");
+    else if (/^:\d{1,5}(\/.*)?$/.test(v)) v = "localhost" + v;
+    if (v && !/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) v = "http://" + v;
+    return v;
+}
+function urlParts(v) {
+    const m = /^[a-z][a-z0-9+.-]*:\/\/(\[[^\]]*\]|[^/:?#]*)(?::(\d*))?/i.exec(v || "");
+    return m ? { host: m[1].toLowerCase(), port: m[2] || "" } : { host: "", port: "" };
+}
+function isLocalUrl(v) { return LOCAL_HOSTS.includes(urlParts(normUrl(v)).host); }
+function showMode() {
+    const box = $("apMode");
+    if (A.type !== "web") { box.hidden = true; return; }
+    const raw = $("apVal").value.trim();
+    box.hidden = !raw;
+    if (!raw) return;
+    const u = normUrl(raw), p = urlParts(u), local = isLocalUrl(raw);
+    const win = (A.targets.find(x => x.name === $("apWeb").value) || {}).os === "windows";
+    box.innerHTML = local
+        ? `จะตรวจ: <b>บนเครื่อง</b> (${win ? "cm-probe ทุก 1 นาที" : "curl ผ่าน SSH ทุก ~1 นาที"}) · ${esc(u)}${p.port ? "" : " · <span style=\"color:#e5484d\">ใส่พอร์ตด้วย เช่น :8090</span>"}`
+        : `จะตรวจ: <b>จาก central</b> (ทุก 30 วินาที) · ${esc(u.replace("{host}", machineHost() || "{host}"))}`;
+    document.querySelectorAll("#apPorts button[data-port]").forEach(b => b.setAttribute("aria-pressed", String(local && b.dataset.port === p.port)));
+}
+async function loadPorts() {
+    const box = $("apPorts"); box.hidden = true; box.textContent = "";
+    const web = $("apWeb").value, t = A.targets.find(x => x.name === web);
+    if (A.type !== "web" || !t || t.os !== "windows") return;
+    let d;
+    try { d = await api("GET", `/api/host/${encodeURIComponent(web)}/probe-ports`); } catch (e) { return; }
+    if (web !== $("apWeb").value || A.type !== "web") return;
+    const ports = d.ports || [];
+    if (!ports.length) {
+        box.hidden = false;
+        box.textContent = d.probe_time ? "เครื่องนี้ยังไม่พบเว็บบนพอร์ตใด" : "เครื่องนี้ยังไม่ส่งผลตรวจเว็บ (ติดตั้ง agent ซ้ำ: Settings > เครื่อง > Download zip + Make command)";
+        return;
+    }
+    const btn = p => { const c = !p.code ? "na" : p.code < 400 ? "ok" : "bad";
+        return `<button type="button" class="${c}" data-port="${p.port}" data-scheme="${esc(p.scheme)}"${p.code ? "" : " hidden"}>`
+            + `${p.port} · <b>HTTP ${p.code}</b>${p.ms != null ? ` · ${p.ms} ms` : ""}</button>`; };
+    const hidden = ports.filter(p => !p.code).length;
+    box.innerHTML = `<span>เว็บที่พบบนเครื่อง:</span>${ports.map(btn).join("")}`
+        + (hidden ? `<button type="button" class="lnk" id="apPortsAll">แสดงทั้งหมด (+${hidden} ที่ไม่ใช่เว็บ)</button>` : "");
+    box.hidden = false;
+    showMode();
+}
 const HINT_REMOTE = {
     web: HINT.web,
     port: ["พอร์ต", "เช่น 8080", "central ต่อ TCP ไปที่ Host (IP) ของเครื่องทุก 30 วินาที (เครื่องต้องมี Host ในหน้า Settings) ผิดปกติเมื่อต่อไม่ได้"],
@@ -106,18 +155,19 @@ function machineHost() {
     return t && t.host ? t.host : "";
 }
 function refreshHint() {
-    const t = A.type, both = t === "web" || t === "port";
+    const t = A.type, both = t === "port";          // เว็บ: เลือกโหมดจาก URL เอง ไม่มีตัวเลือก
     $("apWhere").hidden = !both;
     const [label, ph, hint] = both ? (A.local ? HINT_LOCAL : HINT_REMOTE)[t] : HINT[t];
     $("apValLabel").textContent = label; $("apVal").placeholder = ph;
     const h = machineHost();
     $("apHint").textContent = hint + (both && !A.local ? (h ? ` · Host ของเครื่องนี้: ${h} (ใช้ {host} ใน URL ได้)` : " · ⚠ เครื่องนี้ยังไม่มี Host ในหน้า Settings") : "");
     $("apVal").inputMode = t === "port" ? "numeric" : "text";
+    showMode();
 }
 function setType(t) {
     A.type = t;
     document.querySelectorAll("#apType button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
-    refreshHint(); suggest();
+    refreshHint(); suggest(); loadPorts();
 }
 function setLocal(on) {
     A.local = on;
@@ -151,7 +201,9 @@ async function save(ev) {
     ev.preventDefault();
     $("apMsg").textContent = ""; $("apSave").disabled = true;
     try {
-        const body = { type: A.type, web: $("apWeb").value, value: $("apVal").value.trim(), name: $("apName").value.trim(), local: A.local };
+        const v = $("apVal").value.trim();
+        const body = { type: A.type, web: $("apWeb").value, value: A.type === "web" ? normUrl(v) : v, name: $("apName").value.trim(),
+                       local: A.type === "web" ? isLocalUrl(v) : A.local };
         if (A.editing) await api("PUT", `/api/apps/${encodeURIComponent(A.editing)}`, body);
         else await api("POST", "/api/apps", body);
         A.editing = null;
@@ -187,7 +239,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("apAddBtn").onclick = () => openForm(null);
     $("apCancel").onclick = () => { $("apForm").hidden = true; A.editing = null; };
     $("apType").addEventListener("click", e => { const b = e.target.closest("[data-t]"); if (b) setType(b.dataset.t); });
-    $("apWeb").addEventListener("change", () => { refreshHint(); suggest(); });
+    $("apWeb").addEventListener("change", () => { refreshHint(); suggest(); loadPorts(); });
+    $("apVal").addEventListener("input", showMode);
+    $("apPorts").addEventListener("click", e => {
+        if (e.target.closest("#apPortsAll")) {
+            $("apPorts").querySelectorAll("button[hidden]").forEach(b => { b.hidden = false; });
+            e.target.closest("#apPortsAll").remove(); return;
+        }
+        const b = e.target.closest("button[data-port]"); if (!b) return;
+        $("apVal").value = `${b.dataset.scheme === "https" ? "https" : "http"}://localhost:${b.dataset.port}`;
+        if (!$("apName").value.trim()) $("apName").placeholder = `เช่น เว็บพอร์ต ${b.dataset.port}`;
+        showMode(); $("apVal").focus();
+    });
     $("apLocal").addEventListener("click", e => { const b = e.target.closest("[data-l]"); if (b) setLocal(b.dataset.l === "1"); });
     $("apForm").addEventListener("submit", save);
     $("apGrid").addEventListener("click", e => {

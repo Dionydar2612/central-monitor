@@ -1,5 +1,6 @@
 # เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง (Custom alert rules) + ส่ง Teams ต่อกฎ
 - Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
+- Monitor เว็บ: เลือกโหมดจาก URL เอง (localhost = บนเครื่อง / อื่นๆ = จาก central) · normalize URL (`8090` -> `http://localhost:8090`) · ปุ่มเลือกพอร์ตจาก cm-probe (`GET /api/host/<เครื่อง>/probe-ports`) · ข้อความสถานะแยก 4 กรณี · 2xx/3xx = ทำงาน, 4xx/5xx/0 = ไม่ทำงาน · Monitor เก่าแปลงตอนโหลด
 - Apps & Web: แก้ไขรายการได้ · เว็บบนเครื่อง (localhost) และ Docker container (Windows: cm-probe.ps1 ทุก 1 นาที, Linux: ผ่าน SSH) · แถบสรุปบนหน้าแรก · แท็บ Software มี Docker / เว็บบนเครื่อง
 - หน้า Apps & Web (`/apps`): ภาพรวมแบบมินิมอลว่าโปรแกรม / เว็บ / พอร์ต / Service ยังทำงานไหม · admin เพิ่ม / ลบได้ในหน้าเดียว (สร้าง Custom alert rule ให้) · การ์ด Watched apps ในแท็บ Software
 - Software (Windows): แท็บ Software ในหน้าเครื่อง (โปรแกรมที่ทำงาน / พอร์ตที่เปิดรับ / โปรแกรมที่ติดตั้ง / ประวัติติดตั้ง-ถอน-อัปเดต) · Custom alert rules ใหม่: โปรแกรมไม่ทำงาน, CPU / RAM ของโปรแกรม, พอร์ตไม่เปิดรับ, พอร์ตต่อจาก central ไม่ได้, เว็บไม่ตอบ · แจ้ง Teams เมื่อติดตั้ง / ถอน / อัปเดตโปรแกรม · agent Windows ต้องติดตั้งซ้ำ 1 ครั้ง (cm-inventory.ps1 + textfile collector)

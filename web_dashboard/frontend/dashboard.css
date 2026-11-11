@@ -1267,6 +1267,12 @@ td.bad{color:#e5484d}
 .apsP i{width:7px;height:7px;border-radius:50%;flex:none;background:#9aa7bf}
 .apsP.ok i{background:#10c27a}.apsP.wr i{background:#e5a000}.apsP.bad i{background:#e5484d}
 .apsP.bad{background:rgba(229,72,77,.12);color:#e5484d;font-weight:600}.apsP.wr{background:rgba(229,160,0,.14);color:#c27c00;font-weight:600}
+.apAdd .apMode{font-size:12px;color:var(--mut)}.apAdd .apMode b{color:var(--ink);font-weight:600}
+.apAdd .apPorts{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--mut)}
+.apAdd .apPorts button{border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:12px;padding:5px 10px;border-radius:999px;cursor:pointer;font-variant-numeric:tabular-nums}
+.apAdd .apPorts button:hover{border-color:var(--blue)}.apAdd .apPorts button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--card)}
+.apAdd .apPorts button.ok b{color:#0a9a60}.apAdd .apPorts button.bad b{color:#e5484d}.apAdd .apPorts button.na{color:var(--mut)}
+.apAdd .apPorts .lnk{border:0;background:none;color:var(--blue);padding:5px 4px}
 .apAdd .apWhere{grid-column:1/-1;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--mut)}
 .apT .apEdit{position:absolute;right:52px;bottom:6px;border:0;background:none;color:var(--mut);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:6px;opacity:0}
 .apT:hover .apEdit,.apT .apEdit:focus-visible{opacity:1}.apT .apEdit:hover{background:var(--chip);color:var(--blue)}

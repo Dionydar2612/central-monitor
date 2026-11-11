@@ -27,8 +27,8 @@ function rlCond(r) {
     if (r.metric === "process") return `${r.process} ไม่ทำงาน → ${lvT}`;
     if (r.metric === "port_listen") return `พอร์ต ${r.port} ไม่เปิดรับ → ${lvT}`;
     if (r.metric === "tcp_port") return `ต่อพอร์ต ${r.port} ไม่ได้ → ${lvT}`;
-    if (r.metric === "http_url") return `ไม่ตอบ / HTTP ≥ 400 → ${lvT}`;
-    if (r.metric === "http_local") return `ไม่ตอบ / HTTP ≥ 500 → ${lvT}`;
+    if (r.metric === "http_url") return `จาก central · ไม่ตอบ / HTTP 4xx-5xx → ${lvT}`;
+    if (r.metric === "http_local") return `บนเครื่อง · ไม่ตอบ / HTTP 4xx-5xx → ${lvT}`;
     if (r.metric === "docker") return `${r.container} ไม่ running → ${lvT}`;
     const sym = r.op === "<" ? "≤" : "≥", out = [];
     if (r.warning !== undefined && r.warning !== null) out.push(`W ${sym} ${r.warning}${u}`);

@@ -36,10 +36,11 @@
 <form class="card apAdd" id="apForm" hidden>
 <label>ประเภท<span class="seg" id="apType"><button type="button" data-t="program" aria-pressed="true">โปรแกรม</button><button type="button" data-t="web" aria-pressed="false">เว็บ</button><button type="button" data-t="port" aria-pressed="false">พอร์ต</button><button type="button" data-t="service" aria-pressed="false">Service</button><button type="button" data-t="docker" aria-pressed="false">Docker</button></span></label>
 <label>เครื่อง<select id="apWeb"></select></label>
-<label><span id="apValLabel">ชื่อโปรแกรม</span><input id="apVal" list="apSuggest" autocomplete="off"><datalist id="apSuggest"></datalist></label>
+<label><span id="apValLabel">ชื่อโปรแกรม</span><input id="apVal" list="apSuggest" autocomplete="off"><datalist id="apSuggest"></datalist><small class="apMode" id="apMode" hidden></small></label>
 <label>ชื่อที่แสดง (ไม่บังคับ)<input id="apName" autocomplete="off" placeholder="เช่น ระบบบัญชี"></label>
 <div class="apBtns"><button type="submit" class="primary" id="apSave">เพิ่ม</button><button type="button" id="apCancel">ยกเลิก</button></div>
 <div class="apWhere" id="apWhere" hidden><span>ตรวจจาก</span><span class="seg" id="apLocal"><button type="button" data-l="1" aria-pressed="true">บนเครื่องเอง (localhost)</button><button type="button" data-l="0" aria-pressed="false">central เรียก IP ของเครื่อง</button></span></div>
+<div class="apPorts" id="apPorts" hidden></div>
 <div class="apHint" id="apHint"></div>
 <div class="apMsg" id="apMsg"></div>
 </form>
