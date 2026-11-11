@@ -1315,3 +1315,23 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .apH3{font-size:14px;font-weight:600;margin:18px 0 6px}
 .apSet{margin-top:14px;font-size:12px;color:var(--mut)}
 @media (max-width:760px){.apStats{grid-template-columns:repeat(2,1fr)}.apAdd .apMoreGrid{grid-template-columns:1fr 1fr}}
+
+/* ---- ป๊อปอัปแจ้งเตือน (popup.js) แบบ Windows toast มุมขวาล่าง ---- */
+.cmToasts{position:fixed;right:16px;bottom:16px;z-index:100;display:flex;flex-direction:column;gap:10px;width:min(380px,calc(100vw - 32px));pointer-events:none}
+.cmToast{pointer-events:auto;display:flex;gap:12px;align-items:flex-start;padding:14px 16px;background:var(--card);color:var(--ink);text-decoration:none;
+  border:1px solid var(--line);border-left:4px solid #9aa7bf;border-radius:10px;box-shadow:0 10px 30px rgba(15,26,51,.22);
+  transform:translateX(24px);opacity:0;transition:transform .25s ease,opacity .25s ease}
+.cmToast.in{transform:none;opacity:1}
+.cmToast.bad{border-left-color:#e5484d}.cmToast.wr{border-left-color:#e5a000}.cmToast.ok{border-left-color:#10c27a}.cmToast.info{border-left-color:var(--blue)}
+.cmToast .cmTi{font-size:20px;line-height:1}
+.cmToast .cmTb{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.cmToast small{color:var(--mut);font-size:11px}.cmToast b{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.cmToast .cmTb>span{font-size:13px;color:var(--mut);overflow-wrap:anywhere}
+.cmToast .cmTx{border:0;background:none;color:var(--mut);font-size:18px;line-height:1;cursor:pointer;padding:0 2px}.cmToast .cmTx:hover{color:var(--ink)}
+.cmBellWrap{position:relative;display:inline-flex}
+.cmBell{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 9px;cursor:pointer;font-size:15px;line-height:1}
+.cmBellMenu{position:absolute;top:calc(100% + 6px);right:0;z-index:60;width:290px;background:var(--card);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 10px 30px rgba(15,26,51,.18);padding:12px 14px;display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--ink)}
+.cmBellMenu label{display:flex;gap:8px;align-items:flex-start;cursor:pointer}.cmBellMenu label.dis{color:var(--mut);cursor:not-allowed}
+.cmBellMenu small{color:var(--mut);font-size:11px;margin-top:-4px;padding-left:24px}
+.cmBellMenu button{align-self:flex-start;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
