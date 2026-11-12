@@ -197,6 +197,12 @@ def _last_contact(name, checkpoints):
     return max(times) if times else None
 
 
+def _scrape_url(prom):
+    """URL ที่ Prometheus ใช้ดึงเครื่องนี้ (ตาม scheme / metrics_path ใน puller.yaml)"""
+    scheme = str(prom.get("scheme") or "http").lower()
+    return f"{scheme}://{prom.get('instance')}{prom.get('metrics_path') or '/metrics'}"
+
+
 def _target_sensors(t, global_th, interval, checkpoints, previous, hyst):
     """ค่าดิบของทุก sensor ของเครื่อง (status = ระดับจากค่าตอนนี้ ยังไม่ผ่านการยืนยัน N รอบ)"""
     name = t["name"]
@@ -227,7 +233,8 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, hyst):
         up = _one(f"up{{{labels}}}")
     if up != 1:
         add("availability", "availability", "Availability", "down", unit="",
-            message="node_exporter is not responding (machine down or port 9100 blocked)")
+            message=f"node_exporter is not responding: {_scrape_url(prom)} "
+                    "(machine down, port blocked, DNS or TLS problem)")
         return out
     add("availability", "availability", "Availability", "ok", unit="", message="Up")
 

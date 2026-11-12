@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -180,10 +181,27 @@ def validate_target(data, existing_names, editing=None):
         errors["prometheus.job"] = "ใช้ A-Z a-z 0-9 _ . - เท่านั้น"
 
     instance = _text(prom, "instance")
+    scheme = (_text(prom, "scheme") or "http").lower()
+    metrics_path = _text(prom, "metrics_path") or "/metrics"
+    # ใส่ URL เต็มได้ เช่น https://web.com/metrics -> instance web.com:443, scheme https, path /metrics
+    if instance.lower().startswith(("http://", "https://")):
+        try:
+            u = urllib.parse.urlsplit(instance)
+            scheme = u.scheme.lower()
+            metrics_path = u.path if u.path not in ("", "/") else "/metrics"
+            h = u.hostname or ""
+            port = u.port or (443 if scheme == "https" else 80)
+            instance = f"[{h}]:{port}" if ":" in h else f"{h}:{port}"
+        except ValueError:
+            pass        # ปล่อยให้ INSTANCE_RE แจ้ง error
     if not instance and _valid_host(host):
         instance = f"[{host}]:9100" if ":" in host else f"{host}:9100"
     if not INSTANCE_RE.match(instance) or int(instance.rsplit(":", 1)[1]) > 65535:
-        errors["prometheus.instance"] = "รูปแบบ host:port เช่น 10.0.10.11:9100"
+        errors["prometheus.instance"] = "ใส่ host:port เช่น 10.0.10.11:9100 หรือ URL เช่น https://web.com/metrics"
+    if scheme not in ("http", "https"):
+        errors["prometheus.scheme"] = "ใช้ http หรือ https"
+    if not re.match(r"^/[A-Za-z0-9._/-]*$", metrics_path):
+        errors["prometheus.metrics_path"] = "ต้องขึ้นต้นด้วย / เช่น /metrics"
 
     logs_in = data.get("logs")
     logs = []
@@ -224,7 +242,8 @@ def validate_target(data, existing_names, editing=None):
         "group": group,
         "paused": paused,
         "thresholds": thresholds,
-        "prometheus": {"job": job, "instance": instance},
+        "prometheus": {"job": job, "instance": instance,
+                       "scheme": scheme, "metrics_path": metrics_path},
         "ssh": {"port": ssh_port, "user": ssh_user},
         "logs": logs,
     }

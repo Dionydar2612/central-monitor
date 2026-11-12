@@ -42,7 +42,9 @@
 <div class="st-f" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div>
 <div class="st-f" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
 <div class="st-f" data-f="prometheus.job"><label for="f_job">Prometheus job</label><input id="f_job" autocomplete="off" placeholder="(อัตโนมัติ: ชื่อเครื่อง-node)"><div class="st-err"></div></div>
-<div class="st-f" data-f="prometheus.instance"><label for="f_inst">node_exporter (host:port)</label><input id="f_inst" autocomplete="off" placeholder="(อัตโนมัติ: host:9100)"><div class="st-err"></div></div>
+<div class="st-f" data-f="prometheus.instance"><label for="f_inst">node_exporter (host:port)</label><input id="f_inst" autocomplete="off" placeholder="(อัตโนมัติ: host:9100) หรือ https://web.com/metrics"><div class="st-err"></div></div>
+<div class="st-f" data-f="prometheus.scheme"><label for="f_scheme">node_exporter scheme</label><select id="f_scheme"><option value="http">http</option><option value="https">https</option></select><div class="st-err"></div></div>
+<div class="st-f" data-f="prometheus.metrics_path"><label for="f_mpath">metrics path</label><input id="f_mpath" autocomplete="off" placeholder="/metrics"><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
 </div>
 

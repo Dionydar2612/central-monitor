@@ -132,6 +132,8 @@ function openForm(t) {
     $("f_user").value = t ? t.ssh.user : "central-pull";
     $("f_job").value = t ? (t.prometheus.job || "") : "";
     $("f_inst").value = t ? (t.prometheus.instance || "") : "";
+    $("f_scheme").value = t && t.prometheus ? (t.prometheus.scheme || "http") : "http";
+    $("f_mpath").value = t && t.prometheus ? (t.prometheus.metrics_path || "") : "";
     const logs = $("logs"); logs.textContent = "";
     (t && t.logs.length ? t.logs : [null]).forEach(l => logs.append(logRow(l)));
     clearErrors(); say("formMsg", ""); say("deployMsg", "");
@@ -178,7 +180,8 @@ function readForm() {
         thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
         host: $("f_host").value.trim(),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
-        prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim() },
+        prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim(),
+                      scheme: $("f_scheme").value, metrics_path: $("f_mpath").value.trim() },
         logs,
     };
 }
