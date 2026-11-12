@@ -1085,7 +1085,7 @@ function sbTree(webs, sensors) {
             n = n.kids.get(part);
         });
         const st = WEB_ST[w.state] || "unknown";
-        const ss = (byWeb[w.web] || []).map(x => ({ name: x.name || x.kind, kind: "sensor", web: w.web, status: x.ack ? "ok" : (x.status || "unknown"), value: 1, tip: `${w.web} · ${x.name} · ${x.status}${x.message ? " · " + x.message : ""}` }));
+        const ss = (byWeb[w.web] || []).map(x => ({ name: x.name || x.kind, kind: "sensor", web: w.web, sid: x.id, status: x.ack ? "ok" : (x.status || "unknown"), value: 1, tip: `${w.web} · ${x.name} · ${x.status}${x.message ? " · " + x.message : ""}` }));
         n.kids.set("\u0000" + w.web, { name: w.web, kind: "web", web: w.web, status: st, kids: ss, tip: `${w.web} (${w.host || "-"}) · ${STATE_LABEL[w.state] ? STATE_LABEL[w.state][0] : w.state}` });
     });
     const fin = n => {
@@ -1123,7 +1123,7 @@ function sunburstHtml(webs, cur) {
         let a = a0;
         (n.children || []).forEach(k => {
             const span = (a1 - a0) * k.value / n.value, b = a + span, r0 = R0 + d * RW, r1 = r0 + RW - 1.5;
-            const attr = k.kind === "group" ? `data-sbg="${escapeHtml(k.path)}"` : `data-web="${escapeHtml(k.web)}"`;
+            const attr = k.kind === "group" ? `data-sbg="${escapeHtml(k.path)}"` : k.kind === "sensor" && k.sid ? `data-sbs="${escapeHtml(k.sid)}"` : `data-web="${escapeHtml(k.web)}"`;
             const sel = k.kind === "web" && k.web === cur ? " sel" : "";
             out += `<path d="${arc(a, b, r0, r1)}" fill="${SB_COLOR[k.status] || SB_COLOR.unknown}" class="sbseg ${k.kind}${sel}" ${attr}><title>${escapeHtml(k.tip || (k.path || k.name) + " · " + k.status)}</title></path>`;
             /* ชื่อ: วงนอก (sensor) และช่องแคบ = แนวรัศมี · ช่องกว้าง = แนวโค้ง */
@@ -1151,7 +1151,7 @@ function sunburstHtml(webs, cur) {
     const legend = Object.entries({ ok: "OK", warning: "Warning", error: "Error", down: "Down", paused: "Paused", unknown: "Unknown" })
         .map(([k, l]) => `<span><i style="background:${SB_COLOR[k]}"></i>${l}</span>`).join("");
     return `<div class="sbwrap"><svg viewBox="0 0 ${C * 2} ${C * 2}" class="sunburst" role="img" aria-label="Sunburst ของกลุ่ม เครื่อง และ sensor">${out}${center}</svg>
-<div class="sblegend">${legend}<small>วงใน = กลุ่ม · ถัดมา = เครื่อง · วงนอก = sensor · คลิกกลุ่ม = ซูมเข้า · คลิกเครื่อง/sensor = เปิดรายละเอียด</small></div></div>`;
+<div class="sblegend">${legend}<small>วงใน = กลุ่ม · ถัดมา = เครื่อง · วงนอก = sensor · คลิกกลุ่ม = ซูมเข้า · คลิกเครื่อง = รายละเอียดเครื่อง · คลิก sensor = หน้า sensor</small></div></div>`;
 }
 
 /* เครื่องในกลุ่ม ตามมุมมองที่เลือก */
@@ -2388,6 +2388,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const pb = e.target.closest("button[data-pause]");
         if (pb) { e.stopPropagation(); togglePause(pb); return; }
+        const sbs = e.target.closest("[data-sbs]");                 /* Sunburst: วงนอก = sensor -> หน้า sensor */
+        if (sbs) { location.href = "/sensor?id=" + encodeURIComponent(sbs.dataset.sbs); return; }
         const sbg = e.target.closest("[data-sbg]");
         if (sbg) { S.sbRoot = sbg.dataset.sbg; try { sessionStorage.setItem("cm.sbRoot", S.sbRoot); } catch (err) { /* ignore */ } renderMachines(); return; }
         const gh = e.target.closest("[data-group]");

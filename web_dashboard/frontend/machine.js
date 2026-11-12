@@ -244,7 +244,7 @@
         const sensors = (d.sensors || []).filter(s => s.kind !== "bottleneck" || s.status !== "ok");
         const now = Date.now() / 1000;
         const sRows = sensors.map(s => `<tr><td><span class="ovst ${ST_CLS[s.status] || ""}">${esc((s.status || "").toUpperCase())}</span>${s.ack ? ` <span class="ovack" title="${esc(s.ack.note || "")}">ACK</span>` : ""}</td>
-            <td><b>${esc(s.name)}</b></td><td>${hasValue(s.value) ? `${esc(s.value)}${esc(s.unit || "")}` : "-"}</td>
+            <td><a class="dsnl" href="/sensor?id=${encodeURIComponent(s.id)}"><b>${esc(s.name)}</b></a></td><td>${hasValue(s.value) ? `${esc(s.value)}${esc(s.unit || "")}` : "-"}</td>
             <td>${hasValue(s.warning) ? `${esc(s.warning)} / ${esc(s.error)}${esc(s.unit || "")}` : "-"}</td>
             <td>${s.since ? dur(now - s.since) : "-"}</td><td class="msg">${esc(s.message || "")}</td></tr>`);
         const iRows = (d.incidents || []).map(i => `<tr><td><span class="ovst ${i.state === "ongoing" ? "cr" : "ok"}">${esc(i.state)}</span></td>

@@ -92,7 +92,7 @@ function sensorCard(s, i) {
         : `<button type="button" class="svbtn sm" data-ack="${i}">Acknowledge</button>`;
     const limits = s.warning != null ? `<span class="evlim">limits ${esc(s.warning)} / ${esc(s.error)}${s.unit === "%" ? "%" : ""}</span>` : "";
     const path = s.group ? s.group.split("/").map(esc).join(" » ") : "";
-    return `<article class="evcard s-${cls}">
+    return `<article class="evcard s-${cls}" data-sid="${esc(s.id)}" title="คลิกเพื่อเปิดหน้า sensor">
       <h3><span class="evico ${cls}">${icon}</span><a class="evsn" href="/sensor?id=${encodeURIComponent(s.id)}" title="เปิดหน้า sensor">${esc(s.name)}</a>${s.ack ? ` <span class="evackt">(Acknowledged)</span>` : ""}<span class="evbtns">${btn}</span></h3>
       <div class="evgrid">
         <div><small>${path ? "Group » Device" : "Device"}</small>${path ? `<span class="evpath">${path} »</span>` : ""}<a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b>${s.host ? ` (${esc(s.host)})` : ""}</a></div>
@@ -389,6 +389,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (ovm) { E.ov.metric = ovm.dataset.ovm; render(); return; }
         if (all) { e.preventDefault(); E.ov.off = all.dataset.ovall === "1" ? new Set() : new Set(ovLines(E.ov.data[E.ov.range] || {}).map(x => x.key)); render(); return; }
         const a = e.target.closest("[data-ack]"), u = e.target.closest("[data-unack]"), h = e.target.closest("[data-hist]");
+        if (!a && !u && !h && !e.target.closest("a,button,input,select,textarea")) {     /* คลิกการ์ด sensor = หน้า sensor */
+            const card = e.target.closest("[data-sid]");
+            if (card && !(window.getSelection && String(window.getSelection()).trim())) { location.href = "/sensor?id=" + encodeURIComponent(card.dataset.sid); return; }
+        }
         if (a) ack(E.rows[+a.dataset.ack]);
         else if (u) unack(E.rows[+u.dataset.unack]);
         else if (h) openHistory(E.rows[+h.dataset.hist], "24h");
