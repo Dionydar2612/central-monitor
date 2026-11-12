@@ -1024,8 +1024,11 @@ function checkTables(list) {
 }
 
 /* ---------- มุมมองของ WEB status: table / tiles / cards / problems (จำใน browser) ---------- */
-const VIEWS = ["table", "tiles", "cards", "problems", "sunburst"];
-function loadView() { try { const v = localStorage.getItem("cm.view"); return VIEWS.includes(v) ? v : "table"; } catch (e) { return "table"; } }
+/* function declaration (hoisted): S ถูกสร้างก่อนบรรทัดนี้ ห้ามอ้าง const ที่ประกาศทีหลัง (เคยทำให้กลับเป็นตารางทุกครั้งที่ reload) */
+function loadView() {
+    try { const v = localStorage.getItem("cm.view"); return ["table", "tiles", "cards", "problems", "sunburst"].includes(v) ? v : "table"; }
+    catch (e) { return "table"; }
+}
 function saveView(v) { try { localStorage.setItem("cm.view", v); } catch (e) { /* ignore */ } }
 const SEVERITY = { DOWN: 0, PROBLEM: 1, WARNING: 2, HEALTHY: 4, PAUSED: 5 };
 function bySeverity(list) {
@@ -1104,6 +1107,7 @@ function sbFind(n, path) {
 }
 function sunburstHtml(webs, cur) {
     const full = sbTree(webs, (S.sb && S.sb.list) || []);
+    if (S.sbRoot === undefined) { try { S.sbRoot = sessionStorage.getItem("cm.sbRoot") || ""; } catch (e) { S.sbRoot = ""; } }
     const root = sbFind(full, S.sbRoot || "");
     const depthOf = n => n.kind === "sensor" ? 1 : 1 + Math.max(0, ...(n.children || []).map(depthOf));
     const levels = Math.max(1, depthOf(root) - 1);
@@ -2314,7 +2318,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const pb = e.target.closest("button[data-pause]");
         if (pb) { e.stopPropagation(); togglePause(pb); return; }
         const sbg = e.target.closest("[data-sbg]");
-        if (sbg) { S.sbRoot = sbg.dataset.sbg; renderMachines(); return; }
+        if (sbg) { S.sbRoot = sbg.dataset.sbg; try { sessionStorage.setItem("cm.sbRoot", S.sbRoot); } catch (err) { /* ignore */ } renderMachines(); return; }
         const gh = e.target.closest("[data-group]");
         if (gh) {
             const path = gh.dataset.group;
