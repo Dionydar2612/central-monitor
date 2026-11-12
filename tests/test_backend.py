@@ -233,6 +233,23 @@ class Backend(unittest.TestCase):
         c.put("/api/alert-rules", json={"rules": base})
         c.delete("/api/targets/op-web")
 
+    def test_overview_history(self):
+        import overview_history, metrics_service
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        orig = overview_history.get_metrics_history
+        now = int(__import__("time").time())
+        overview_history.get_metrics_history = lambda web, s, e, st, names=(): {
+            "cpu": [[now - 600, 10.0 if web == "web-01" else 55.0]], "memory": [], "disk": [], "net_rx": [[now - 600, 1.0]], "net_tx": [[now - 600, 0.5]]}
+        overview_history._CACHE.clear()
+        try:
+            d = self.c.get("/api/overview/history?range=2d").json
+        finally:
+            overview_history.get_metrics_history = orig
+        self.assertEqual(set(d["series"]), {"alarms", "cpu", "memory", "disk", "traffic"})
+        if d["machines"] >= 2:
+            self.assertEqual(d["series"]["cpu"][0][1], 55.0)              # ค่าสูงสุด ไม่ใช่ค่าเฉลี่ย
+        self.assertGreater(len(d["series"]["alarms"]), 500)
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

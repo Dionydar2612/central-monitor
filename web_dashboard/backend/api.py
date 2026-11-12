@@ -106,6 +106,7 @@ from metrics_service import (
     _labels,
 )
 from overview_service import get_overview
+import overview_history
 from settings import STATIC_DIR, load_web_targets
 from system_state import last_pull_time
 import targets_service
@@ -988,6 +989,12 @@ def sensors_history():
     if data is None:
         return jsonify({"error": "not found"}), 404
     return jsonify(data)
+
+
+@app.get("/api/overview/history")
+def overview_history_get():
+    """กราฟภาพรวมทุกเครื่องย้อนหลัง (Status & Logs > Overview)  range = 2d | 30d | 365d"""
+    return jsonify(overview_history.get_history(request.args.get("range", "2d")))
 
 
 @app.get("/api/sensors")

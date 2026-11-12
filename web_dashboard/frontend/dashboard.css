@@ -1399,3 +1399,38 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 @media (max-width:700px){.vseg button{padding:6px 8px}}
 .mtile,.mcard{color:var(--ink)}
 .mtile b,.mcard .mtop b{color:var(--ink)}
+
+/* Status & Logs > Overview (กราฟรวมแบบ PRTG) */
+.ovbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.ovwrap{position:relative;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--bg)}
+.ovchart{width:100%;height:auto;display:block}
+.ovgrid{stroke:var(--line);stroke-width:1}.ovgrid.v{stroke-dasharray:2 4}
+.ovax{font-size:11px;fill:var(--mut)}
+.ovcross{stroke:var(--mut);stroke-dasharray:3 3}
+.ovtip{position:absolute;min-width:200px;max-width:240px;background:var(--card,#fff);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.12);padding:8px 10px;font-size:12px;pointer-events:none;z-index:2}
+.ovtip .ovtt{font-weight:600;margin-bottom:4px}
+.ovtip i,.ovlegend i,.ovpk i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.ovtip small{color:var(--mut)}
+.ovlegend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin:10px 4px;font-size:13px}
+.ovlegend label{cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.ovlegend small{color:var(--mut)}
+.ovall{margin-left:auto}.ovall a{margin-left:10px;color:var(--blue)}
+.ovpeaks{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin:6px 0 4px}
+.ovpk{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.5px;display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px}
+.ovpk span{color:var(--mut);flex:1}.ovpk b{font-size:14px}.ovpk small{flex-basis:100%;color:var(--mut)}
+
+/* Sunburst */
+.sbwrap{display:flex;flex-direction:column;align-items:center;padding:10px}
+.sunburst{width:100%;max-width:720px;height:auto}
+.sbseg{stroke:#fff;stroke-width:1;cursor:pointer}
+.sbseg:hover{filter:brightness(1.08);stroke:#333}
+.sbseg.sel{stroke:var(--blue);stroke-width:3}
+.sbtxt{font-size:11px;fill:#1d2a10;pointer-events:none}
+.sbtxt.paused,.sbtxt.error,.sbtxt.down{fill:#fff}
+.sbmid{fill:var(--bg);stroke:var(--line)}
+.sbup circle{fill:var(--chip);stroke:var(--line);cursor:pointer}.sbup{cursor:pointer}
+.sbc1{font-size:18px;font-weight:600;fill:var(--ink)}.sbc2{font-size:13px;fill:var(--mut)}.sbc2.cr{fill:#d03b3f}.sbc2.ok{fill:#1f9d55}
+.sblegend{display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;font-size:12.5px;color:var(--mut);margin-top:6px}
+.sblegend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.sblegend small{flex-basis:100%;text-align:center}
+.gtree.sbmode{max-height:none}

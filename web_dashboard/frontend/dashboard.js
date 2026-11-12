@@ -1024,7 +1024,7 @@ function checkTables(list) {
 }
 
 /* ---------- มุมมองของ WEB status: table / tiles / cards / problems (จำใน browser) ---------- */
-const VIEWS = ["table", "tiles", "cards", "problems"];
+const VIEWS = ["table", "tiles", "cards", "problems", "sunburst"];
 function loadView() { try { const v = localStorage.getItem("cm.view"); return VIEWS.includes(v) ? v : "table"; } catch (e) { return "table"; } }
 function saveView(v) { try { localStorage.setItem("cm.view", v); } catch (e) { /* ignore */ } }
 const SEVERITY = { DOWN: 0, PROBLEM: 1, WARNING: 2, HEALTHY: 4, PAUSED: 5 };
@@ -1058,6 +1058,98 @@ ${w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` 
 ${why}<div class="mfoot"><span>${al ? `<b class="cr">${al} alert${al > 1 ? "s" : ""}</b>` : "ไม่มี alert"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
     }).join("")}</div>`;
 }
+/* ---------- Sunburst: วงใน = กลุ่ม (ทีละชั้น) → เครื่อง → วงนอก = sensor ของเครื่อง  สีตามสถานะแย่สุด ---------- */
+const SB_COLOR = { ok: "#a8cf38", warning: "#f5b400", error: "#e5484d", down: "#d12f35", paused: "#4c8ff0", unknown: "#b9c0cb" };
+const SB_RANK = { down: 5, error: 4, warning: 3, unknown: 2, ok: 1, paused: 0 };
+const WEB_ST = { HEALTHY: "ok", WARNING: "warning", PROBLEM: "error", DOWN: "down", PAUSED: "paused" };
+async function sbSensors() {
+    if (S.sb && Date.now() - S.sb.at < 30000) return S.sb.list;
+    try {
+        const d = await apiGet("/api/sensors");
+        S.sb = { at: Date.now(), list: d.sensors || [] };
+    } catch (e) { S.sb = { at: Date.now(), list: (S.sb && S.sb.list) || [] }; }
+    return S.sb.list;
+}
+function sbTree(webs, sensors) {
+    const root = { name: "", path: "", kids: new Map(), kind: "group" };
+    const byWeb = {};
+    sensors.forEach(x => { (byWeb[x.web] = byWeb[x.web] || []).push(x); });
+    webs.forEach(w => {
+        let n = root;
+        String(w.group || "").split("/").filter(Boolean).forEach(part => {
+            const path = n.path ? n.path + "/" + part : part;
+            if (!n.kids.has(part)) n.kids.set(part, { name: part, path, kids: new Map(), kind: "group" });
+            n = n.kids.get(part);
+        });
+        const st = WEB_ST[w.state] || "unknown";
+        const ss = (byWeb[w.web] || []).map(x => ({ name: x.name || x.kind, kind: "sensor", web: w.web, status: x.ack ? "ok" : (x.status || "unknown"), value: 1, tip: `${w.web} · ${x.name} · ${x.status}${x.message ? " · " + x.message : ""}` }));
+        n.kids.set("\u0000" + w.web, { name: w.web, kind: "web", web: w.web, status: st, kids: ss, tip: `${w.web} (${w.host || "-"}) · ${STATE_LABEL[w.state] ? STATE_LABEL[w.state][0] : w.state}` });
+    });
+    const fin = n => {
+        if (n.kind === "sensor") return n;
+        const kids = n.kids instanceof Map ? [...n.kids.values()] : n.kids;
+        kids.sort((a, b) => (a.kind === "web") - (b.kind === "web") || String(a.name).localeCompare(String(b.name)));
+        kids.forEach(fin);
+        n.children = kids;
+        n.value = kids.reduce((a, k) => a + k.value, 0) || 1;
+        if (n.kind === "group") n.status = kids.reduce((a, k) => SB_RANK[k.status] > SB_RANK[a] ? k.status : a, "paused");
+        return n;
+    };
+    return fin(root);
+}
+function sbFind(n, path) {
+    if (!path || n.path === path) return n;
+    for (const k of n.children || []) if (k.kind === "group" && (path === k.path || path.startsWith(k.path + "/"))) return sbFind(k, path);
+    return n;
+}
+function sunburstHtml(webs, cur) {
+    const full = sbTree(webs, (S.sb && S.sb.list) || []);
+    const root = sbFind(full, S.sbRoot || "");
+    const depthOf = n => n.kind === "sensor" ? 1 : 1 + Math.max(0, ...(n.children || []).map(depthOf));
+    const levels = Math.max(1, depthOf(root) - 1);
+    const C = 400, R0 = 70, RW = Math.min(70, (C - 10 - R0) / levels);
+    const pt = (a, r) => [C + r * Math.sin(a), C - r * Math.cos(a)];
+    const arc = (a0, a1, r0, r1) => {
+        if (a1 - a0 >= Math.PI * 2 - 1e-6) a1 = a0 + Math.PI * 2 - 1e-4;
+        const big = a1 - a0 > Math.PI ? 1 : 0, [x0, y0] = pt(a0, r1), [x1, y1] = pt(a1, r1), [x2, y2] = pt(a1, r0), [x3, y3] = pt(a0, r0);
+        return `M${x0.toFixed(1)},${y0.toFixed(1)}A${r1},${r1} 0 ${big} 1 ${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}A${r0},${r0} 0 ${big} 0 ${x3.toFixed(1)},${y3.toFixed(1)}Z`;
+    };
+    let out = "";
+    const walk = (n, a0, a1, d) => {
+        let a = a0;
+        (n.children || []).forEach(k => {
+            const span = (a1 - a0) * k.value / n.value, b = a + span, r0 = R0 + d * RW, r1 = r0 + RW - 1.5;
+            const attr = k.kind === "group" ? `data-sbg="${escapeHtml(k.path)}"` : `data-web="${escapeHtml(k.web)}"`;
+            const sel = k.kind === "web" && k.web === cur ? " sel" : "";
+            out += `<path d="${arc(a, b, r0, r1)}" fill="${SB_COLOR[k.status] || SB_COLOR.unknown}" class="sbseg ${k.kind}${sel}" ${attr}><title>${escapeHtml(k.tip || (k.path || k.name) + " · " + k.status)}</title></path>`;
+            /* ชื่อ: วงนอก (sensor) และช่องแคบ = แนวรัศมี · ช่องกว้าง = แนวโค้ง */
+            const mid = (a + b) / 2, rm = (r0 + r1) / 2, arcLen = span * rm, deg = mid * 180 / Math.PI;
+            const radial = arcLen < 60;
+            const room = radial ? RW - 6 : arcLen - 8, maxCh = Math.floor(room / 6.2);
+            if ((radial ? span * r0 >= 9 : true) && maxCh >= 3) {
+                const name = String(k.name);
+                const txt = name.length > maxCh ? name.slice(0, maxCh - 1) + "…" : name;
+                const [tx, ty] = pt(mid, rm);
+                let rot = radial ? deg - 90 : deg;
+                if (radial && deg > 180) rot += 180;
+                if (!radial && deg > 90 && deg < 270) rot += 180;
+                out += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" transform="rotate(${rot.toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)})" class="sbtxt ${k.status}" text-anchor="middle" dominant-baseline="central">${escapeHtml(txt)}</text>`;
+            }
+            if (k.children && k.children.length) walk(k, a, b, d + 1);
+            a = b;
+        });
+    };
+    walk(root, 0, Math.PI * 2, 0);
+    const bad = webs.filter(w => !["HEALTHY", "PAUSED"].includes(w.state)).length;
+    const center = root.path
+        ? `<g class="sbup" data-sbg="${escapeHtml(root.path.split("/").slice(0, -1).join("/"))}"><circle cx="${C}" cy="${C}" r="${R0 - 4}"/><text x="${C}" y="${C - 8}" text-anchor="middle" class="sbc1">${escapeHtml(root.name)}</text><text x="${C}" y="${C + 14}" text-anchor="middle" class="sbc2">↑ กลับ</text></g>`
+        : `<g><circle cx="${C}" cy="${C}" r="${R0 - 4}" class="sbmid"/><text x="${C}" y="${C - 6}" text-anchor="middle" class="sbc1">${webs.length} เครื่อง</text><text x="${C}" y="${C + 14}" text-anchor="middle" class="sbc2 ${bad ? "cr" : "ok"}">${bad ? bad + " มีปัญหา" : "ปกติทั้งหมด"}</text></g>`;
+    const legend = Object.entries({ ok: "OK", warning: "Warning", error: "Error", down: "Down", paused: "Paused", unknown: "Unknown" })
+        .map(([k, l]) => `<span><i style="background:${SB_COLOR[k]}"></i>${l}</span>`).join("");
+    return `<div class="sbwrap"><svg viewBox="0 0 ${C * 2} ${C * 2}" class="sunburst" role="img" aria-label="Sunburst ของกลุ่ม เครื่อง และ sensor">${out}${center}</svg>
+<div class="sblegend">${legend}<small>วงใน = กลุ่ม · ถัดมา = เครื่อง · วงนอก = sensor · คลิกกลุ่ม = ซูมเข้า · คลิกเครื่อง/sensor = เปิดรายละเอียด</small></div></div>`;
+}
+
 /* เครื่องในกลุ่ม ตามมุมมองที่เลือก */
 function serversHtml(list, cur) {
     if (!list.length) return "";
@@ -1144,7 +1236,15 @@ function renderMachines(ov) {
     const loose = (tree.servers.length ? `<div class="gloose">${serversHtml(tree.servers, cur)}</div>` : "") +
         (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "");
     document.querySelectorAll("#ovView button").forEach(b => b.classList.toggle("on", b.dataset.view === S.view));
-    q("#ovExpand").hidden = q("#ovCollapse").hidden = S.view === "problems";
+    q("#ovExpand").hidden = q("#ovCollapse").hidden = S.view === "problems" || S.view === "sunburst";
+    q("#mach").classList.remove("sbmode");
+    if (S.view === "sunburst" && webs.length) {
+        const list = webs.filter(w => matchesFilter(w, f));
+        q("#mach").classList.add("sbmode");
+        q("#mach").innerHTML = list.length ? sunburstHtml(list, cur) : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
+        if (!S.sb || Date.now() - S.sb.at > 30000) sbSensors().then(() => { if (S.view === "sunburst") renderMachines(); });
+        return;
+    }
     if (S.view === "problems" && webs.length) {             /* ปัญหาก่อน: ไม่แบ่งกลุ่ม เรียงตามความรุนแรง */
         const list = bySeverity(webs.filter(w => matchesFilter(w, f)));
         const bad = list.filter(w => !["HEALTHY", "PAUSED"].includes(w.state));
@@ -2213,6 +2313,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const pb = e.target.closest("button[data-pause]");
         if (pb) { e.stopPropagation(); togglePause(pb); return; }
+        const sbg = e.target.closest("[data-sbg]");
+        if (sbg) { S.sbRoot = sbg.dataset.sbg; renderMachines(); return; }
         const gh = e.target.closest("[data-group]");
         if (gh) {
             const path = gh.dataset.group;
