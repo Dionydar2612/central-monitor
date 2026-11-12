@@ -115,6 +115,7 @@ targets:
 | `storage.buffer_retention` | เก็บไฟล์พักบน server กลางนานเท่าไหร่ (ปริยาย 2h) |
 | `targets[].aliases` | (ไม่บังคับ) hostname จริงของเครื่องที่ต่างจากชื่อ target เช่น `[30K3PH4]` ใช้จับคู่ log/metrics |
 | `storage.system_history_retention` | เก็บสถานะเครื่องย้อนหลัง |
+| `storage.collapse_repeats` | `{enabled: false, keep: 20}` ยุบ log ซ้ำตอนดึง: ต่อรอบดึง เก็บชนิดละ (fingerprint เดียวกัน) ไม่เกิน `keep` รายการ ที่เหลือยุบเป็นบรรทัดสรุป `... [ERROR] (collapsed) ซ้ำอีก N ครั้ง: ...` · **ปริยายปิด** เพราะบรรทัดดิบส่วนเกินจะไม่ถูกเก็บในระบบกลาง · จำนวนที่ยุบดูได้ใน System log · มีผลรอบดึงถัดไป ไม่ต้องรีสตาร์ต |
 
 แก้เสร็จ: `cd docker && docker compose restart central-puller`
 

@@ -139,6 +139,40 @@ class Fingerprint(unittest.TestCase):
         self.assertEqual(a, b, "fingerprint.py 2 ชุดต้องเหมือนกัน")
 
 
+class CollapseRepeats(unittest.TestCase):
+    """log_filter.collapse_repeats: ยุบรายการซ้ำเกิน keep เป็นบรรทัดสรุป (ค่าเริ่มต้นปิด)"""
+
+    def test_collapse_100_keep_20(self):
+        data = b"".join(f"2026-11-12T10:{i // 60:02d}:{i % 60:02d}+07:00 ERROR db 10.0.0.{i} timeout after {i}ms\n".encode()
+                        for i in range(100))
+        data += b"2026-11-12T11:00:00+07:00 WARN disk almost full\n"
+        out, collapsed, kinds = log_filter.collapse_repeats(data, keep=20)
+        recs = log_filter.split_records(out)
+        self.assertEqual(collapsed, 80)
+        self.assertEqual(len(kinds), 1)
+        self.assertEqual(len(recs), 20 + 1 + 1)                      # 20 + บรรทัด WARN + บรรทัดสรุป
+        summary = recs[-1].decode()
+        self.assertIn("(collapsed) ซ้ำอีก 80 ครั้ง:", summary)
+        self.assertIn("ERROR db 10.0.0.99 timeout", summary)
+        self.assertTrue(summary.startswith("2026-11-12T10:01:39+07:00 [ERROR]"))     # เวลาของรายการสุดท้ายที่ถูกยุบ
+        self.assertEqual(log_levels.detect_log_level(summary), "ERROR")             # ระดับตรงกับต้นฉบับ
+
+    def test_level_kept_for_warn_and_stack_trace_whole(self):
+        rec = "2026-11-12T10:00:{:02d} WARN slow query {}ms\n  at db.Query.run(Query.java:{})\n"
+        data = "".join(rec.format(i, i * 7, i) for i in range(5)).encode()
+        out, collapsed, _ = log_filter.collapse_repeats(data, keep=2)
+        recs = log_filter.split_records(out)
+        self.assertEqual((collapsed, len(recs)), (3, 3))
+        self.assertIn("at db.Query.run", recs[0].decode())                        # stack trace ไม่ถูกตัดครึ่ง
+        self.assertEqual(log_levels.detect_log_level(recs[-1].decode()), "WARN")
+
+    def test_nothing_to_collapse_and_default_off(self):
+        data = b"2026-11-12T10:00:00 ERROR a\n2026-11-12T10:00:01 ERROR b failed\n"
+        self.assertEqual(log_filter.collapse_repeats(data, keep=1), (data, 0, {}))
+        self.assertEqual(log_filter.collapse_config({}), (False, 20))
+        self.assertEqual(log_filter.collapse_config({"storage": {"collapse_repeats": {"enabled": True, "keep": 5}}}), (True, 5))
+
+
 class LogFilter(unittest.TestCase):
     DATA = (b"2026-11-04T10:00:00+07:00 INFO started ok\n"
             b"2026-11-04T10:00:01+07:00 ERROR boom\n"

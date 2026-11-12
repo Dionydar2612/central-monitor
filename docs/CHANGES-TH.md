@@ -308,3 +308,10 @@
 - API `POST /api/logs/ack-fp` {fp, hours, note, web} · `POST /api/logs/unack-fp` {fp} (operator ขึ้นไป, บันทึก Activity log `log.ack_fp` / `log.unack_fp`)
 - หน้าแรก ตาราง Logs แบบรวมกลุ่ม: ปุ่ม Ack กลุ่ม + เลือก 1 ชม. / 24 ชม. / 7 วัน · แถวที่ ack แล้ว (Show acknowledged) มีป้าย ACK + "ยกเลิก ack"
 - แก้ cache ของ log_acks.json: เขียนแล้วอัปเดต cache ทันที (เดิมเขียน 2 ครั้งในวินาทีเดียวอาจอ่านค่าเก่า)
+
+## ลด log ซ้ำ ขั้นที่ 4: ยุบที่ puller (ค่าเริ่มต้นปิด)
+- `log_filter.collapse_repeats(data, keep=20)` ใช้ `split_records` + `fingerprint` (puller): ต่อรอบดึง เก็บต่อ fp ไม่เกิน keep รายการ ที่เหลือยุบเป็นบรรทัดสรุปต่อท้าย `<เวลา> [LEVEL] (collapsed) ซ้ำอีก N ครั้ง: <บรรทัดแรก>`
+  - เวลา = ของรายการสุดท้ายที่ถูกยุบ (ต้นฉบับไม่มีเวลา ISO -> เวลาตอนดึง) · `[LEVEL]` หลังเวลา = รูปแบบที่ log_levels ตัดสินแม่นที่สุด ระดับจึงตรงกับต้นฉบับ · stack trace ไม่ถูกตัดครึ่ง
+- เปิดที่ `puller.yaml`: `storage.collapse_repeats: {enabled: false, keep: 20}` (ไม่ใส่ = ปิด) ใช้กับทั้งไฟล์ log และ journal
+- ยุบแล้วบันทึกใน System log (`events.py`, source puller): "ยุบ log ซ้ำ N รายการ (M ชนิด) ของ <source> ..." และใน docker logs `[COLLAPSE]`
+- ข้อมูลที่อยู่ใน OpenSearch แล้วไม่ถูกแตะ

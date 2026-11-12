@@ -10,6 +10,7 @@ log_puller.py - ดึง log จากเครื่อง web มาวาง
     3. SSH `tail -c +N | head -c M` -> ดึงเฉพาะส่วนที่โตขึ้น
     4. ตัดให้เหลือเฉพาะ "บรรทัดที่จบสมบูรณ์" (ไม่ส่งบรรทัดที่เขียนค้างอยู่)
     5. ตัด log ระดับ INFO ทิ้ง (log_filter.drop_info) -> INFO ไม่ถูกเก็บ/ไม่เข้า OpenSearch
+       (ถ้าเปิด storage.collapse_repeats: ยุบรายการซ้ำเกิน keep เป็นบรรทัดสรุป log_filter.collapse_repeats)
        (ดู INFO ได้จากปุ่ม "Load INFO log" ที่หน้าเว็บ ซึ่งดึงสดเฉพาะตอนสั่ง -> ondemand.py)
     6. เขียนไฟล์ใน data/buffer แบบ atomic (.tmp -> rename)  (ถ้าเหลือ 0 รายการ ไม่เขียนไฟล์)
     7. อัปเดต checkpoint (หลังเขียนไฟล์สำเร็จเท่านั้น -> ไม่มี log หาย)
@@ -44,7 +45,8 @@ from datetime import datetime, timezone
 import journal
 from checkpoint import save_state
 from config import BUFFER_DIR, parse_interval
-from log_filter import drop_info, store_info_enabled
+from events import append_events
+from log_filter import collapse_config, collapse_repeats, drop_info, store_info_enabled
 from metrics import (
     ssh_pull_bytes_total,
     ssh_pull_duration_seconds,
@@ -111,6 +113,24 @@ def _write_buffer(config, target_name, source_name, source_id, start_offset, end
 # ดึง journal (systemd) 1 รายการ
 # ---------------------------------------------------------------------------
 
+def _collapse(config, data, target_name, source_name):
+    """ยุบรายการซ้ำ (ปริยายปิด: storage.collapse_repeats.enabled) บันทึกจำนวนลง System log ให้ตรวจได้
+    คืน (data, จำนวนที่ถูกยุบ)"""
+    enabled, keep = collapse_config(config)
+    if not enabled or not data:
+        return data, 0
+    data, collapsed, kinds = collapse_repeats(data, keep)
+    if collapsed:
+        print(f"[COLLAPSE] {target_name}/{source_name} collapsed={collapsed} kinds={len(kinds)} keep={keep}")
+        try:
+            append_events([{"source": "puller", "level": "info", "web": target_name,
+                            "message": f"ยุบ log ซ้ำ {collapsed} รายการ ({len(kinds)} ชนิด) ของ {source_name} "
+                                       f"เก็บชนิดละไม่เกิน {keep} รายการ + บรรทัดสรุป (storage.collapse_repeats)"}])
+        except Exception as e:
+            print(f"[COLLAPSE] write event failed: {e!r}")
+    return data, collapsed
+
+
 def pull_journal(config, target, log_source, state):
     """ดึง journal ต่อจาก cursor เดิม -> data/buffer (ไม่เก็บ INFO ถ้าไม่ได้เปิด store_info_logs)"""
     target_name = target["name"]
@@ -148,6 +168,7 @@ def pull_journal(config, target, log_source, state):
 
     lines = [e["line"] for e in entries if store_info or e["level"] != "INFO"]
     data = ("\n".join(lines) + "\n").encode("utf-8") if lines else b""
+    data, _ = _collapse(config, data, target_name, source_name)
 
     output_file, pull_id = None, previous.get("last_pull_id")
     if data:
@@ -249,6 +270,8 @@ def pull_log(config, target, log_source, state):
     if not store_info_enabled(config):
         data, _, dropped = drop_info(data)
 
+    data, collapsed = _collapse(config, data, target_name, source_name)
+
     output_file, pull_id = None, state.get(source_id, {}).get("last_pull_id")
     if data:
         output_file, pull_id = _write_buffer(
@@ -274,7 +297,8 @@ def pull_log(config, target, log_source, state):
     ssh_pull_bytes_total.labels(target=target_name, source=source_name).inc(len(data))
     ssh_pull_records_total.labels(target=target_name, source=source_name).inc(lines)
 
-    print(f"[OK] {output_file or '(no file: all INFO)'} bytes={len(data)} lines={lines} info_dropped={dropped}")
+    print(f"[OK] {output_file or '(no file: all INFO)'} bytes={len(data)} lines={lines} info_dropped={dropped}"
+          + (f" collapsed={collapsed}" if collapsed else ""))
     print(f"[CHECKPOINT] {source_id} = {end_offset}")
 
 
