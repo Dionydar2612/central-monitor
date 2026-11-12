@@ -270,6 +270,16 @@ class Backend(unittest.TestCase):
         self.assertEqual(self.c.get("/api/sensors/detail?id=nope").status_code, 404)
         os.remove(sensors_service.SENSORS_FILE); os.remove(sensors_service.INCIDENTS_FILE)
 
+    def test_light_entry_fp(self):
+        import logs_service
+        hit = lambda body: {"_id": "x", "_index": "logs-central-1", "_source": {
+            "body": body, "attributes": {"log.file.name": "__web-01__app.log"}, "resource": {"log.source": "application"},
+            "@timestamp": "2026-11-12T10:00:00Z"}}
+        a = logs_service._light_entry("web-01", "__web-01__", hit("2026-11-12T10:00:00 [ERROR] db 10.0.0.1 timeout 30s"))
+        b = logs_service._light_entry("web-01", "__web-01__", hit("2026-11-12T11:00:00 [ERROR] db 10.0.0.2 timeout 45s"))
+        self.assertEqual(len(a["fp"]), 12)
+        self.assertEqual(a["fp"], b["fp"])
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

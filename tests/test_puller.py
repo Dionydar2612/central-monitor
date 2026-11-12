@@ -22,6 +22,7 @@ import journal            # noqa: E402
 import sensor_monitor     # noqa: E402
 import log_filter         # noqa: E402
 import log_levels         # noqa: E402
+import fingerprint        # noqa: E402
 import system_info        # noqa: E402
 import web_checks         # noqa: E402
 import notify             # noqa: E402
@@ -104,6 +105,38 @@ class LogLevels(unittest.TestCase):
         a = open(os.path.join(ROOT, "start_push_log", "puller", "log_levels.py"), encoding="utf-8").read()
         b = open(os.path.join(ROOT, "web_dashboard", "backend", "log_levels.py"), encoding="utf-8").read()
         self.assertEqual(a, b, "log_levels.py 2 ชุดต้องเหมือนกัน")
+
+
+class Fingerprint(unittest.TestCase):
+    """fingerprint.py: บรรทัดที่ต่างกันแค่เวลา / ตัวเลข / IP / id ต้องได้ fp เดียวกัน"""
+    fp = staticmethod(fingerprint.fingerprint)
+
+    def test_same_problem_same_fp(self):
+        a = "2026-11-12T10:00:01.123+07:00 [ERROR] connect to 10.0.0.5:5432 failed after 3 retries (pid=1234) req=550e8400-e29b-41d4-a716-446655440000"
+        b = "2026-11-12T11:59:59.999+07:00 [ERROR] connect to 192.168.1.20:5433 failed after 15 retries (pid=99) req=123e4567-e89b-12d3-a456-426614174000"
+        self.assertEqual(self.fp(a), self.fp(b))
+        self.assertEqual(len(self.fp(a)), 12)
+        self.assertEqual(self.fp("Oct  5 09:12:58 web sshd[1234]: error: timeout 0x7f3a"),
+                         self.fp("Nov 12 23:01:02 web sshd[77]: error: timeout 0xdeadbeef"))
+        self.assertEqual(self.fp("[2026-11-12 10:00:00] ERROR cache key 9f86d081884c7d65 missing"),
+                         self.fp("[2026-11-13 08:30:12] ERROR cache key a3f2c9e10b7d4411 missing"))
+        self.assertEqual(self.fp("ERROR timeout on fe80::1:2:3:4"), self.fp("ERROR timeout on 2001:db8::5:6:7:8"))
+
+    def test_different_problem_different_fp(self):
+        self.assertNotEqual(self.fp("2026-11-12T10:00:00 [ERROR] connect to 10.0.0.5 failed"),
+                            self.fp("2026-11-12T10:00:00 [ERROR] disk /var full"))
+        self.assertNotEqual(self.fp("[ERROR] timeout"), self.fp("[WARN] deprecated api"))
+        self.assertEqual(self.fp(""), "")
+
+    def test_stack_trace_uses_first_three_lines(self):
+        head = "2026-11-12T10:00:00 [ERROR] NullPointerException\n  at a.B.c(B.java:10)\n  at a.D.e(D.java:20)\n"
+        self.assertEqual(self.fp(head + "  at x.Y.z(Y.java:1)"), self.fp(head + "  at other.Frame(F.java:9)"))     # บรรทัดที่ 4 ไม่นับ
+        self.assertNotEqual(self.fp(head), self.fp(head.replace("a.D.e", "q.R.s")))                              # บรรทัดที่ 3 นับ
+
+    def test_both_copies_identical(self):
+        a = open(os.path.join(ROOT, "start_push_log", "puller", "fingerprint.py"), encoding="utf-8").read()
+        b = open(os.path.join(ROOT, "web_dashboard", "backend", "fingerprint.py"), encoding="utf-8").read()
+        self.assertEqual(a, b, "fingerprint.py 2 ชุดต้องเหมือนกัน")
 
 
 class LogFilter(unittest.TestCase):

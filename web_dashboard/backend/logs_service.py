@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 
 import log_ack_service
 from clients import opensearch_request, prometheus_query_range, puller_info_logs
+from fingerprint import fingerprint
 from log_levels import detect_log_level
 from metrics_service import _labels, get_metrics_at_time, get_web_prometheus_config
 from settings import load_web_targets, resolve_web_name
@@ -169,6 +170,7 @@ def _light_entry(web, marker, hit):
         "type": resource.get("log.source", "") or "application",
         "message": body,
         "source_file": filename,
+        "fp": fingerprint(body),     # ลายนิ้วมือ: บรรทัดที่ต่างกันแค่เวลา / ตัวเลข / IP = ปัญหาเดียวกัน
     }
 
 
