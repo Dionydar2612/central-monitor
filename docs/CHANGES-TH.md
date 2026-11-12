@@ -271,3 +271,17 @@
 - Status & Logs: แท็บอยู่ใน URL อยู่แล้ว + จำช่วงเวลา / โหมด "แสดง" / metric / เส้นที่ซ่อนของ Overview
 - Settings: ฟอร์มเครื่องที่เปิดค้าง + แท็บที่ดูอยู่ เปิดกลับมาเหมือนเดิม (ฟอร์มเพิ่มเครื่องใหม่ที่ยังไม่บันทึกไม่จำ)
 - หน้าแรก: เครื่องที่เปิดดู (?web=) แท็บรายละเอียด มุมมอง และกลุ่มที่ยุบ จำไว้อยู่แล้ว
+
+## หน้าเครื่อง + หน้า sensor แบบ PRTG
+- รายละเอียดเครื่อง (คลิกเครื่องในหน้าแรก) แท็บ Overview ด้านบน:
+  - กล่องข้อมูล: Status · Last Scan · Uptime / Downtime 30 วัน · Last Down · จำนวน sensor ตามสถานะ · OS / IP · Group
+  - เกจใหญ่ CPU / Memory / Disk (ไดรฟ์ที่เต็มสุด) + เกจเล็กของ sensor อื่นที่มีค่า (สีตามสถานะ, แถบโซน OK / Warning / Error)
+  - ตาราง Sensors: Pos · Sensor · Status · Message · Graph (แถบค่า) · Limits — คลิกชื่อเปิดหน้า sensor
+- หน้า sensor ใหม่ `/sensor?id=...` (คลิกชื่อ sensor ในหน้าเครื่อง หรือการ์ดใน Status & Logs):
+  - หัวสีตามสถานะ + เส้นทาง Devices » กลุ่ม » เครื่อง » sensor
+  - แท็บ Overview · Live Data (2 ชม. รีเฟรช 30 วิ) · 2 days · 30 days · 365 days · Log (ประวัติปัญหา)
+  - กล่องข้อมูล: Last Scan · Last Up · Last Down · Uptime / Downtime 30 วัน (นับเฉพาะ Down / Error) · Sensor Type · Status since · Interval · Limits · ID
+  - Overview: เกจใหญ่ + ตาราง Channel (ค่าล่าสุด / ต่ำสุด / สูงสุด 2 วัน / Limits) + กราฟ 2 วัน
+  - แท็บกราฟ: เส้นประ Warning / Error, จุด Min / Max, ตารางค่าย้อนหลัง (แถวสรุป ต่ำสุด / สูงสุด — ไม่มีค่าเฉลี่ย)
+  - API: `GET /api/sensors/detail?id=` · `/api/sensors/history` รองรับ range live / 2d / 365d เพิ่ม + min / max / last
+- กราฟมีเฉพาะ sensor CPU / Memory / Disk / Availability และ sensor ที่มี PromQL (latency, packet loss, กฎที่สร้างเอง) — ชนิดอื่นแท็บกราฟจะกดไม่ได้

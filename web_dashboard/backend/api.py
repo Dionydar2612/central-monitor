@@ -997,6 +997,18 @@ def overview_history_get():
     return jsonify(overview_history.get_history(request.args.get("range", "2d")))
 
 
+@app.get("/api/sensors/detail")
+def sensors_detail():
+    """หน้า sensor แบบ PRTG (/sensor?id=...)"""
+    d = sensors_service.get_detail(request.args.get("id", ""))
+    return (jsonify(d), 200) if d else (jsonify({"error": "not found"}), 404)
+
+
+@app.get("/sensor")
+def sensor_page():
+    return send_from_directory(STATIC_DIR, "sensor.html")
+
+
 @app.get("/api/sensors")
 def sensors():
     statuses = [s.strip() for s in request.args.get("status", "").split(",") if s.strip()]

@@ -1887,6 +1887,59 @@ function renderAckBar() {
     if (all) { all.checked = S.logRows.length > 0 && S.logRows.every(p => S.sel.has(p.id)); all.indeterminate = !all.checked && sel.length > 0; }
 }
 
+/* ---------- ภาพรวมเครื่องแบบ PRTG: กล่องข้อมูล + เกจ + ตาราง sensor ---------- */
+const DEV_ST = { ok: ["✓", "Up", "ok"], warning: ["!", "Warning", "wr"], error: ["✕", "Error", "cr"], down: ["▼", "Down", "cr"], paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"] };
+async function loadDevice(force) {
+    const web = S.web, box = q("#devPanel");
+    if (!web || !box || !window.CMGauge) return;
+    if (!force && S.dev && S.dev.web === web && Date.now() - S.dev.at < 30000) return;
+    try {
+        const [sd, av] = await Promise.all([apiGet(`/api/sensors?web=${encodeURIComponent(web)}`),
+            apiGet(`/api/sensors/detail?id=${encodeURIComponent(web + ":availability")}`).catch(() => null)]);
+        if (web !== S.web) return;
+        S.dev = { web, at: Date.now(), sensors: sd.sensors || [], updated: sd.updated_at, av };
+        renderDevice();
+    } catch (e) { box.innerHTML = `<div class="empty">โหลด sensor ไม่ได้: ${escapeHtml(e.message)}</div>`; }
+}
+function renderDevice() {
+    const box = q("#devPanel"), d = S.dev;
+    if (!box || !d || d.web !== S.web) return;
+    const w = (S.webs || []).find(x => x.web === S.web) || {};
+    const list = d.sensors.slice().sort((a, b) => (SB_RANK[b.status] || 0) - (SB_RANK[a.status] || 0) || String(a.name).localeCompare(String(b.name)));
+    const cnt = k => d.sensors.filter(x => x.status === k).length;
+    const sl = (k) => `/sensor?id=${encodeURIComponent(k)}`;
+    const big = ["cpu", "memory"].map(k => d.sensors.find(x => x.kind === k)).concat([d.sensors.filter(x => x.kind === "disk" && x.value != null).sort((a, b) => b.value - a.value)[0]]).filter(Boolean);
+    const small = d.sensors.filter(x => !big.includes(x) && x.value !== null && x.value !== undefined && Number.isFinite(Number(x.value)) && x.unit && x.kind !== "availability");
+    const gcard = (x, size) => {
+        const [ic, , cls] = DEV_ST[x.status] || DEV_ST.unknown;
+        return `<a class="dg ${size} s-${cls}" href="${sl(x.id)}" title="${escapeHtml(x.message || "")}"><span class="dgbar"><i>${ic}</i></span><span class="dgtx"><b>${escapeHtml(x.name)}</b><small>${escapeHtml((DEV_ST[x.status] || DEV_ST.unknown)[1])}</small><em>${escapeHtml(CMGauge.fmt(x.value, x.unit))}</em></span>${CMGauge.svg(x, { size: size === "big" ? "lg" : "sm" })}</a>`;
+    };
+    const av = d.av;
+    const cell = (k, v) => `<div><small>${k}:</small><b>${v}</b></div>`;
+    const [, stl, stc] = DEV_ST[{ HEALTHY: "ok", WARNING: "warning", PROBLEM: "error", DOWN: "down", PAUSED: "paused" }[w.state] || "unknown"];
+    const bar = x => {
+        const n = Number(x.value);
+        if (!Number.isFinite(n) || x.value === null) return `<span class="st-mut">-</span>`;
+        const max = x.unit === "%" ? 100 : Math.max(Number(x.error) * 1.25 || 0, n, 1), f = Math.min(1, n / max);
+        return `<span class="dbar"><i style="width:${(f * 100).toFixed(0)}%" class="${(DEV_ST[x.status] || DEV_ST.unknown)[2]}"></i></span><span class="dbv">${escapeHtml(CMGauge.fmt(n, x.unit))}</span>`;
+    };
+    box.innerHTML = `<section class="card devinfo"><div class="devgrid">
+${cell("Status", `<span class="ovst ${stc}">${escapeHtml(stl)}</span>`)}
+${cell("Last Scan", d.updated ? escapeHtml(formatTimestamp(d.updated)) : "-")}
+${cell("Uptime (30 d)", av ? av.uptime_pct.toFixed(4) + "%" : "-")}
+${cell("Downtime (30 d)", av ? av.downtime_pct.toFixed(4) + "%" : "-")}
+${cell("Last Down", av && av.last_down ? escapeHtml(formatTimestamp(new Date(av.last_down * 1000).toISOString())) : "never")}
+${cell("Sensors", `${d.sensors.length} <span class="dsc"><i class="ok">✓ ${cnt("ok")}</i>${cnt("warning") ? `<i class="wr">! ${cnt("warning")}</i>` : ""}${cnt("error") + cnt("down") ? `<i class="cr">✕ ${cnt("error") + cnt("down")}</i>` : ""}${cnt("paused") ? `<i class="ps">II ${cnt("paused")}</i>` : ""}</span>`)}
+${cell("OS / IP", `${w.os === "windows" ? "Windows" : "Linux"} · ${escapeHtml(w.host || w.instance || "-")}`)}
+${cell("Group", escapeHtml(w.group || "-"))}
+</div></section>
+${big.length || small.length ? `<section class="card"><div class="devg">${big.map(x => gcard(x, "big")).join("")}</div>${small.length ? `<div class="devg sm">${small.map(x => gcard(x, "small")).join("")}</div>` : ""}</section>` : ""}
+<section class="card"><div class="top"><h2>Sensors (${d.sensors.length})</h2><small class="st-mut">คลิกชื่อเพื่อเปิดหน้า sensor (กราฟ Live / 2 / 30 / 365 days)</small></div>
+<div class="tblw"><table class="ovtbl devtbl"><thead><tr><th>Pos</th><th>Sensor</th><th>Status</th><th>Message</th><th>Graph</th><th>Limits</th></tr></thead><tbody>
+${list.map((x, i) => { const [ic, l, c] = DEV_ST[x.status] || DEV_ST.unknown; return `<tr><td class="st-mut">${i + 1}.</td><td><a href="${sl(x.id)}" class="dsn"><i class="evico sm ${c}">${ic}</i>${escapeHtml(x.name)}</a>${x.ack ? ` <span class="ovack">ACK</span>` : ""}</td><td><span class="ovst ${c}">${escapeHtml(l)}</span></td><td class="dmsg" title="${escapeHtml(x.message || "")}">${escapeHtml(x.message || "-")}</td><td class="dgr">${bar(x)}</td><td class="st-mut">${x.warning != null || x.error != null ? escapeHtml(`${CMGauge.fmt(x.warning, "")} / ${CMGauge.fmt(x.error, "")}`) : "-"}</td></tr>`; }).join("")}
+</tbody></table></div></section>`;
+}
+
 /* ปิดรายละเอียดเครื่อง (กลับไปเห็นแค่ WEB status + Logs) */
 function closeDetail() {
     S.web = null; S.hist = null; S.summary = null; S.metrics = null; S.marks = []; S.markGroups = []; S.live = null;
@@ -2171,6 +2224,7 @@ async function loadAll() {
         S.metrics = { ...(summary.metrics || {}), ...(metrics || {}) };
         renderMeta();
         renderLists();
+        loadDevice(false);
         loadLive(false);
         await loadHist();
         if (window.CMPanes) CMPanes.refresh(false);
@@ -2328,7 +2382,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const b = e.target.closest("[data-web]"); if (!b) return;
         if (b.dataset.web === S.web) { closeDetail(); return; }       /* คลิกเครื่องเดิมซ้ำ = ปิดรายละเอียด */
         togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.live = null; S.liveErr = null;
-        S.web = b.dataset.web; S.hist = null;
+        S.web = b.dataset.web; S.hist = null; S.dev = null; if (q("#devPanel")) q("#devPanel").innerHTML = "";
         if (window.CMPanes) CMPanes.reset();
         setUrlWeb(S.web);
         renderMachines(); loadAll().then(() => q("#detail").scrollIntoView({ behavior: "smooth", block: "start" }));

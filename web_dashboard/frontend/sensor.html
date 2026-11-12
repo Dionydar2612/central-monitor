@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!--
+  sensor.html - หน้า sensor แบบ PRTG  (/sensor?id=<sensor id>&tab=overview|live|2d|30d|365d|log)
+    หัวสีตามสถานะ · กล่องข้อมูล (Last scan / Last up / Last down / Uptime / Downtime ...) · เกจ + ตารางค่า
+    แท็บกราฟ Live (2 ชม.) / 2 days / 30 days / 365 days + ตารางค่า · Log = ประวัติปัญหาของ sensor นี้
+  ข้อมูล: GET /api/sensors/detail?id=  ·  GET /api/sensors/history?id=&range=
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor - Sensor</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><b>Sensor</b><div style="color:var(--mut);font-size:12px;margin-top:2px" id="snCrumb">-</div></div>
+<div class="sbadges" id="sbadges"></div>
+<div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><a class="st-nav" href="/events">Status &amp; Logs</a><span>Logged in as <b id="currentUsername">...</b></span><button id="logoutButton">Logout</button></div>
+</header>
+<section class="snhead" id="snHead"><div class="snt"><span class="snico" id="snIco">?</span><div><div class="snname"><small>Sensor</small> <b id="snName">Loading...</b></div><div class="snst" id="snSt">-</div></div></div><div class="snwho" id="snWho"></div></section>
+<nav class="sntabs" id="snTabs" role="tablist">
+<button type="button" data-t="overview"><i>◉</i>Overview</button>
+<button type="button" data-t="live"><i>((•))</i>Live Data</button>
+<button type="button" data-t="2d"><b>2</b>days</button>
+<button type="button" data-t="30d"><b>30</b>days</button>
+<button type="button" data-t="365d"><b>365</b>days</button>
+<button type="button" data-t="log"><i>☰</i>Log</button>
+</nav>
+<section class="card sninfo" id="snInfo"></section>
+<div id="snBody"><div class="empty">Loading...</div></div>
+</div>
+<script src="/badges.js"></script>
+<script src="/popup.js"></script>
+<script src="/gauge.js"></script>
+<script src="/sensor.js"></script>
+</body>
+</html>

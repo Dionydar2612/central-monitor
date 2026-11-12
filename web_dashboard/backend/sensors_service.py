@@ -29,7 +29,8 @@ ACK_LOCK = os.path.join(STATE_DIR, ".acks.lock")
 STATUSES = ("down", "error", "warning", "unknown", "paused", "ok")
 ACKABLE = ("down", "error", "warning", "unknown")
 MAX_NOTE = 500
-HISTORY_RANGES = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
+HISTORY_RANGES = {"live": 2 * 3600, "1h": 3600, "6h": 6 * 3600, "24h": 86400, "2d": 2 * 86400, "7d": 7 * 86400,
+                  "30d": 30 * 86400, "365d": 365 * 86400}
 
 
 def load_sensors():
@@ -247,6 +248,46 @@ def get_history(sensor_id, range_key="24h"):
     if sensor is None:
         return None
     seconds = HISTORY_RANGES.get(range_key, 86400)
+    series = _series(sensor, seconds, 240)
+    vals = [v for _, v in series]
     return {"id": sensor_id, "range": range_key, "warning": sensor.get("warning"), "error": sensor.get("error"),
             "unit": sensor.get("unit"), "kind": sensor.get("kind"), "name": sensor.get("name"),
-            "web": sensor.get("web"), "series": _series(sensor, seconds, 240)}
+            "web": sensor.get("web"), "series": series,
+            "min": min(vals) if vals else None, "max": max(vals) if vals else None,   # ไม่มีค่าเฉลี่ย (กฎของระบบ)
+            "last": vals[-1] if vals else None}
+
+
+def get_detail(sensor_id, days=30):
+    """หน้า sensor (แบบ PRTG): ค่าปัจจุบัน + Uptime / Downtime ย้อนหลัง days วัน + Last up / Last down + ประวัติปัญหา
+    downtime = ช่วงที่เป็น down / error  ไม่พบ -> None"""
+    data = load_sensors()
+    sensor = next((s for s in _attach_acks(data.get("sensors", [])) if s.get("id") == sensor_id), None)
+    if sensor is None:
+        return None
+    now = time.time()
+    since = now - days * 86400
+    rows = [i for i in _load_incidents() if i.get("id") == sensor_id]
+    inc = sensor.get("incident")
+    if inc and inc.get("start"):
+        rows.append({"id": sensor_id, "start": inc["start"], "end": None, "worst": inc.get("worst"), "peak": inc.get("peak"),
+                     "unit": inc.get("unit"), "state": "ongoing"})
+    down = 0.0
+    last_down = None
+    for i in rows:
+        if i.get("worst") not in ("down", "error"):
+            continue
+        a, b = float(i.get("start") or now), float(i.get("end") or now)
+        last_down = max(last_down or 0, a)
+        a, b = max(a, since), min(b, now)
+        if b > a:
+            down += b - a
+    status = sensor.get("status")
+    last_up = now if status in ("ok", "warning") else (max((float(i["end"]) for i in rows if i.get("end")), default=None))
+    history = sorted(rows, key=lambda i: -(i.get("start") or 0))[:100]
+    for i in history:
+        i["duration"] = (i.get("end") or now) - (i.get("start") or now)
+        i.setdefault("state", "recovered")
+    return {"sensor": sensor, "updated_at": data.get("updated_at"), "interval": (data.get("options") or {}).get("interval", 30),
+            "days": days, "downtime_pct": round(down / (days * 86400) * 100, 4), "uptime_pct": round(100 - down / (days * 86400) * 100, 4),
+            "last_up": last_up, "last_down": last_down, "incidents": history,
+            "has_graph": sensor.get("kind") in ("cpu", "memory", "disk", "availability") or bool(sensor.get("query"))}

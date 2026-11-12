@@ -252,6 +252,24 @@ class Backend(unittest.TestCase):
         for w in d["webs"].values():                                         # แยกรายเครื่อง
             self.assertEqual(set(w), {"cpu", "memory", "disk", "traffic", "alarms"})
 
+    def test_sensor_detail(self):
+        import json as _j, time as _t, sensors_service
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        now = _t.time()
+        with open(sensors_service.SENSORS_FILE, "w") as f:
+            _j.dump({"updated_at": "2026-11-12T10:00:00+00:00", "options": {"interval": 30}, "sensors": [
+                {"id": "web-01:cpu", "web": "web-01", "kind": "cpu", "name": "CPU average 5m", "status": "ok", "value": 12.5,
+                 "unit": "%", "warning": 80, "error": 90, "since": now - 3600}]}, f)
+        with open(sensors_service.INCIDENTS_FILE, "w") as f:
+            _j.dump([{"id": "web-01:cpu", "web": "web-01", "start": now - 86400 * 2, "end": now - 86400 * 2 + 864, "worst": "error"},
+                     {"id": "web-01:cpu", "web": "web-01", "start": now - 3000, "end": now - 2000, "worst": "warning"}], f)
+        d = self.c.get("/api/sensors/detail?id=web-01:cpu").json
+        self.assertAlmostEqual(d["downtime_pct"], 864 / (30 * 86400) * 100, places=3)      # เฉพาะ down/error
+        self.assertEqual(len(d["incidents"]), 2)
+        self.assertTrue(d["has_graph"])
+        self.assertEqual(self.c.get("/api/sensors/detail?id=nope").status_code, 404)
+        os.remove(sensors_service.SENSORS_FILE); os.remove(sensors_service.INCIDENTS_FILE)
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

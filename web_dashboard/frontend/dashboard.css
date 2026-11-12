@@ -1436,3 +1436,44 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .sblegend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 .sblegend small{flex-basis:100%;text-align:center}
 .gtree.sbmode{max-height:none}
+
+/* ---------- หน้า sensor + ภาพรวมเครื่องแบบ PRTG ---------- */
+.cmg{display:block}.cmg.lg{width:170px}.cmg.sm{width:74px}
+.cmgl{font-size:9px;fill:var(--mut)}
+.snhead{display:flex;justify-content:space-between;align-items:center;gap:12px;border-radius:10px;padding:12px 18px;margin:10px 0;color:#fff;background:#a8c522}
+.snhead.s-wr{background:#f5b400}.snhead.s-cr{background:#e5484d}.snhead.s-ps{background:#4c8ff0}.snhead.s-na{background:#8d96a5}
+.snt{display:flex;align-items:center;gap:12px}.snico{font-size:26px;font-weight:700;width:30px;text-align:center}
+.snname{font-size:22px}.snname small{font-style:italic;opacity:.9;font-size:18px}.snname b{font-weight:700}
+.snst{font-size:13px;opacity:.95}.snst span{opacity:.9}
+.snwho a{color:#fff}.snwho{font-size:13px}
+.sntabs{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 10px}
+.sntabs button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:86px;padding:8px 12px;border:0;border-bottom:2px solid transparent;background:var(--chip);color:var(--ink);font:13px inherit;font-family:inherit;border-radius:6px 6px 0 0;cursor:pointer}
+.sntabs button i{font-style:normal;color:var(--mut);font-size:13px;line-height:1.1}.sntabs button b{font-size:17px;line-height:1.1}
+.sntabs button.on{background:var(--bg);border-bottom-color:var(--blue);color:var(--blue)}
+.sntabs button:disabled{opacity:.4;cursor:default}
+.sngrid,.devgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 18px}
+.sngrid small,.devgrid small{display:block;color:var(--mut);font-size:12px}.sngrid b,.devgrid b{font-size:14px;font-weight:600}
+.snover{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
+.snbig{display:flex;flex-direction:column;align-items:center;min-width:200px}.snbt{font-weight:600;align-self:flex-start}.snbv{font-size:22px;font-weight:700}
+.snside{flex:1;min-width:300px}
+.sntbl{width:100%}.sntbl th small{font-weight:normal;color:var(--mut)}.snsum td{font-weight:600;background:var(--chip)}
+.snmsg{margin-top:10px;font-size:13px}.snmsg small{color:var(--mut)}
+.evsn{color:inherit;text-decoration:none}.evsn:hover{text-decoration:underline}
+.dsc i{font-style:normal;font-size:12px;margin-left:6px;padding:1px 6px;border-radius:8px;background:var(--chip)}
+.dsc i.ok{color:#1f9d55}.dsc i.wr{color:#b26b00}.dsc i.cr{color:#d03b3f}.dsc i.ps{color:var(--blue)}
+.devg{display:flex;flex-wrap:wrap;gap:10px}.devg.sm{margin-top:10px}
+.dg{display:flex;align-items:stretch;gap:8px;border:1px solid var(--line);border-radius:8px;overflow:hidden;color:var(--ink);text-decoration:none;background:var(--bg)}
+.dg.big{flex:1 1 300px;min-height:150px}.dg.small{flex:0 1 220px}
+.dg:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.dgbar{width:22px;background:#a8c522;color:#fff;display:flex;justify-content:center;padding-top:6px;font-weight:700}
+.dg.s-wr .dgbar{background:#f5b400}.dg.s-cr .dgbar{background:#e5484d}.dg.s-ps .dgbar{background:#4c8ff0}.dg.s-na .dgbar{background:#8d96a5}
+.dgbar i{font-style:normal;font-size:13px}
+.dgtx{display:flex;flex-direction:column;padding:6px 0;min-width:0;flex:1}
+.dgtx b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dgtx small{color:var(--mut);font-size:11.5px}
+.dgtx em{font-style:normal;font-weight:700;margin-top:auto;font-size:15px}.dg.big .dgtx em{font-size:20px}
+.dg .cmg{align-self:center;margin-right:6px}
+.devtbl .dsn{color:var(--ink);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:6px}.devtbl .dsn:hover{color:var(--blue)}
+.dmsg{max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--mut)}
+.dgr{white-space:nowrap}.dbar{display:inline-block;width:110px;height:8px;border-radius:4px;background:var(--chip);vertical-align:middle;overflow:hidden}
+.dbar i{display:block;height:100%;background:#a8c522}.dbar i.wr{background:#f5b400}.dbar i.cr{background:#e5484d}.dbar i.ps{background:#4c8ff0}
+.dbv{margin-left:8px;font-size:12.5px}

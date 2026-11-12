@@ -93,7 +93,7 @@ function sensorCard(s, i) {
     const limits = s.warning != null ? `<span class="evlim">limits ${esc(s.warning)} / ${esc(s.error)}${s.unit === "%" ? "%" : ""}</span>` : "";
     const path = s.group ? s.group.split("/").map(esc).join(" » ") : "";
     return `<article class="evcard s-${cls}">
-      <h3><span class="evico ${cls}">${icon}</span>${esc(s.name)}${s.ack ? ` <span class="evackt">(Acknowledged)</span>` : ""}<span class="evbtns">${btn}</span></h3>
+      <h3><span class="evico ${cls}">${icon}</span><a class="evsn" href="/sensor?id=${encodeURIComponent(s.id)}" title="เปิดหน้า sensor">${esc(s.name)}</a>${s.ack ? ` <span class="evackt">(Acknowledged)</span>` : ""}<span class="evbtns">${btn}</span></h3>
       <div class="evgrid">
         <div><small>${path ? "Group » Device" : "Device"}</small>${path ? `<span class="evpath">${path} »</span>` : ""}<a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b>${s.host ? ` (${esc(s.host)})` : ""}</a></div>
         <div><small>Status</small><b class="evst ${cls}">${label}</b> <span class="evsince" title="since ${esc(fmtTime(s.since))}">for ${fmtAgo(s.since)}</span></div>
