@@ -255,3 +255,20 @@ class Backend(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupDepth(unittest.TestCase):
+    """กลุ่มซ้อนกลุ่มย่อยได้ 10 ชั้น"""
+    def test_group_depth(self):
+        sys.path.insert(0, os.path.join(ROOT, "web_dashboard", "backend"))
+        try:
+            import targets_service
+        except Exception as e:  # ไม่มี dependency
+            self.skipTest(str(e))
+        err = {}
+        ten = "/".join(f"L{i}" for i in range(10))
+        self.assertEqual(targets_service.clean_group(" TQ / IT / Web / ", err), "TQ/IT/Web")
+        self.assertEqual(targets_service.clean_group(ten, err), ten)
+        self.assertEqual(err, {})
+        targets_service.clean_group(ten + "/L10", err)
+        self.assertIn("group", err)

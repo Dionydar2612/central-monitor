@@ -112,6 +112,37 @@ function fillGroups() {
     });
     const dl = $("groupList"); dl.textContent = "";
     [...set].sort().forEach(g => dl.append(el("option", { value: g })));
+    S.groupSet = set;
+    ["f_group", "c_group"].forEach(groupPicker);
+}
+
+/* ตัวเลือกกลุ่มแบบต้นไม้: คลิกชื่อ = เลือก · "+ ย่อย" = เติม "กลุ่ม/" ให้พิมพ์ชื่อกลุ่มย่อยต่อ */
+function groupPicker(id) {
+    const inp = $(id), box = $(id + "_pick"), crumb = $(id + "_crumb");
+    if (!inp || !box) return;
+    const paint = () => {
+        const cur = inp.value.trim().replace(/\/+$/, "");
+        const parts = inp.value.split("/").map(p => p.trim()).filter(Boolean);
+        crumb.textContent = "";
+        if (parts.length) {
+            crumb.append(...parts.flatMap((p, i) => [i ? " › " : "", el("b", {}, p)]),
+                ` (ชั้น ${parts.length}${parts.length > 10 ? " · เกิน 10 ชั้น" : ""})`);
+        }
+        box.textContent = "";
+        [...(S.groupSet || [])].sort().forEach(g => {
+            const segs = g.split("/"), depth = segs.length - 1;
+            const name = el("span", { class: "gpn", title: g }, el("i", {}, depth ? "└" : "▸"), segs[depth]);
+            const add = el("button", { type: "button", class: "gpa", title: `สร้างกลุ่มย่อยใต้ ${g}` }, "+ ย่อย");
+            const row = el("div", { class: "gpr" + (g === cur ? " on" : "") }, name, add);
+            row.style.paddingLeft = (4 + depth * 16) + "px";
+            name.onclick = () => { inp.value = g; paint(); inp.dispatchEvent(new Event("input")); };
+            add.onclick = () => { inp.value = g + "/"; paint(); inp.focus(); };
+            box.append(row);
+        });
+    };
+    if (!inp.dataset.gpick) { inp.dataset.gpick = "1"; inp.addEventListener("input", () => { if (!inp._gpPainting) { inp._gpPainting = 1; paint(); inp._gpPainting = 0; } }); }
+    inp._gpPaint = paint;
+    paint();
 }
 
 async function removeTarget(t) {
@@ -183,7 +214,7 @@ function openForm(t) {
     if (t && t.type === "agent") {
         $("formTitle").textContent = `Edit target: ${t.name}`;
         $("f_name").value = t.name; $("f_name").disabled = true;
-        $("f_group").value = t.group || ""; $("f_paused").checked = !!t.paused; $("f_host").value = t.host || "";
+        $("f_group").value = t.group || ""; $("f_paused").checked = !!t.paused; $("f_host").value = t.host || ""; $("f_group")._gpPaint?.();
         TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => { $(`th_${k}_${lv}`).value = t.thresholds && t.thresholds[k] ? (t.thresholds[k][lv] ?? "") : ""; }));
         clearErrors(); say("formMsg", "");
         $("formCard").hidden = false;
@@ -193,7 +224,7 @@ function openForm(t) {
     }
     $("formTitle").textContent = t ? `Edit target: ${t.name}` : "Add target";
     $("f_name").value = t ? t.name : ""; $("f_name").disabled = !!t;
-    $("f_group").value = t ? (t.group || "") : "";
+    $("f_group").value = t ? (t.group || "") : ""; $("f_group")._gpPaint?.();
     $("f_paused").checked = !!(t && t.paused);
     TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => {
         const v = t && t.thresholds && t.thresholds[k] ? t.thresholds[k][lv] : "";
@@ -434,7 +465,7 @@ function renderChecks() {
 function openCheckForm(c) {
     S.editingCheck = c ? c.name : null;
     $("checkTitle").textContent = c ? `Edit check: ${c.name}` : "Add check";
-    Object.entries(CHECK_FIELDS).forEach(([k, id]) => { $(id).value = c && c[k] != null ? c[k] : ""; });
+    Object.entries(CHECK_FIELDS).forEach(([k, id]) => { $(id).value = c && c[k] != null ? c[k] : ""; }); $("c_group")._gpPaint?.();
     $("c_name").disabled = !!c;
     $("c_verify").checked = !c || c.verify_tls !== false;
     $("c_paused").checked = !!(c && c.paused);

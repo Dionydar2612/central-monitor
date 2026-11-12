@@ -67,9 +67,10 @@ LOGTYPE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 # path: ขึ้นต้น / ใช้ได้เฉพาะอักขระปลอดภัย (ห้าม ' " $ ` ; | & ช่องว่าง ขึ้นบรรทัดใหม่)
 PATH_RE = re.compile(r"^/[A-Za-z0-9._/*?+@%=:,~\[\]-]{1,300}$")
 WILDCARDS = "*?["
-# กลุ่มของเครื่อง: path คั่นด้วย / ลึกได้ 5 ชั้น เช่น "TQ/IT" หรือ "ThaiQuest/TQ/PP/Server" (ไทยได้)
+# กลุ่มของเครื่อง: path คั่นด้วย / ลึกได้ 10 ชั้น เช่น "TQ/IT" หรือ "ThaiQuest/TQ/PP/Server" (ไทยได้)
 GROUP_PART = r"[A-Za-z0-9฀-๿ _.()&+-]{1,40}"
-GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,4}}$")
+GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,9}}$")
+GROUP_MAX_DEPTH = 10
 # เครื่อง Windows (agent): path ไฟล์ log เช่น C:\inetpub\logs\LogFiles\*\*.log (ห้าม , ; " ' เพราะใช้คั่น/ใส่ใน config)
 WINPATH_RE = re.compile(r"^[A-Za-z]:\\[^\x00-\x1f,;\"'<>|]{1,300}$")
 CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,99}$")
@@ -86,7 +87,7 @@ def clean_group(value, errors, field="group"):
     parts = [p.strip() for p in value.strip().strip("/").split("/")]
     group = "/".join(p for p in parts if p)
     if group and not GROUP_RE.match(group):
-        errors[field] = "กลุ่มคั่นชั้นด้วย / (ไม่เกิน 5 ชั้น) ใช้ตัวอักษร ตัวเลข ไทย ช่องว่าง _ . ( ) & + -"
+        errors[field] = "กลุ่มคั่นชั้นด้วย / (ไม่เกิน 10 ชั้น) ใช้ตัวอักษร ตัวเลข ไทย ช่องว่าง _ . ( ) & + -"
     return group
 
 

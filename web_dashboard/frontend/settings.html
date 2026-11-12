@@ -38,7 +38,7 @@
 <div class="st-grid">
 <div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH)</option><option value="agent">Windows (agent / Fluent Bit)</option></select><small id="f_type_hint">central เข้าไปดึง log ทาง SSH</small><div class="st-err"></div></div>
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
-<div class="st-f" data-f="group"><label for="f_group">กลุ่ม (group)</label><input id="f_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><small>คั่นชั้นด้วย / เช่น ThaiQuest/TQ/IT · เว้นว่าง = Ungrouped</small><div class="st-err"></div></div>
+<div class="st-f" data-f="group"><label for="f_group">กลุ่ม (group)</label><input id="f_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><small>คั่นชั้นด้วย / (ซ้อนได้ 10 ชั้น) · คลิกกลุ่มด้านล่างเพื่อเลือก หรือ “+ ย่อย” เพื่อสร้างกลุ่มย่อยใต้กลุ่มนั้น · เว้นว่าง = Ungrouped</small><span class="gcrumb" id="f_group_crumb"></span><div class="gpick" id="f_group_pick"></div><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
 <div class="st-f ssh-only" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div>
 <div class="st-f ssh-only" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
@@ -140,7 +140,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-grid" id="checkGrid">
 <div class="st-f" data-c="name"><label for="c_name">ชื่อ (name)</label><input id="c_name" autocomplete="off" placeholder="tq-website"><small>a-z 0-9 - เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
 <div class="st-f" data-c="url" style="grid-column:span 2"><label for="c_url">URL</label><input id="c_url" autocomplete="off" placeholder="https://www.example.com/health"><div class="st-err"></div></div>
-<div class="st-f" data-c="group"><label for="c_group">กลุ่ม (group)</label><input id="c_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><div class="st-err"></div></div>
+<div class="st-f" data-c="group"><label for="c_group">กลุ่ม (group)</label><input id="c_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><span class="gcrumb" id="c_group_crumb"></span><div class="gpick" id="c_group_pick"></div><div class="st-err"></div></div>
 <div class="st-f" data-c="interval"><label for="c_interval">เช็คทุก (วินาที)</label><input id="c_interval" inputmode="numeric" placeholder="60"><div class="st-err"></div></div>
 <div class="st-f" data-c="timeout"><label for="c_timeout">Timeout (วินาที)</label><input id="c_timeout" inputmode="numeric" placeholder="10"><div class="st-err"></div></div>
 <div class="st-f" data-c="expect_status"><label for="c_expect">Status code ที่ถือว่า UP</label><input id="c_expect" autocomplete="off" placeholder="200-399"><div class="st-err"></div></div>

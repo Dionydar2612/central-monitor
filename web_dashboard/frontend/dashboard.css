@@ -1010,8 +1010,7 @@ td.bad{color:#e5484d}
 .ovtools input{flex:1;min-width:200px;font:14px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
 .ovtools input:focus{outline:2px solid var(--blue);outline-offset:0}
 .gtree{max-height:560px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 0}
-.gnode{margin-left:calc(var(--d) * 18px)}
-.gnode .gnode{border-left:1px dashed var(--line)}
+.gnode .gnode{margin-left:16px;border-left:1px dashed var(--line)}
 .ghead{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;user-select:none;border-radius:6px}
 .ghead:hover{background:var(--chip)}
 .ghead:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
@@ -1332,3 +1331,15 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .apStrip1{display:inline-block;width:70px;height:8px;border-radius:4px;background:#9aa7bf;flex:none}
 .apStrip1.ok{background:rgba(16,194,122,.6)}.apStrip1.wr{background:#e5a000}.apStrip1.bad{background:#e5484d}
 .apMHead h2 b{font-weight:600}
+
+/* ตัวเลือกกลุ่ม (Settings) — กลุ่มซ้อนกลุ่มย่อย */
+.gpick{margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px;max-height:220px;overflow:auto;background:var(--bg)}
+.gpick:empty{display:none}
+.gpick .gpr{display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:5px}
+.gpick .gpr:hover{background:var(--chip)}
+.gpick .gpr.on{background:rgba(31,123,255,.12)}
+.gpick .gpn{flex:1;cursor:pointer;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gpick .gpn i{font-style:normal;color:var(--mut);margin-right:4px}
+.gpick .gpa{font:12px inherit;font-family:inherit;border:1px solid var(--line);background:transparent;color:var(--blue);border-radius:5px;padding:1px 7px;cursor:pointer}
+.gcrumb{display:block;margin-top:4px;font-size:12px;color:var(--mut)}
+.gcrumb b{color:var(--ink);font-weight:600}
