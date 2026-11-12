@@ -70,11 +70,7 @@ function renderTable() {
                 el("td", {}, `${(t.agent.channels || []).length} event log · ${n} file`),
                 el("td", {}, "Fluent Bit"),
                 el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
-                el("td", {}, el("div", { class: "st-actions" },
-                    el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
-                    el("button", { class: "st-btn sm", onclick: () => openForm(t) }, "Edit"),
-                    el("button", { class: "st-btn sm", onclick: () => { openForm(t); $("agCentral").focus(); } }, "Install command"),
-                    el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete")))));
+                el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("agCentral").focus(); }, "Install command")))));
             return;
         }
         const port = t.ssh.port && Number(t.ssh.port) !== 22 ? ":" + t.ssh.port : "";
@@ -87,12 +83,18 @@ function renderTable() {
             el("td", {}, String(t.logs.length)),
             el("td", { class: t.host_key_known ? "ok" : "wr" }, t.host_key_known ? "✓ known" : "⚠ missing"),
             el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
-            el("td", {}, el("div", { class: "st-actions" },
-                el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
-                el("button", { class: "st-btn sm", onclick: () => openForm(t) }, "Edit"),
-                el("button", { class: "st-btn sm", onclick: () => { openForm(t); $("dp_pass").focus(); } }, "Deploy key"),
-                el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete")))));
+            el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("dp_pass").focus(); }, "Deploy key")))));
     });
+}
+
+const isOp = () => S.role === "operator";
+/* ปุ่มท้ายแถว: operator = Pause + แก้การแจ้งเตือน/Log · admin = ทุกปุ่ม */
+function rowActions(t, extraFn, extraLabel) {
+    const out = [el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
+                 el("button", { class: "st-btn sm", onclick: () => openForm(t) }, isOp() ? "การแจ้งเตือน / Log" : "Edit")];
+    if (!isOp()) out.push(el("button", { class: "st-btn sm", onclick: extraFn }, extraLabel),
+                          el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete"));
+    return out;
 }
 
 async function pauseTarget(t) {
@@ -238,7 +240,9 @@ function openForm(t) {
     S.editing = t ? t.name : null; S.scanned = []; S.hostKeyKnown = !!(t && t.host_key_known);
     setType(t ? (t.type || "ssh") : "ssh");
     $("f_type").disabled = !!t;
-    formTab("general"); fillAlertFields(t); formDefaults();
+    fillAlertFields(t); formDefaults();
+    document.querySelectorAll('#formCard .ftabs button[data-t="general"], #formCard .ftabs button[data-t="conn"]').forEach(b => { b.hidden = isOp(); });
+    formTab(isOp() ? "alert" : "general");
     $("agCmd").value = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
     $("agCentral").value = agentCentralGuess();
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
@@ -250,9 +254,10 @@ function openForm(t) {
         $("f_group").value = t.group || ""; $("f_paused").checked = !!t.paused; $("f_host").value = t.host || ""; $("f_group")._gpPaint?.();
         TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => { $(`th_${k}_${lv}`).value = t.thresholds && t.thresholds[k] ? (t.thresholds[k][lv] ?? "") : ""; }));
         clearErrors(); say("formMsg", "");
+        if (isOp()) $("formTitle").textContent = `การแจ้งเตือน / Log: ${t.name}`;
         $("formCard").hidden = false;
         $("formCard").scrollIntoView({ behavior: "smooth", block: "start" });
-        makeAgentCommand();
+        if (!isOp()) makeAgentCommand();
         return;
     }
     $("formTitle").textContent = t ? `Edit target: ${t.name}` : "Add target";
@@ -276,6 +281,7 @@ function openForm(t) {
     $("dp_admin").value = ""; $("dp_pass").value = "";
     $("hkKeys").textContent = "";
     renderHostKeyStatus(); renderSetup();
+    if (isOp() && t) $("formTitle").textContent = `การแจ้งเตือน / Log: ${t.name}`;
     $("formCard").hidden = false;
     $("formCard").scrollIntoView({ behavior: "smooth", block: "start" });
     (t ? $("f_host") : $("f_name")).focus();
@@ -425,6 +431,19 @@ async function deployNow() {
 async function save() {
     clearErrors(); say("formMsg", "");
     const body = readForm();
+    if (isOp()) {                                   /* operator: บันทึกเฉพาะการแจ้งเตือน + log */
+        const b = $("saveBtn"); b.disabled = true;
+        try {
+            await api("PUT", "/api/targets/" + encodeURIComponent(S.editing), body);
+            const name = S.editing; closeForm(); await loadTargets();
+            say("listMsg", `บันทึกการแจ้งเตือน / Log ของ ${name} แล้ว · มีผลในรอบตรวจถัดไป (~30 วินาที)`, "ok");
+        } catch (e) {
+            if (e.message === "auth") return;
+            const general = showErrors(e.fields);
+            say("formMsg", general || (e.fields ? "กรุณาแก้ช่องที่มีข้อความสีแดง" : "บันทึกไม่สำเร็จ: " + e.message), "bad");
+        } finally { b.disabled = false; }
+        return;
+    }
     if (body.type === "agent") return saveAgent(body);
     const trust = S.scanned.length && $("hkTrust") && $("hkTrust").checked;
     if (trust) body.trust_fingerprints = S.scanned.map(k => k.fingerprint);
@@ -824,8 +843,11 @@ document.addEventListener("DOMContentLoaded", () => {
         let role = "admin";
         try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; role = d.role || "viewer"; }
         catch (e) { return; }
-        if (role !== "admin") {                    /* operator: เห็นเฉพาะ Custom alert rules (กฎของตัวเองแก้ได้) */
-            document.querySelectorAll("section.card").forEach(c => { if (c.id !== "rulesCard") c.hidden = true; });
+        S.role = role;
+        if (role !== "admin") {                    /* operator: เครื่อง (การแจ้งเตือน + Log) + Custom alert rules */
+            document.querySelectorAll("section.card").forEach(c => { if (!["rulesCard", "targetsCard", "formCard"].includes(c.id)) c.hidden = true; });
+            $("addBtn").hidden = true;
+            loadTargets(); loadAlerts();
             return;
         }
         loadTargets(); loadUsers(); loadRetention(); loadAlerts(); loadNotify();

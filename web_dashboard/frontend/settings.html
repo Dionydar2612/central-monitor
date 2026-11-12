@@ -24,7 +24,7 @@
 <div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><span>Logged in as <b id="currentUsername">...</b></span><button id="logoutButton">Logout</button></div>
 </header>
 
-<section class="card">
+<section class="card" id="targetsCard">
 <div class="top"><h2>Targets</h2><button class="st-btn primary" id="addBtn">+ Add target</button></div>
 <div class="tblw"><table>
 <thead><tr><th>Name</th><th>Type</th><th>Group</th><th>Host</th><th>SSH user</th><th>Log files</th><th>Host key / Agent</th><th>Status</th><th></th></tr></thead>
@@ -180,7 +180,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <!-- ผู้ใช้ + สิทธิ์ (data/state/users.json) -->
 <section class="card svc">
 <div class="top"><h2>Users</h2></div>
-<div style="color:var(--mut);font-size:13px"><b>viewer</b> ดูอย่างเดียว · <b>operator</b> + Pause/Resume, Acknowledge, Load INFO log, เลือก service, สร้าง Custom alert rules (แก้/ลบได้เฉพาะกฎของตัวเอง) · <b>admin</b> + หน้า Settings ทั้งหมด (แก้กฎของทุกคน) · บัญชีจาก docker/.env เป็น admin เสมอ (ใช้กู้ระบบได้)</div>
+<div style="color:var(--mut);font-size:13px"><b>viewer</b> ดูอย่างเดียว · <b>operator</b> + Pause/Resume, Acknowledge, Load INFO log, เลือก service, Custom alert rules (สร้าง/แก้/ลบได้ทุกกฎ), แก้การแจ้งเตือนและ Log ของแต่ละเครื่อง · <b>admin</b> + เพิ่ม/ลบเครื่อง, การเชื่อมต่อ, ผู้ใช้, Notifications, Data retention · บัญชีจาก docker/.env เป็น admin เสมอ (ใช้กู้ระบบได้)</div>
 <div class="tblw"><table>
 <thead><tr><th>Username</th><th>Role</th><th>Last login</th><th></th></tr></thead>
 <tbody id="userBody"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
@@ -214,7 +214,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="top"><h2>Custom alert rules</h2><button class="st-btn sm" id="r_add" type="button">+ Add rule</button></div>
 <div style="color:var(--mut);font-size:13px">สร้างกฎแจ้งเตือนเอง: เลือกค่าที่จะดู · เครื่อง / กลุ่ม · เกณฑ์ · นานแค่ไหน · ส่ง Teams ไหม · ข้อความบนการ์ด
 ผลขึ้นเป็น sensor ในหน้า Events (Acknowledge / ประวัติปัญหาได้เหมือน sensor ปกติ) · ตรวจทุก 30 วินาที</div>
-<div class="tblw"><table class="st-tbl rltbl"><thead><tr><th></th><th>กฎ</th><th>ค่าที่ดู</th><th>ใช้กับ</th><th>เงื่อนไข</th><th>นาน</th><th>Teams</th><th>เจ้าของ</th><th></th></tr></thead><tbody id="rlRows"></tbody></table></div>
+<div class="tblw"><table class="st-tbl rltbl"><thead><tr><th></th><th>กฎ</th><th>ค่าที่ดู</th><th>ใช้กับ</th><th>เงื่อนไข</th><th>นาน</th><th>Teams</th><th>สร้างโดย</th><th></th></tr></thead><tbody id="rlRows"></tbody></table></div>
 <div class="st-box" id="rlForm" hidden>
 <div class="st-h3" id="rl_title">กฎใหม่</div>
 <div class="st-grid">

@@ -5,8 +5,9 @@ users_service.py - ผู้ใช้หลายคน + สิทธิ์ (ro
 role (เรียงจากสิทธิ์น้อย -> มาก)
     viewer    ดูได้อย่างเดียว
     operator  + Pause/Resume เครื่องและ check, กด Load INFO log, เลือก service ที่จะแสดง, Acknowledge
-              + Custom alert rules (Settings): สร้างกฎได้ และแก้/ลบได้เฉพาะกฎที่ตัวเองสร้าง (owner)
-    admin     + หน้า Settings ทั้งหมด (แก้กฎของทุกคนได้) (เพิ่ม/แก้/ลบเครื่อง, web check, จัดการผู้ใช้)
+              + Settings: Custom alert rules (สร้าง/แก้/ลบได้ทุกกฎ, owner = คนสร้าง)
+              + Settings > เครื่อง: แก้แท็บ การแจ้งเตือน + Log (targets_service.update_monitoring)
+    admin     + หน้า Settings ทั้งหมด (เพิ่ม/ลบเครื่อง, การเชื่อมต่อ, ผู้ใช้, Notifications, Retention) (เพิ่ม/แก้/ลบเครื่อง, web check, จัดการผู้ใช้)
 
 เก็บที่ไหน
     data/state/users.json  (ไม่อยู่ใน git, อยู่ใต้ data/ ที่ถูกสำรองตอน cm-update)

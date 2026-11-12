@@ -734,6 +734,7 @@ const S = {
     pullInterval: 3600,                    // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
     ovOs: "", ovState: "", sort: null,     // ตัวกรอง OS / สถานะ + การเรียงตาราง ({key, dir})
+    view: loadView(),                      // มุมมอง WEB status: table / tiles / cards / problems
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
     showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
@@ -940,7 +941,7 @@ function sortServers(list) {
     });
 }
 
-function serverRows(list, cur) {
+function serverRows(list, cur, keepOrder) {
     const cell = (key, v) => {
         const ok = hasValue(v) && Number.isFinite(Number(v));
         return `<td class="ovv ${ok ? level(key, v) || "ok" : ""}">${ok ? Number(v).toFixed(1) : "-"}</td>`;
@@ -959,7 +960,7 @@ function serverRows(list, cur) {
     };
     const op = canOperate();
     return `<table class="ovtbl"><thead><tr>${th("web", "Name")}${th("os", "OS")}${th("host", "IP")}${th("state", "Status")}${th("cpu", "CPU avg 5m")}${th("memory", "Memory %")}${th("disk", "Disk %")}${th("net", "Network")}${th("alerts", "Alerts")}<th>Last pull</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
-        sortServers(list).map(w => {
+        (keepOrder ? list : sortServers(list)).map(w => {
             const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
@@ -1022,10 +1023,53 @@ function checkTables(list) {
     return (real.length ? `<div class="tblw">${checkRows(real)}</div>` : "") + (wm.length ? `<div class="tblw">${wmRows(wm)}</div>` : "");
 }
 
+/* ---------- มุมมองของ WEB status: table / tiles / cards / problems (จำใน browser) ---------- */
+const VIEWS = ["table", "tiles", "cards", "problems"];
+function loadView() { try { const v = localStorage.getItem("cm.view"); return VIEWS.includes(v) ? v : "table"; } catch (e) { return "table"; } }
+function saveView(v) { try { localStorage.setItem("cm.view", v); } catch (e) { /* ignore */ } }
+const SEVERITY = { DOWN: 0, PROBLEM: 1, WARNING: 2, HEALTHY: 4, PAUSED: 5 };
+function bySeverity(list) {
+    return list.slice().sort((a, b) => (SEVERITY[a.state] ?? 3) - (SEVERITY[b.state] ?? 3) || (Number(b.alerts) || 0) - (Number(a.alerts) || 0) || a.web.localeCompare(b.web));
+}
+function osTag(w) { return w.os === "windows" ? `<span class="ostag" title="Windows">Win</span>` : `<span class="ostag lx" title="Linux">Linux</span>`; }
+function tilesHtml(list, cur) {
+    return `<div class="mtiles">${bySeverity(list).map(w => {
+        const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", "na"];
+        const v = k => hasValue(w[k]) && Number.isFinite(Number(w[k])) ? Math.round(Number(w[k])) + "%" : "-";
+        const tip = `${w.web} · ${label}${w.problems && w.problems.length ? " · " + w.problems.join(", ") : ""}`;
+        return `<div class="mtile ${cls}" data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" title="${escapeHtml(tip)}"><b>${escapeHtml(w.web)}</b><small>${w.paused ? "Paused" : `${v("cpu")} · ${v("memory")} · ${v("disk")}`}</small></div>`;
+    }).join("")}</div>`;
+}
+function cardsHtml(list, cur) {
+    const op = canOperate();
+    const bar = (key, name, v) => {
+        const ok = hasValue(v) && Number.isFinite(Number(v)), n = ok ? Math.max(0, Math.min(100, Number(v))) : 0;
+        return `<div class="mbar"><span>${name}</span><i><em class="${ok ? level(key, v) || "ok" : ""}" style="width:${n}%"></em></i><b>${ok ? Number(v).toFixed(0) + "%" : "-"}</b></div>`;
+    };
+    return `<div class="mcards">${bySeverity(list).map(w => {
+        const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
+        const al = Number(w.alerts) || 0;
+        const btn = op ? `<button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button>` : "";
+        const why = w.problems && w.problems.length ? `<div class="mwhy" title="${escapeHtml(w.problems.join(", "))}">${escapeHtml(w.problems.slice(0, 2).join(" · "))}</div>` : "";
+        return `<div class="mcard ${cls}" data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0">
+<div class="mtop"><b>${escapeHtml(w.web)}</b>${osTag(w)}<span class="ovst ${cls}">${escapeHtml(label)}</span></div>
+<div class="mhost">${escapeHtml(w.host || w.instance || "-")}</div>
+${w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` : bar("cpu", "CPU", w.cpu) + bar("memory", "Mem", w.memory) + bar("disk", "Disk", w.disk)}
+${why}<div class="mfoot"><span>${al ? `<b class="cr">${al} alert${al > 1 ? "s" : ""}</b>` : "ไม่มี alert"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
+    }).join("")}</div>`;
+}
+/* เครื่องในกลุ่ม ตามมุมมองที่เลือก */
+function serversHtml(list, cur) {
+    if (!list.length) return "";
+    if (S.view === "tiles") return tilesHtml(list, cur);
+    if (S.view === "cards") return cardsHtml(list, cur);
+    return `<div class="tblw">${serverRows(list, cur)}</div>`;
+}
+
 function groupHtml(n, cur, depth, forceOpen) {
     const open = forceOpen || !S.closed.has(n.path);
     const body = !open ? "" :
-        `<div class="gbody">${n.servers.length ? `<div class="tblw">${serverRows(n.servers, cur)}</div>` : ""}${n.checks.length ? checkTables(n.checks) : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
+        `<div class="gbody">${serversHtml(n.servers, cur)}${n.checks.length ? checkTables(n.checks) : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
     const items = n.servers.length + n.checks.length;
     return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
 }
@@ -1097,8 +1141,18 @@ function renderMachines(ov) {
     const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
     const tops = [...tree.kids.values()].sort((a, b) => a.name.localeCompare(b.name));
     /* เครื่อง/check ที่ไม่ได้ตั้งกลุ่ม: แสดงตารางตรง ๆ ไม่มีหัวกลุ่ม (กลุ่มแสดงเฉพาะที่ตั้งชื่อไว้) */
-    const loose = (tree.servers.length ? `<div class="tblw gloose">${serverRows(tree.servers, cur)}</div>` : "") +
+    const loose = (tree.servers.length ? `<div class="gloose">${serversHtml(tree.servers, cur)}</div>` : "") +
         (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "");
+    document.querySelectorAll("#ovView button").forEach(b => b.classList.toggle("on", b.dataset.view === S.view));
+    q("#ovExpand").hidden = q("#ovCollapse").hidden = S.view === "problems";
+    if (S.view === "problems" && webs.length) {             /* ปัญหาก่อน: ไม่แบ่งกลุ่ม เรียงตามความรุนแรง */
+        const list = bySeverity(webs.filter(w => matchesFilter(w, f)));
+        const bad = list.filter(w => !["HEALTHY", "PAUSED"].includes(w.state));
+        q("#mach").innerHTML = !list.length ? `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`
+            : (bad.length ? `<div class="vhead cr">มีปัญหา ${bad.length} เครื่อง</div><div class="tblw">${serverRows(bad, cur, true)}</div>` : `<div class="vhead ok">✓ ทุกเครื่องปกติ</div>`)
+              + (list.length > bad.length ? `<div class="vhead">ปกติ / หยุดตรวจ ${list.length - bad.length} เครื่อง</div>${tilesHtml(list.filter(w => !bad.includes(w)), cur)}` : "");
+        return;
+    }
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
         : (tops.length || loose) ? loose + tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
@@ -2198,6 +2252,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
     q("#ovOs").addEventListener("change", e => { S.ovOs = e.target.value; renderMachines(); });
     q("#ovState").addEventListener("change", e => { S.ovState = e.target.value; renderMachines(); });
+    document.querySelectorAll("#ovView button").forEach(b => b.addEventListener("click", () => { S.view = b.dataset.view; saveView(S.view); renderMachines(); }));
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {
         const all = [...(S.ov && S.ov.servers || []), ...(SHOW_CHECKS && S.ov && S.ov.checks || [])];

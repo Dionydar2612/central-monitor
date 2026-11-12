@@ -55,7 +55,7 @@ function rlRender() {
             el("td", {}, rlWhere(r)), el("td", {}, rlCond(r)), el("td", {}, `${r.for_minutes} นาที`),
             el("td", { class: r.notify !== false && !r.teams_url_set && !RL.data.main_url_set ? "rlwarn" : "" },
                 r.notify === false ? "ไม่ส่ง" : r.teams_url_set ? "ช่องของกฎ" : RL.data.main_url_set ? "ช่องหลัก" : "ยังไม่ตั้งช่อง"),
-            el("td", { class: "st-mut" }, r.owner ? (r.owner === RL.data.me ? `${r.owner} (ฉัน)` : r.owner) : "admin"),
+            el("td", { class: "st-mut" }, r.owner ? (r.owner === RL.data.me ? `${r.owner} (ฉัน)` : r.owner) : "-"),
             el("td", { class: "act" }, mine ? [
                 el("button", { class: "st-btn sm", type: "button", onclick: () => rlOpen(i) }, "Edit"),
                 el("button", { class: "st-btn sm", type: "button", onclick: () => rlDelete(i) }, "Delete")]

@@ -57,10 +57,8 @@ def _doc():
 
 
 def can_edit(rule, user=None, role="admin"):
-    """admin แก้ได้ทุกกฎ · operator แก้/ลบได้เฉพาะกฎที่ตัวเองสร้าง (owner = ชื่อผู้ใช้)"""
-    if role == "admin":
-        return True
-    return role == "operator" and bool(user) and str((rule or {}).get("owner") or "") == str(user)
+    """admin และ operator แก้/ลบได้ทุกกฎ (owner = คนสร้าง ใช้แสดงเท่านั้น) · viewer แก้ไม่ได้"""
+    return role in ("admin", "operator")
 
 
 def list_rules(user=None, role="admin"):

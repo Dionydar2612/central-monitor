@@ -753,6 +753,29 @@ def update_target(name, payload):
     return _view(t)
 
 
+# operator แก้ได้เฉพาะส่วนนี้ของเครื่อง (การแจ้งเตือน + log) ส่วนอื่นคงค่าเดิมเสมอ
+OPERATOR_FIELDS = ("thresholds", "alert", "critical_services", "logs")
+
+
+def update_monitoring(name, payload):
+    """แก้เฉพาะ เกณฑ์ / ค่าแจ้งเตือน / service สำคัญ / log ของเครื่อง (สิทธิ์ operator)  ไม่มีเครื่อง -> None"""
+    payload = payload if isinstance(payload, dict) else {}
+    cur = next((t for t in list_targets() if t.get("name") == name), None)
+    if cur is None:
+        return None
+    body = {k: v for k, v in cur.items() if k not in ("host_key_known", "watch_services")}
+    for k in OPERATOR_FIELDS:
+        if k in payload:
+            body[k] = payload[k]
+    if is_agent(cur) and isinstance(payload.get("agent"), dict):
+        agent = dict(cur.get("agent") or {})
+        for k in ("logs", "channels"):
+            if k in payload["agent"]:
+                agent[k] = payload["agent"][k]
+        body["agent"] = agent
+    return update_target(name, body)
+
+
 def set_paused(name, paused):
     """Pause / Resume เครื่อง (puller ข้ามเครื่องที่ pause: ไม่ดึง log ไม่เก็บสถานะ) ไม่มีเครื่อง -> None"""
     y = _yaml()

@@ -164,6 +164,7 @@ def require_authentication():
 
 _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
+_TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
 
 
 def _required_role(method, path):
@@ -173,7 +174,13 @@ def _required_role(method, path):
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
     if path in ("/settings", "/settings.html") or path.startswith("/api/alert-rules"):
-        return "operator"                          # operator: หน้า Settings เห็นเฉพาะ Custom alert rules (แก้ได้เฉพาะกฎของตัวเอง)
+        return "operator"                          # operator: Settings = เครื่อง (แท็บการแจ้งเตือน + Log) + Custom alert rules
+    if path == "/api/targets" and method == "GET":
+        return "operator"
+    if _TARGET_PATH.match(path) and method == "PUT":
+        return "operator"                          # operator แก้ได้เฉพาะการแจ้งเตือน + log (targets_update ตรวจอีกชั้น)
+    if path == "/api/alert-settings" and method == "GET":
+        return "operator"                          # ค่าเริ่มต้นสำหรับแสดงในช่องว่าง
     if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
         return "admin"
     if path.startswith(("/api/checks", "/api/apps")):
@@ -1119,7 +1126,10 @@ def targets_update(name):
     if body is None:
         return jsonify({"error": "json_required"}), 415
     try:
-        result = targets_service.update_target(name, body)
+        if _who()[1] == "admin":
+            result = targets_service.update_target(name, body)
+        else:                                       # operator: เฉพาะการแจ้งเตือน + log
+            result = targets_service.update_monitoring(name, body)
     except ValidationError as e:
         return _bad_request(e)
     except (OSError, YAMLError) as e:
