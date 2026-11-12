@@ -280,6 +280,38 @@ class Backend(unittest.TestCase):
         self.assertEqual(len(a["fp"]), 12)
         self.assertEqual(a["fp"], b["fp"])
 
+    def _fake_logs(self):
+        """log ปลอม: error เดียวกัน 50 บรรทัดจาก 2 เครื่อง + warn อีกชนิด 1 บรรทัด"""
+        import fingerprint
+        rows = []
+        for i in range(50):
+            msg = f"2026-11-12T10:{i % 60:02d}:00 [ERROR] db 10.0.0.{i} timeout after {i}ms"
+            rows.append({"id": f"e{i}", "timestamp": f"2026-11-12T10:{i % 60:02d}:00Z", "_ts": 1000 + i, "web": "web-01" if i % 2 else "web-02",
+                         "level": "ERROR", "type": "application", "message": msg, "fp": fingerprint.fingerprint(msg)})
+        w = "2026-11-12T09:00:00 [WARN] deprecated api /v1"
+        rows.append({"id": "w1", "timestamp": "2026-11-12T09:00:00Z", "_ts": 900, "web": "web-01", "level": "WARN",
+                     "type": "loginuser", "message": w, "fp": fingerprint.fingerprint(w)})
+        return sorted(rows, key=lambda e: e["_ts"], reverse=True)
+
+    def test_group_entries_and_kinds(self):
+        import logs_service
+        rows = self._fake_logs()
+        g = logs_service.group_entries(rows)
+        self.assertEqual(len(g), 2)
+        self.assertEqual((g[0]["count"], g[0]["machines"], g[0]["level"]), (50, 2, "ERROR"))
+        self.assertEqual(g[0]["sample"]["id"], "e49")                         # บรรทัดล่าสุด
+        self.assertEqual(g[0]["first"], rows[-2]["timestamp"])
+        orig = logs_service._visible
+        logs_service._visible = lambda web, include_acked=False: list(rows)
+        try:
+            st = logs_service.get_log_stats("all")
+            self.assertEqual((st["total"], st["kinds"]["total"]), (51, 2))
+            self.assertEqual(st["kinds"]["levels"], {"ERROR": 1, "WARN": 1})
+            self.assertEqual((logs_service.get_problem_count("all"), logs_service.get_problem_count("all", kinds=True)), (51, 2))
+            self.assertEqual(len(logs_service.get_grouped_logs("all", levels="WARN")), 1)
+        finally:
+            logs_service._visible = orig
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

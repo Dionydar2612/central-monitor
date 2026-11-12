@@ -294,3 +294,10 @@
   - ใช้บรรทัดแรก + 2 บรรทัดถัดไป (ต้น stack trace) · ตัดเวลาต้นบรรทัด · แทน UUID / IP (v4, v6 + พอร์ต) / hex / PID / ตัวเลข ด้วย placeholder · sha1 ย่อ 12 ตัว
 - `logs_service._light_entry` เพิ่ม field `fp` ให้ทุกแถว log (คำนวณตอนอ่าน ไม่แตะข้อมูลใน OpenSearch)
 - ยังไม่มีอะไรเปลี่ยนบนหน้าจอ (ขั้นที่ 2 จะใช้ fp รวมกลุ่ม)
+
+## ลด log ซ้ำ ขั้นที่ 2: รวมกลุ่ม + นับเป็นจำนวนชนิด
+- `logs_service.group_entries()` / `get_grouped_logs()` · API ใหม่ `GET /api/logs/grouped` (ตัวกรองเหมือน `/api/problems`) คืน fp, level (แย่สุด), sample (บรรทัดล่าสุด), count, first, last, machines, webs, types
+- `get_log_stats` เพิ่ม `kinds` (จำนวน fp ไม่ซ้ำ ต่อ level / type / ทั้งหมด) · `get_problem_count` / `get_errors_15m` รับ `kinds=True` · `/api/summary` เพิ่ม `problem_kinds`, `errors_15m_kinds`
+- หน้าแรก ตาราง Logs: สวิตช์ **Group duplicates** (ค่าเริ่มต้นเปิด, จำใน browser `cm.logsGroup`) · ตัวเลขบนปุ่ม level = จำนวนชนิดเมื่อรวมกลุ่ม · แถบสรุปเครื่อง "Problem logs 5120 (3 ชนิด)"
+- ไม่แตะข้อมูลใน OpenSearch และไม่แตะ puller · ปิดสวิตช์ = ตารางเดิมทุกอย่าง
+- หน้า Status & Logs (events.js) ไม่ได้แก้: แท็บ System log เป็นเหตุการณ์ของ sensor ไม่ใช่ log จาก OpenSearch

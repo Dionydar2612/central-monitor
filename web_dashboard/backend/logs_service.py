@@ -19,6 +19,7 @@ log เป็นของเครื่องไหน?
             - รายการ log (+ตัวกรอง level/type)   get_logs
             - ตัวนับ Problem logs / Errors 15m     get_problem_count / get_errors_15m
             - จำนวนต่อ level/type บนปุ่มตัวกรอง    get_log_stats
+            - รวมบรรทัดซ้ำเป็น "1 ปัญหา = 1 แถว"   group_entries / get_grouped_logs (ตาม fp จาก fingerprint.py)
           ผลสแกนเก็บ cache สั้น ๆ (SCAN_TTL วินาที) ไม่ให้ยิง OpenSearch ซ้ำทุกคำขอ
 
 ไม่แสดง INFO
@@ -373,6 +374,60 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
     return [_public(e) for e in output]
 
 
+def _filtered(web, levels=None, types=None, start=None, end=None, include_acked=False):
+    """log ที่แสดงได้ตามตัวกรองเดียวกับ get_logs (ไม่จำกัดจำนวน)"""
+    wanted_levels = _clean_levels(levels)
+    if isinstance(types, str):
+        types = types.split(",")
+    wanted_types = {str(t).strip() for t in (types or []) if str(t).strip()} or None
+    return [e for e in _visible(web, include_acked)
+            if _in_range(e, start, end)
+            and (not wanted_levels or e["level"] in wanted_levels)
+            and (not wanted_types or e["type"] in wanted_types)]
+
+
+def group_entries(entries):
+    """รวมบรรทัดที่ fp เดียวกัน = 1 ปัญหา  entries เรียงใหม่ -> เก่า
+    คืน list ของกลุ่ม ใหม่ -> เก่า (ตามเวลาที่เห็นล่าสุด):
+        fp, level (แย่สุดในกลุ่ม), sample (บรรทัดล่าสุด), count, first, last (เวลา), machines (จำนวนเครื่อง), webs, types"""
+    groups = {}
+    for e in entries:
+        key = e.get("fp") or e.get("id")          # fp ว่าง (ข้อความว่าง) -> แถวเดี่ยว
+        g = groups.get(key)
+        if g is None:
+            groups[key] = g = {"fp": e.get("fp") or "", "level": e["level"], "sample": e, "count": 0,
+                               "_first": e, "_webs": {}, "_types": set()}
+        g["count"] += 1
+        if e["level"] == "ERROR":
+            g["level"] = "ERROR"
+        if e["_ts"] >= g["sample"]["_ts"]:
+            g["sample"] = e
+        if e["_ts"] <= g["_first"]["_ts"]:
+            g["_first"] = e
+        g["_webs"][e["web"]] = g["_webs"].get(e["web"], 0) + 1
+        g["_types"].add(e["type"])
+    out = []
+    for g in groups.values():
+        out.append({"fp": g["fp"], "level": g["level"], "sample": g["sample"], "count": g["count"],
+                    "first": g["_first"]["timestamp"], "last": g["sample"]["timestamp"],
+                    "_first_ts": g["_first"]["_ts"], "_last_ts": g["sample"]["_ts"],
+                    "machines": len(g["_webs"]), "webs": sorted(g["_webs"], key=lambda w: -g["_webs"][w])[:20],
+                    "types": sorted(g["_types"])})
+    out.sort(key=lambda g: g["_last_ts"], reverse=True)
+    return out
+
+
+def get_grouped_logs(web, size=200, levels=None, types=None, start=None, end=None, include_acked=False):
+    """รายการ log แบบรวมกลุ่ม (1 ปัญหา = 1 แถว) ตัวกรองเหมือน get_logs  -> /api/logs/grouped"""
+    groups = group_entries(_filtered(web, levels, types, start, end, include_acked))[:size]
+    out = []
+    for g in groups:
+        row = {k: v for k, v in g.items() if not k.startswith("_")}
+        row["sample"] = _public(g["sample"])
+        out.append(row)
+    return out
+
+
 def get_log_detail(web, log_id):
     """log 1 รายการตาม id พร้อมรายละเอียด ไม่พบ -> None"""
     try:
@@ -463,7 +518,14 @@ def get_log_stats(web, start=None, end=None):
         levels[entry["level"]] += 1
         types[entry["type"]] = types.get(entry["type"], 0) + 1
 
-    return {"levels": levels, "types": types, "total": len(entries), "acknowledged": acked}
+    # จำนวน "ชนิด" (fp ไม่ซ้ำ) ข้างจำนวนบรรทัด: error เดียวพ่นพันบรรทัด = 1 ชนิด
+    kinds = {name: len({e.get("fp") or e.get("id") for e in entries if e["level"] == name}) for name in LEVELS}
+    kind_types = {}
+    for t in types:
+        kind_types[t] = len({e.get("fp") or e.get("id") for e in entries if e["type"] == t})
+
+    return {"levels": levels, "types": types, "total": len(entries), "acknowledged": acked,
+            "kinds": {"levels": kinds, "types": kind_types, "total": len({e.get("fp") or e.get("id") for e in entries})}}
 
 
 # ---------------------------------------------------------------------------
@@ -611,12 +673,15 @@ def get_info_logs(web, lines=500, source=None, start=None, end=None):
     return {"entries": entries, "errors": result.get("errors") or [], "lines": result.get("lines")}
 
 
-def get_problem_count(web):
-    """จำนวน log ระดับ ERROR + WARN (ทั้งหมดที่สแกนได้)  -> ช่อง "Problem logs" """
-    return sum(1 for e in _visible(web) if e["level"] in ("ERROR", "WARN"))
+def get_problem_count(web, kinds=False):
+    """จำนวน log ระดับ ERROR + WARN (ทั้งหมดที่สแกนได้)  -> ช่อง "Problem logs"
+    kinds=True -> นับจำนวนชนิด (fp ไม่ซ้ำ) แทนจำนวนบรรทัด"""
+    rows = [e for e in _visible(web) if e["level"] in ("ERROR", "WARN")]
+    return len({e.get("fp") or e.get("id") for e in rows}) if kinds else len(rows)
 
 
-def get_errors_15m(web):
-    """จำนวน log ระดับ ERROR ที่เวลาของ log อยู่ใน 15 นาทีล่าสุด -> ช่อง "Errors 15m" """
+def get_errors_15m(web, kinds=False):
+    """จำนวน log ระดับ ERROR ที่เวลาของ log อยู่ใน 15 นาทีล่าสุด -> ช่อง "Errors 15m"  kinds=True -> จำนวนชนิด"""
     cutoff = time.time() - 15 * 60
-    return sum(1 for e in _visible(web) if e["level"] == "ERROR" and e["_ts"] >= cutoff)
+    rows = [e for e in _visible(web) if e["level"] == "ERROR" and e["_ts"] >= cutoff]
+    return len({e.get("fp") or e.get("id") for e in rows}) if kinds else len(rows)

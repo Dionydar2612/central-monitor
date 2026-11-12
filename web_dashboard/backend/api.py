@@ -26,7 +26,8 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/metrics?web=        metrics ตอนนี้ + service/process/event
     GET  /api/metrics/history     กราฟย้อนหลัง (web, start, end เป็น unix วินาที)
     GET  /api/problems?web=&size=&level=&type=   รายการ log ของเครื่อง (level = ERROR,WARN,INFO / type = ชนิด log)
-    GET  /api/log-stats?web=      จำนวน log แยกตาม level และ type (ตัวเลขบนปุ่มตัวกรอง)
+    GET  /api/log-stats?web=      จำนวน log แยกตาม level และ type (ตัวเลขบนปุ่มตัวกรอง) + kinds = จำนวนชนิด
+    GET  /api/logs/grouped?web=   log แบบรวมกลุ่ม 1 ปัญหา = 1 แถว (fp, count, first, last, จำนวนเครื่อง)
     GET  /api/log-markers?web=&start=&end=   จุด ERROR/WARN บนเส้นเวลาของกราฟ
          (/api/problems และ /api/log-stats รับ start/end ได้ด้วย = เฉพาะช่วงนั้น)
     GET  /api/problems/detail     log 1 รายการ + สถานะเครื่อง ณ เวลานั้น (web, id)
@@ -91,6 +92,7 @@ from logs_service import (
     get_info_logs,
     get_log_detail,
     get_log_markers,
+    get_grouped_logs,
     get_log_stats,
     get_logs,
     get_problem_count,
@@ -825,6 +827,7 @@ def summary():
         return jsonify({"web": web, "kind": "agent", "status": "online" if st["online"] else "offline",
                         "last_pull": st["last_seen"], "problem_count": get_problem_count(web),
                         "errors_15m": get_errors_15m(web),
+                        "problem_kinds": get_problem_count(web, kinds=True), "errors_15m_kinds": get_errors_15m(web, kinds=True),
                         "current_state": classify_state(current) if st["online"] else "DOWN",
                         "metrics": {k: current.get(k) for k in ("cpu", "memory", "disk", "load_1m")}})
 
@@ -848,6 +851,8 @@ def summary():
         "last_pull": last_pull_time(web),
         "problem_count": get_problem_count(web),
         "errors_15m": get_errors_15m(web),
+        "problem_kinds": get_problem_count(web, kinds=True),      # จำนวนชนิด (1 ปัญหา = 1) ข้างจำนวนบรรทัด
+        "errors_15m_kinds": get_errors_15m(web, kinds=True),
         "current_state": state,
         "metrics": current,
     })
@@ -885,6 +890,20 @@ def problems():
         with_metrics=request.args.get("with_metrics") == "1",
         include_acked=request.args.get("acked") == "1",
     ))
+
+
+@app.get("/api/logs/grouped")
+def logs_grouped():
+    """รายการ log แบบรวมกลุ่ม (1 ปัญหา = 1 แถว ตาม fingerprint) ตัวกรองเหมือน /api/problems
+    แต่ละแถว: fp, level, sample (บรรทัดล่าสุด), count, first, last, machines, webs, types"""
+    web = request.args.get("web", "all")
+    try:
+        size = min(int(request.args.get("size", "200")), 1000)
+    except Exception:
+        size = 200
+    start, end = _range_args()
+    return jsonify(get_grouped_logs(web, size, levels=request.args.get("level", ""), types=request.args.get("type", ""),
+                                    start=start, end=end, include_acked=request.args.get("acked") == "1"))
 
 
 @app.post("/api/logs/ack")

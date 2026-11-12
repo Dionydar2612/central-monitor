@@ -737,6 +737,7 @@ const S = {
     mview: loadView(),                     // มุมมอง WEB status: table / tiles / cards / problems / sunburst (S.view = ของกราฟ System Load ห้ามใช้ร่วม)
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
+    logGroup: loadPref("cm.logsGroup", true),  // Group duplicates: 1 ปัญหา (fingerprint เดียวกัน) = 1 แถว (ค่าเริ่มต้น = เปิด)
     showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
     logWeb: "",                            // ตาราง Logs: เครื่องที่ดู ("" = ทุกเครื่อง ค่าเริ่มต้น) แยกจากเครื่องที่เลือกด้านบน
     showMetrics: loadPref("cm.logsMetrics", true),   // คอลัมน์ Metrics ย่อในตาราง Logs (รายละเอียดเต็มอยู่ในหน้าต่าง log)
@@ -1281,8 +1282,8 @@ function renderMeta() {
     const st = String(s.current_state || "");
     add("State", st, st === "PROBLEM" ? "bad" : st === "WARNING" ? "wr" : "ok");
     add("Last pull", s.last_pull ? formatTimestamp(s.last_pull) + (isStale(s.last_pull) ? " ⚠ stale" : "") : null, s.last_pull && isStale(s.last_pull) ? "bad" : "");
-    add("Problem logs", s.problem_count);
-    add("Errors 15m", s.errors_15m);
+    add("Problem logs", hasValue(s.problem_kinds) && hasValue(s.problem_count) ? `${s.problem_count} (${s.problem_kinds} ชนิด)` : s.problem_count);
+    add("Errors 15m", hasValue(s.errors_15m_kinds) && hasValue(s.errors_15m) ? `${s.errors_15m} (${s.errors_15m_kinds} ชนิด)` : s.errors_15m);
     add("Load", hasValue(m.load_1m) ? [m.load_1m, m.load_5m, m.load_15m].map(v => formatNumber(v)).join(" / ") : (hasValue(m.load) ? formatNumber(m.load) : null));
     add("Uptime", m.uptime);
     add("Net ↓/↑ MB/s", hasValue(m.net_rx) || hasValue(m.net_tx) ? `${formatNumber(m.net_rx)} / ${formatNumber(m.net_tx)}` : null);
@@ -1843,10 +1844,47 @@ function setupServicePicker() {
    ติ๊กเลือกแถว (operator ขึ้นไป) -> "Acknowledge selected" = รับทราบแล้ว: log ถูกซ่อนจากตาราง/ตัวนับ/จุดบนกราฟ
    (ยังอยู่ใน OpenSearch ตามอายุเดิม) ติ๊ก "Show acknowledged" เพื่อดูอีกครั้ง/ยกเลิก */
 function canAckLogs() { return canOperate() && !S.info; }
-function renderLogHead(selectable) {
-    q("#plogHead").innerHTML = `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
+function renderLogHead(selectable, grouped) {
+    q("#plogHead").innerHTML = grouped
+        ? `<tr><th>Last seen</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}${selectable ? `<th class="gack"></th>` : ""}</tr>`
+        : `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
 }
-function logCols(selectable) { return 5 + (selectable ? 1 : 0) + (S.showMetrics ? 1 : 0); }
+function logCols(selectable, grouped) { return 5 + (selectable ? 1 : 0) + (S.showMetrics ? 1 : 0) + (grouped ? 1 : 0); }
+/* รวมกลุ่มอยู่ไหม: เปิดสวิตช์ + ไม่ได้ค้นหา / ไม่ได้ดู INFO */
+function isGrouped() { return S.logGroup && !S.search && !S.info; }
+
+/* ตาราง Logs แบบรวมกลุ่ม: 1 ปัญหา (fingerprint เดียวกัน) = 1 แถว  คลิกแถว = รายละเอียดของบรรทัดล่าสุด */
+function renderGroups(list) {
+    const tb = q("#plog"), filtered = S.lv !== "ALL" || S.lt !== "ALL";
+    const selectable = canAckLogs();
+    S.logRows = []; S.sel.clear();
+    renderLogHead(selectable, true);
+    renderAckBar();
+    q("#ackBar").hidden = true;                                   /* แบบกลุ่ม: ack ที่ปุ่มท้ายแถว */
+    if (!list.length) {
+        tb.innerHTML = `<tr><td colspan="${logCols(selectable, true)}" class="empty">${filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
+        setText("logCnt", ""); renderLogStat(0); return;
+    }
+    const lines = list.reduce((a, g) => a + g.count, 0);
+    setText("logCnt", `${list.length} ชนิด · ${lines} บรรทัด ·`);
+    renderLogStat(list.length);
+    tb.innerHTML = "";
+    list.forEach(g => {
+        const p = g.sample || {}, tr = document.createElement("tr");
+        tr.className = "grow" + (g.ack ? " acked" : "");
+        const span = g.count > 1 ? `ครั้งแรก ${formatTimestamp(g.first)} · ล่าสุด ${formatTimestamp(g.last)}` : "";
+        const webs = g.machines > 1 ? ` <span class="gmore" title="${escapeHtml((g.webs || []).join(", "))}">+${g.machines - 1} เครื่อง</span>` : "";
+        const ackTag = g.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${g.ack.by || "-"}${g.ack.until ? " · ถึง " + new Date(g.ack.until * 1000).toLocaleString("en-GB") : ""}${g.ack.note ? " · " + g.ack.note : ""}`)}">ACK</span>` : "";
+        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td>${escapeHtml((g.types || []).join(", ") || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}${selectable ? `<td class="gack">${groupAckHtml(g)}</td>` : ""}`;
+        tr.addEventListener("click", e => {
+            if (e.target.closest("td.gack")) return;
+            if (p.id) openLogDetail(p);
+        });
+        tb.appendChild(tr);
+    });
+}
+/* ปุ่ม ack ท้ายแถวกลุ่ม (ขั้นที่ 3) */
+function groupAckHtml(g) { return ""; }
 
 /* Metrics ย่อในตาราง: เฉพาะ CPU / Memory / Disk (สีตามเกณฑ์) ที่เหลือดูในหน้าต่างรายละเอียด */
 function compactMetrics(m) {
@@ -1975,6 +2013,7 @@ function setUrlWeb(web) {
 
 function renderProblems(list) {
     if (!S.search && !S.info) S.logRowsAll = list;
+    if (isGrouped() && Array.isArray(list) && (!list.length || list[0].sample)) return renderGroups(list);
     const tb = q("#plog");
     const filtered = S.lv !== "ALL" || S.lt !== "ALL";
     const selectable = canAckLogs();
@@ -2030,7 +2069,7 @@ function logUrl() {
     if (S.showAcked) p.set("acked", "1");
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
-    return `/api/problems?${p}`;
+    return `${S.logGroup && !S.info ? "/api/logs/grouped" : "/api/problems"}?${p}`;
 }
 
 /* ตัวเลขบนปุ่ม level + รายการใน dropdown ชนิด (จาก /api/log-stats) */
@@ -2040,8 +2079,12 @@ function renderLogFilter(stats) {
     const total = stats ? stats.total : null;
     [...q("#lvTabs").children].forEach(b => {
         const k = b.dataset.lv, n = k === "ALL" ? total : lv[k];
+        const kd = stats && stats.kinds ? (k === "ALL" ? stats.kinds.total : (stats.kinds.levels || {})[k]) : null;
         const label = { ALL: "All", ERROR: "Error", WARN: "Warn" }[k];
-        b.innerHTML = hasValue(n) ? `${label}<i>${n}</i>` : label;
+        /* รวมกลุ่ม: ตัวเลขหลัก = จำนวนชนิด (ปัญหา) · ไม่รวม: จำนวนบรรทัด  ชี้ดูอีกค่า */
+        const main = S.logGroup && hasValue(kd) ? kd : n;
+        b.innerHTML = hasValue(main) ? `${label}<i>${main}</i>` : label;
+        b.title = hasValue(kd) && hasValue(n) ? `${kd} ชนิด · ${n} บรรทัด` : "";
         setText("ackedCnt", stats && stats.acknowledged ? `(${stats.acknowledged})` : "");
         b.setAttribute("aria-pressed", !S.info && k === S.lv);
     });
@@ -2447,6 +2490,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (S.search) runSearch(true); else reloadLogs();
     });
     q("#showMetrics").checked = S.showMetrics;
+    q("#logGroup").checked = S.logGroup;
+    q("#logGroup").addEventListener("change", e => {
+        S.logGroup = e.target.checked; savePref("cm.logsGroup", S.logGroup); S.sel.clear();
+        reloadLogs();
+    });
     q("#showMetrics").addEventListener("change", e => {
         S.showMetrics = e.target.checked; savePref("cm.logsMetrics", S.showMetrics);
         renderProblems(S.search ? S.search.rows : S.info ? S.info.rows : S.logRowsAll || []);
