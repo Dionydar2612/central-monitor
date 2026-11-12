@@ -29,6 +29,9 @@ scrape_configs:
   #   label (job / web / environment) มาจากบล็อก `prometheus:` ของแต่ละเครื่อง
   # -------------------------------------------------------------------
   - job_name: web-nodes
+    # ใช้เฉพาะเครื่องที่ตั้ง scheme: https (self-signed / CA ภายใน) - เครื่อง http ไม่ได้รับผล
+    tls_config:
+      insecure_skip_verify: true
     file_sd_configs:
       - files:
           - /etc/prometheus/targets/web-nodes.json

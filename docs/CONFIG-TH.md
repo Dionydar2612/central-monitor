@@ -128,6 +128,14 @@ targets:
 
 ```bash
 # (ก) node_exporter สำหรับกราฟ CPU/RAM/Disk
+# ตรวจสอบ Package/Service
+systemctl list-units --type=service --all --no-pager
+dpkg -l | grep prometheus-node-exporter
+# ตรวจสอบ Service
+sudo systemctl status prometheus-node-exporter --no-pager
+# ตรวจสอบ Port 9100
+sudo ss -lntp | grep ':9100'
+# ถ้าไม่มี
 sudo apt install -y prometheus-node-exporter
 sudo systemctl enable --now prometheus-node-exporter
 sudo ufw allow from <IP_server_กลาง> to any port 9100 proto tcp

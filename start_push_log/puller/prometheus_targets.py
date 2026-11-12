@@ -69,14 +69,23 @@ def generate_targets():
 
         job = prometheus.get("job")
         instance = prometheus.get("instance")
+        scheme = str(prometheus.get("scheme") or "http").lower()
+        metrics_path = prometheus.get("metrics_path") or "/metrics"
 
         # ต้องมีครบทั้ง 3 ค่า ไม่งั้นข้ามเครื่องนั้น (ไม่มี metrics ให้ดู)
         if not name or not job or not instance:
             continue
 
+        labels = {"job": job, "web": name, "environment": environment}
+        # __scheme__ / __metrics_path__ = Prometheus ใช้ตอน scrape (ไม่เก็บเป็น label)
+        if scheme == "https":
+            labels["__scheme__"] = "https"
+        if metrics_path != "/metrics":
+            labels["__metrics_path__"] = metrics_path
+
         targets.append({
             "targets": [instance],
-            "labels": {"job": job, "web": name, "environment": environment},
+            "labels": labels,
         })
 
     _atomic_json(TARGET_FILE, targets)
