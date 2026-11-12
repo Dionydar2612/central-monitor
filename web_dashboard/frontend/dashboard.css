@@ -1401,7 +1401,9 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .mtile b,.mcard .mtop b{color:var(--ink)}
 
 /* Status & Logs > Overview (กราฟรวมแบบ PRTG) */
-.ovbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.ovbar{display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-bottom:8px}
+.ovsel{font-size:13px;color:var(--mut);display:inline-flex;align-items:center;gap:6px}
+.ovsel select{font:13px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 .ovwrap{position:relative;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--bg)}
 .ovchart{width:100%;height:auto;display:block}
 .ovgrid{stroke:var(--line);stroke-width:1}.ovgrid.v{stroke-dasharray:2 4}

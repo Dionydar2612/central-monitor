@@ -249,6 +249,8 @@ class Backend(unittest.TestCase):
         if d["machines"] >= 2:
             self.assertEqual(d["series"]["cpu"][0][1], 55.0)              # ค่าสูงสุด ไม่ใช่ค่าเฉลี่ย
         self.assertGreater(len(d["series"]["alarms"]), 500)
+        for w in d["webs"].values():                                         # แยกรายเครื่อง
+            self.assertEqual(set(w), {"cpu", "memory", "disk", "traffic", "alarms"})
 
     def test_alert_rules(self):
         c = self.c

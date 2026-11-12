@@ -8,7 +8,7 @@
    ===================================================================== */
 "use strict";
 const $ = id => document.getElementById(id);
-const E = { ov: { range: "2d", off: new Set(), data: {}, at: {} }, tab: "overview", role: "viewer", data: null, find: "", rows: [], hist: null };
+const E = { ov: { range: "2d", mode: "max", metric: "cpu", off: new Set(), data: {}, at: {} }, tab: "overview", role: "viewer", data: null, find: "", rows: [], hist: null };
 
 function esc(v) {
     return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -216,6 +216,9 @@ const OV_SERIES = [
     { key: "traffic", name: "Traffic รวม", unit: "MB/s", color: "#e85aad", axis: "t", hint: "รับ + ส่ง ทุกเครื่อง · เส้นแสดงเป็น % ของค่าสูงสุดในช่วง" },
 ];
 const OV_RANGES = [["2d", "2 days"], ["30d", "30 days"], ["365d", "365 days"]];
+const OV_METRICS = [["cpu", "CPU", "%"], ["memory", "Memory", "%"], ["disk", "Disk", "%"], ["traffic", "Traffic", "MB/s"], ["alarms", "Alarms", "#"]];
+const OV_PALETTE = ["#1f6feb", "#e5484d", "#2da44e", "#bf8700", "#8250df", "#e85aad", "#0aa5b8", "#fb8500", "#6e7781", "#a2c523", "#d63384", "#3d5afe"];
+const ovColor = i => OV_PALETTE[i % OV_PALETTE.length];
 
 async function ovLoad(range) {
     const c = E.ov.data[range];
@@ -231,80 +234,103 @@ function ovFmtTime(t, range) {
         : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: range === "365d" ? "2-digit" : undefined });
 }
 
-function ovChart(d) {
-    const W = 1100, H = 320, L = 44, R = 44, T = 14, B = 40, iw = W - L - R, ih = H - T - B;
+/* เส้นที่จะวาดตามโหมด: max = ทุกเครื่องค่าสูงสุด · web:<ชื่อ> = เครื่องเดียว · compare = 1 metric หลายเครื่อง */
+function ovLines(d) {
+    const mode = E.ov.mode;
+    if (mode === "compare") {
+        const m = E.ov.metric, meta = OV_METRICS.find(x => x[0] === m);
+        return Object.keys(d.webs || {}).sort().map((w, i) => ({ key: w, name: w, unit: meta[2], color: ovColor(i),
+            axis: m === "alarms" || m === "traffic" ? "r" : "l", step: m === "alarms", pts: (d.webs[w] || {})[m] || [] }));
+    }
+    const src = mode.startsWith("web:") ? ((d.webs || {})[mode.slice(4)] || {}) : (d.series || {});
+    const one = mode.startsWith("web:");
+    return OV_SERIES.map(sr => ({ ...sr, name: one ? sr.name.replace(" สูงสุด", "").replace(" รวม", "") : sr.name,
+        axis: sr.key === "traffic" ? "t" : sr.axis, pts: src[sr.key] || [] }));
+}
+
+function ovChart(d, lines) {
+    const W = 1100, H = 320, L = 44, R = 52, T = 14, B = 40, iw = W - L - R, ih = H - T - B;
     const x = t => L + (t - d.start) / Math.max(1, d.end - d.start) * iw;
-    const S = d.series || {};
-    const amax = Math.max(4, ...(S.alarms || []).map(p => p[1]));
-    const tmax = Math.max(0.001, ...(S.traffic || []).map(p => p[1]));
-    const y = (v, axis) => T + ih - (axis === "r" ? v / amax : axis === "t" ? v / tmax : v / 100) * ih;
+    const vis = lines.filter(l => !E.ov.off.has(l.key));
+    const rvals = vis.filter(l => l.axis === "r").flatMap(l => l.pts.map(p => p[1]));
+    const rUnit = (vis.find(l => l.axis === "r") || {}).unit || "#";
+    let rmax = Math.max(rUnit === "#" ? 4 : 0.001, ...rvals);
+    if (rUnit === "#") rmax = Math.ceil(rmax);
+    const tmax = {};
+    vis.filter(l => l.axis === "t").forEach(l => { tmax[l.key] = Math.max(0.001, ...l.pts.map(p => p[1])); });
+    const y = (v, l) => T + ih - (l.axis === "r" ? v / rmax : l.axis === "t" ? v / tmax[l.key] : Math.min(v, 100) / 100) * ih;
+    const hasL = vis.some(l => l.axis === "l" || l.axis === "t"), hasR = vis.some(l => l.axis === "r");
     let g = "";
     for (let i = 0; i <= 4; i++) {
-        const yy = T + ih * i / 4;
-        g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="ovgrid"/><text x="${L - 6}" y="${yy + 4}" class="ovax" text-anchor="end">${100 - i * 25}</text>`
-           + `<text x="${W - R + 6}" y="${yy + 4}" class="ovax">${Math.round(amax * (4 - i) / 4)}</text>`;
+        const yy = T + ih * i / 4, rv = rmax * (4 - i) / 4;
+        g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="ovgrid"/>`
+           + (hasL ? `<text x="${L - 6}" y="${yy + 4}" class="ovax" text-anchor="end">${100 - i * 25}</text>` : "")
+           + (hasR ? `<text x="${W - R + 6}" y="${yy + 4}" class="ovax">${rUnit === "#" ? Math.round(rv) : rv < 10 ? rv.toFixed(2) : Math.round(rv)}</text>` : "");
     }
-    const ticks = 8;
-    for (let i = 0; i <= ticks; i++) {
-        const t = d.start + (d.end - d.start) * i / ticks;
+    for (let i = 0; i <= 8; i++) {
+        const t = d.start + (d.end - d.start) * i / 8;
         g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${T + ih}" class="ovgrid v"/><text x="${x(t)}" y="${H - 18}" class="ovax" text-anchor="middle">${esc(ovFmtTime(t, d.range))}</text>`;
     }
-    g += `<text x="${L - 6}" y="${T - 2}" class="ovax" text-anchor="end">%</text><text x="${W - R + 6}" y="${T - 2}" class="ovax">#</text>`;
-    let lines = "";
-    OV_SERIES.forEach(sr => {
-        if (E.ov.off.has(sr.key)) return;
-        const pts = S[sr.key] || [];
-        if (!pts.length) return;
-        let path = "";
-        pts.forEach((p, i) => {
-            const px = x(p[0]).toFixed(1), py = y(p[1], sr.axis).toFixed(1);
-            if (!i) path += `M${px},${py}`;
-            else if (sr.step) path += `H${px}V${py}`;
-            else path += `L${px},${py}`;
+    if (hasL) g += `<text x="${L - 6}" y="${T - 2}" class="ovax" text-anchor="end">%</text>`;
+    if (hasR) g += `<text x="${W - R + 6}" y="${T - 2}" class="ovax">${esc(rUnit)}</text>`;
+    const gap = (d.step || 300) * 2.5;                 /* ไม่มีข้อมูลนานเกินไป = ไม่ลากเส้นต่อ */
+    let paths = "";
+    vis.forEach(l => {
+        let path = "", prev = null;
+        l.pts.forEach(p => {
+            const px = x(p[0]).toFixed(1), py = y(p[1], l).toFixed(1);
+            if (!prev || p[0] - prev[0] > gap) path += `M${px},${py}`;
+            else path += l.step ? `H${px}V${py}` : `L${px},${py}`;
+            prev = p;
         });
-        lines += `<path d="${path}" fill="none" stroke="${sr.color}" stroke-width="${sr.key === "alarms" ? 2 : 1.4}" stroke-linejoin="round"/>`;
+        if (path) paths += `<path d="${path}" fill="none" stroke="${l.color}" stroke-width="${l.key === "alarms" ? 2 : 1.5}" stroke-linejoin="round"/>`;
     });
-    return `<svg viewBox="0 0 ${W} ${H}" class="ovchart" id="ovSvg" role="img" aria-label="Overview chart">${g}${lines}<line id="ovCross" class="ovcross" x1="0" x2="0" y1="${T}" y2="${T + ih}" visibility="hidden"/><rect x="${L}" y="${T}" width="${iw}" height="${ih}" fill="transparent" id="ovHit"/></svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" class="ovchart" id="ovSvg" role="img" aria-label="Overview chart">${g}${paths}<line id="ovCross" class="ovcross" x1="0" x2="0" y1="${T}" y2="${T + ih}" visibility="hidden"/><rect x="${L}" y="${T}" width="${iw}" height="${ih}" fill="transparent" id="ovHit"/></svg>`;
 }
 
-function ovNearest(pts, t) {
+function ovNearest(pts, t, step) {
     let best = null, bd = Infinity;
     for (const p of pts || []) { const dd = Math.abs(p[0] - t); if (dd < bd) { bd = dd; best = p; } }
-    return best;
+    return best && bd <= step * 1.5 ? best : null;
 }
 
-function ovPeaks(d) {
-    return OV_SERIES.map(sr => {
-        const pts = (d.series || {})[sr.key] || [];
-        if (!pts.length) return `<div class="ovpk"><i style="background:${sr.color}"></i><span>${esc(sr.name)}</span><b>-</b></div>`;
-        const top = pts.reduce((a, b) => b[1] > a[1] ? b : a);
-        return `<div class="ovpk"><i style="background:${sr.color}"></i><span>${esc(sr.name.replace(" สูงสุด", ""))} สูงสุด</span><b>${top[1]} ${sr.unit}</b><small>${esc(ovFmtTime(top[0], "2d"))}${top[2] ? " · " + esc(top[2]) : ""}</small></div>`;
+function ovPeaks(lines) {
+    return lines.map(l => {
+        if (!l.pts.length) return `<div class="ovpk"><i style="background:${l.color}"></i><span>${esc(l.name)}</span><b>-</b></div>`;
+        const top = l.pts.reduce((a, b) => b[1] > a[1] ? b : a);
+        return `<div class="ovpk"><i style="background:${l.color}"></i><span>${esc(l.name.replace(" สูงสุด", ""))} สูงสุด</span><b>${top[1]} ${l.unit}</b><small>${esc(ovFmtTime(top[0], "2d"))}${top[2] ? " · " + esc(top[2]) : ""}</small></div>`;
     }).join("");
 }
 
 async function showOverview() {
     $("evMeta").textContent = "";
     const r = E.ov.range;
-    const head = `<div class="ovbar"><div class="tabs" id="ovRange">${OV_RANGES.map(([k, l]) => `<button type="button" data-ovr="${k}" aria-pressed="${k === r}">${l}</button>`).join("")}</div></div>`;
-    if (!E.ov.data[r]) $("evBody").innerHTML = head + `<div class="empty">Loading...</div>`;
+    if (!E.ov.data[r]) $("evBody").innerHTML = `<div class="empty">Loading...</div>`;
     const d = await ovLoad(r);
-    const legend = `<div class="ovlegend">${OV_SERIES.map(sr => `<label title="${esc(sr.hint)}"><input type="checkbox" data-ovs="${sr.key}"${E.ov.off.has(sr.key) ? "" : " checked"}><i style="background:${sr.color}"></i>${esc(sr.name)} <small>(${sr.key === "traffic" ? "% of peak" : sr.unit})</small></label>`).join("")}<span class="ovall"><a href="#" data-ovall="1">Show all</a> <a href="#" data-ovall="0">Hide all</a></span></div>`;
-    $("evBody").innerHTML = head + `<div class="ovwrap">${ovChart(d)}<div class="ovtip" id="ovTip" hidden></div></div>` + legend
-        + `<div class="ovpeaks">${ovPeaks(d)}</div><div class="evmeta">${d.machines} เครื่อง · ค่าทุก ${d.step >= 3600 ? d.step / 3600 + " ชม." : d.step / 60 + " นาที"} · CPU / Memory / Disk = ค่าสูงสุดในบรรดาเครื่องทั้งหมด (ไม่ใช่ค่าเฉลี่ย) ชี้กราฟเพื่อดูว่าเป็นเครื่องไหน</div>`;
+    const webs = Object.keys(d.webs || {}).sort();
+    if (E.ov.mode.startsWith("web:") && !webs.includes(E.ov.mode.slice(4))) E.ov.mode = "max";
+    const lines = ovLines(d);
+    const sel = `<select id="ovMode" aria-label="แสดง"><option value="max">ทุกเครื่อง · ค่าสูงสุด</option><option value="compare">เปรียบเทียบทุกเครื่อง</option><optgroup label="เครื่องเดียว">${webs.map(w => `<option value="web:${esc(w)}">${esc(w)}</option>`).join("")}</optgroup></select>`;
+    const metric = E.ov.mode === "compare" ? `<div class="tabs" id="ovMetric">${OV_METRICS.map(([k, l]) => `<button type="button" data-ovm="${k}" aria-pressed="${k === E.ov.metric}">${l}</button>`).join("")}</div>` : "";
+    const head = `<div class="ovbar"><div class="tabs" id="ovRange">${OV_RANGES.map(([k, l]) => `<button type="button" data-ovr="${k}" aria-pressed="${k === r}">${l}</button>`).join("")}</div>${metric}<label class="ovsel">แสดง ${sel}</label></div>`;
+    const legend = `<div class="ovlegend">${lines.map(l => `<label${l.hint ? ` title="${esc(l.hint)}"` : ""}><input type="checkbox" data-ovs="${esc(l.key)}"${E.ov.off.has(l.key) ? "" : " checked"}><i style="background:${l.color}"></i>${esc(l.name)} <small>(${l.axis === "t" ? "% of peak" : l.unit})</small></label>`).join("")}<span class="ovall"><a href="#" data-ovall="1">Show all</a> <a href="#" data-ovall="0">Hide all</a></span></div>`;
+    const note = E.ov.mode === "max" ? "CPU / Memory / Disk = ค่าสูงสุดในบรรดาเครื่องทั้งหมด (ไม่ใช่ค่าเฉลี่ย) · ชี้กราฟเพื่อดูว่าเป็นเครื่องไหน · เลือก \"เปรียบเทียบทุกเครื่อง\" เพื่อดูเส้นแยกรายเครื่อง"
+        : E.ov.mode === "compare" ? "1 เส้น = 1 เครื่อง · ติ๊กเพื่อซ่อน/แสดงเครื่อง · ชี้กราฟเพื่อดูค่าทุกเครื่อง ณ เวลานั้น (เรียงมากไปน้อย)"
+        : `เฉพาะเครื่อง ${esc(E.ov.mode.slice(4))}`;
+    $("evBody").innerHTML = head + `<div class="ovwrap">${ovChart(d, lines)}<div class="ovtip" id="ovTip" hidden></div></div>` + legend
+        + `<div class="ovpeaks">${ovPeaks(lines.filter(l => !E.ov.off.has(l.key)))}</div><div class="evmeta">${d.machines} เครื่อง · ค่าทุก ${d.step >= 3600 ? d.step / 3600 + " ชม." : d.step / 60 + " นาที"} · ${note}</div>`;
+    $("ovMode").value = E.ov.mode;
     const svg = $("ovSvg"), tip = $("ovTip"), cross = $("ovCross");
-    const box = () => svg.getBoundingClientRect();
     $("ovHit").addEventListener("mousemove", e => {
-        const b = box(), vx = (e.clientX - b.left) / b.width * 1100;
-        const t = d.start + (vx - 44) / (1100 - 88) * (d.end - d.start);
+        const b = svg.getBoundingClientRect(), vx = (e.clientX - b.left) / b.width * 1100;
+        const t = d.start + (vx - 44) / (1100 - 96) * (d.end - d.start);
         cross.setAttribute("x1", vx); cross.setAttribute("x2", vx); cross.setAttribute("visibility", "visible");
-        const rows = OV_SERIES.filter(sr => !E.ov.off.has(sr.key)).map(sr => {
-            const p = ovNearest((d.series || {})[sr.key], t);
-            return p ? `<div><i style="background:${sr.color}"></i>${esc(sr.name)}: <b>${p[1]} ${sr.unit}</b>${p[2] ? ` <small>${esc(p[2])}</small>` : ""}</div>` : "";
-        }).join("");
-        tip.innerHTML = `<div class="ovtt">${esc(new Date(t * 1000).toLocaleString("en-GB"))}</div>${rows}`;
+        let rows = lines.filter(l => !E.ov.off.has(l.key)).map(l => ({ l, p: ovNearest(l.pts, t, d.step) })).filter(x => x.p);
+        if (E.ov.mode === "compare") rows.sort((a, c) => c.p[1] - a.p[1]);
+        tip.innerHTML = `<div class="ovtt">${esc(new Date(t * 1000).toLocaleString("en-GB"))}</div>` + (rows.length ? rows.map(({ l, p }) =>
+            `<div><i style="background:${l.color}"></i>${esc(l.name)}: <b>${p[1]} ${l.unit}</b>${p[2] ? ` <small>${esc(p[2])}</small>` : ""}</div>`).join("") : `<div class="st-mut">ไม่มีข้อมูล</div>`);
         tip.hidden = false;
-        const px = e.clientX - b.left;
-        tip.style.left = Math.min(px + 14, b.width - 230) + "px"; tip.style.top = "10px";
+        tip.style.left = Math.min(e.clientX - b.left + 14, b.width - 250) + "px"; tip.style.top = "10px";
     });
     $("ovHit").addEventListener("mouseleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
 }
@@ -347,13 +373,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("evFind").addEventListener("input", e => { E.find = e.target.value.trim().toLowerCase(); render(); });
     $("evHours").addEventListener("change", render);
     $("evBody").addEventListener("change", e => {
+        if (e.target.id === "ovMode") { E.ov.mode = e.target.value; E.ov.off = new Set(); render(); return; }
         const c = e.target.closest("[data-ovs]"); if (!c) return;
         c.checked ? E.ov.off.delete(c.dataset.ovs) : E.ov.off.add(c.dataset.ovs); render();
     });
     $("evBody").addEventListener("click", e => {
         const ovr = e.target.closest("[data-ovr]"), all = e.target.closest("[data-ovall]");
         if (ovr) { E.ov.range = ovr.dataset.ovr; render(); return; }
-        if (all) { e.preventDefault(); E.ov.off = all.dataset.ovall === "1" ? new Set() : new Set(OV_SERIES.map(x => x.key)); render(); return; }
+        const ovm = e.target.closest("[data-ovm]");
+        if (ovm) { E.ov.metric = ovm.dataset.ovm; render(); return; }
+        if (all) { e.preventDefault(); E.ov.off = all.dataset.ovall === "1" ? new Set() : new Set(ovLines(E.ov.data[E.ov.range] || {}).map(x => x.key)); render(); return; }
         const a = e.target.closest("[data-ack]"), u = e.target.closest("[data-unack]"), h = e.target.closest("[data-hist]");
         if (a) ack(E.rows[+a.dataset.ack]);
         else if (u) unack(E.rows[+u.dataset.unack]);

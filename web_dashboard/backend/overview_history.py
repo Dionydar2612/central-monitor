@@ -9,6 +9,7 @@ overview_history.py - กราฟภาพรวมทุกเครื่อ�
     memory   Memory สูงสุด (%) + ชื่อเครื่อง
     disk     Disk สูงสุด (%) + ชื่อเครื่อง
     traffic  Network รวมทุกเครื่อง (รับ + ส่ง, MB/s)
+webs     ค่าเดียวกันแยกรายเครื่อง {web: {cpu, memory, disk, traffic, alarms}} (เลือกเครื่อง / เปรียบเทียบทุกเครื่อง)
 ใช้โดย: api.py -> GET /api/overview/history?range=2d
 """
 
@@ -28,20 +29,25 @@ def _bucket(t, step):
     return int(float(t) // step * step)
 
 
-def _alarms(start, end, step):
-    """จำนวนปัญหาที่เปิดอยู่ ณ แต่ละช่วงเวลา"""
+def _spans():
+    """[(web, เริ่ม, จบ)] ของปัญหาทั้งหมด (จบแล้ว + ที่ยังเปิดอยู่)"""
     now = time.time()
     spans = []
     for i in sensors_service._load_incidents():
-        if i.get("ended_by") == "paused":
+        if i.get("ended_by") == "paused" or not i.get("start"):
             continue
-        s, e = i.get("start"), i.get("end")
-        if s:
-            spans.append((float(s), float(e or now)))
+        spans.append((i.get("web"), float(i["start"]), float(i.get("end") or now)))
     for s in sensors_service.load_sensors().get("sensors", []):
         inc = s.get("incident")
         if inc and inc.get("start"):
-            spans.append((float(inc["start"]), now))
+            spans.append((s.get("web"), float(inc["start"]), now))
+    return spans
+
+
+def _alarms(start, end, step, spans=None, web=None):
+    """จำนวนปัญหาที่เปิดอยู่ ณ แต่ละช่วงเวลา (web = เฉพาะเครื่องนั้น)"""
+    spans = _spans() if spans is None else spans
+    spans = [(a, b) for w, a, b in spans if web is None or w == web]
     out = []
     t = _bucket(start, step)
     while t <= end:
@@ -82,10 +88,24 @@ def get_history(range_key="2d"):
             for t, v in series.get(k) or []:
                 b = _bucket(t, step)
                 traffic[b] = traffic.get(b, 0.0) + v
+    spans = _spans()
+    by_web = {}
+    for web, series in per_web:                      # แยกรายเครื่อง (ใช้ตอนเลือกเครื่อง / เปรียบเทียบทุกเครื่อง)
+        tr = {}
+        for k in ("net_rx", "net_tx"):
+            for t, v in series.get(k) or []:
+                b = _bucket(t, step)
+                tr[b] = tr.get(b, 0.0) + v
+        by_web[web] = {
+            **{k: [[_bucket(t, step), v] for t, v in series.get(k) or []] for k in ("cpu", "memory", "disk")},
+            "traffic": [[b, round(v, 3)] for b, v in sorted(tr.items())],
+            "alarms": _alarms(start, end, step, spans, web),
+        }
     data = {
         "range": range_key, "step": step, "start": start, "end": end, "machines": len(webs),
+        "webs": by_web,
         "series": {
-            "alarms": _alarms(start, end, step),
+            "alarms": _alarms(start, end, step, spans),
             **{k: [[b, round(v, 2), w] for b, (v, w) in sorted(peaks[k].items())] for k in peaks},
             "traffic": [[b, round(v, 3)] for b, v in sorted(traffic.items())],
         },
