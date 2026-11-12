@@ -23,7 +23,7 @@
 <!-- แถบหัว: ชื่อระบบ, ตัวเลือกช่วงเวลา (#qb #lbl #sd #dates #menu #cal ควบคุมโดย setupPicker),
      ปุ่ม Refresh (#rf), สถานะระบบ (#systemDot #systemStatus), ผู้ใช้ + Logout -->
 <header>
-<div><b>Central Monitor</b><div style="color:var(--mut);font-size:12px;margin-top:2px">WEB infrastructure monitoring &amp; problem correlation</div></div>
+<div><b>Central Monitor</b></div>
 <div class="tp">
 <div class="tpbox">
 <button id="qb" aria-label="Quick select time range" aria-haspopup="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.5v3M11 1.5v3M5 9h1M8 9h1M11 9h1M5 11.5h1M8 11.5h1"/></svg><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg></button>
@@ -47,7 +47,7 @@
        #mach    = ต้นไม้กลุ่ม: หัวกลุ่ม (คลิกยุบ/ขยาย) + ตารางเครื่อง (คลิกแถว = เลือกเครื่อง) + ตาราง web checks
      แถบข้อมูลสรุปของเครื่องที่เลือก (#meta: State, Last pull, Load, Uptime, ... จาก /api/summary + /api/metrics) -->
 <section class="card mach">
-<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px"><span id="curWrap" hidden>Showing <b id="cur" style="color:var(--ink)">-</b> · <button type="button" class="linkbtn" id="closeDetail">Close details</button> · </span><span id="curHint">click a machine to see its details</span> · auto refresh 10 seconds</span></div>
+<div class="top"><h2>WEB status</h2><span style="color:var(--mut);font-size:13px"><span id="curWrap" hidden>Showing <b id="cur" style="color:var(--ink)">-</b> · <button type="button" class="linkbtn" id="closeDetail">Close details</button> · </span><span id="curHint"></span>auto refresh 10 s</span></div>
 <div class="ovtiles" id="ovTiles"></div>
 <div class="ovtools"><div class="vseg" id="ovView" role="group" aria-label="มุมมอง"><button type="button" data-view="table" title="ตารางตามกลุ่ม">☰ ตาราง</button><button type="button" data-view="tiles" title="ไทล์สีย่อ เห็นได้หลายเครื่อง">▦ ไทล์</button><button type="button" data-view="cards" title="การ์ดพร้อมแถบ CPU / Memory / Disk">▤ การ์ด</button><button type="button" data-view="problems" title="เครื่องที่มีปัญหาขึ้นก่อน">⚠ ปัญหาก่อน</button><button type="button" data-view="sunburst" title="วงกลมซ้อน: กลุ่ม → เครื่อง → sensor">◔ Sunburst</button></div><input type="search" id="ovFind" placeholder="Filter by name, IP, group or URL..." aria-label="Filter machines and checks" autocomplete="off"><select id="ovOs" aria-label="Filter by OS"><option value="">All OS</option><option value="linux">Linux</option><option value="windows">Windows</option></select><select id="ovState" aria-label="Filter by status"><option value="">All status</option><option value="HEALTHY">OK</option><option value="WARNING">Warning</option><option value="PROBLEM">Critical</option><option value="DOWN">Down</option><option value="PAUSED">Paused</option></select><button type="button" class="svbtn" id="ovExpand">Expand all</button><button type="button" class="svbtn" id="ovCollapse">Collapse all</button></div>
 <div class="gtree" id="mach"></div>
@@ -87,7 +87,6 @@
 <div class="chtip" id="chTip" hidden></div>
 </div>
 <div class="chnote" id="chNote"></div>
-<div class="chhint">Hover for values · drag to zoom · click a dot to open the log</div>
 </section>
 </div>
 </div>
@@ -134,7 +133,7 @@
 </div>
 
 <!-- ตาราง Logs (#plog): log ของเครื่องที่เลือก คลิกแถวเพื่อเปิดหน้าต่างรายละเอียด (showProblemModal) -->
-<section class="card svc" style="margin-top:16px"><div class="top"><h2>Logs</h2><span style="color:var(--mut);font-size:13px"><span id="logCnt"></span> ERROR / WARN logs with metrics at the time · click a row for full details</span></div>
+<section class="card svc" style="margin-top:16px"><div class="top"><h2>Logs</h2><span style="color:var(--mut);font-size:13px"><span id="logCnt"></span> ERROR / WARN</span></div>
 <!-- ตัวกรอง log: ระดับ (#lvTabs) + ชนิด (#ltSel) ตัวเลขบนปุ่มมาจาก /api/log-stats (#lvStat = สรุปว่าแสดงอะไรอยู่) -->
 <!-- ค้นหาข้อความใน log (#logQ) ทั้งที่เก็บไว้ใน OpenSearch: คำ / "วลี" / a | b / -ไม่เอา / คำ*  ขอบเขต = เครื่องนี้ หรือทุกเครื่อง
      ใช้ช่วงเวลาด้านบน + ตัวกรอง Level / Type ด้วย -->

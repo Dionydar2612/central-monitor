@@ -285,3 +285,5 @@
   - แท็บกราฟ: เส้นประ Warning / Error, จุด Min / Max, ตารางค่าย้อนหลัง (แถวสรุป ต่ำสุด / สูงสุด — ไม่มีค่าเฉลี่ย)
   - API: `GET /api/sensors/detail?id=` · `/api/sensors/history` รองรับ range live / 2d / 365d เพิ่ม + min / max / last
 - กราฟมีเฉพาะ sensor CPU / Memory / Disk / Availability และ sensor ที่มี PromQL (latency, packet loss, กฎที่สร้างเอง) — ชนิดอื่นแท็บกราฟจะกดไม่ได้
+- จัดส่วน Sensors ของเครื่องใหม่: หัว "Sensors" + จำนวนตามสถานะ + Uptime / Downtime / Down ล่าสุด / ตรวจล่าสุด · เกจขนาดเท่ากัน (เฉพาะค่าตัวเลข) · รายการแยกหมวด ประสิทธิภาพ / การเชื่อมต่อ-เครือข่าย / Service-โปรแกรม / Bottleneck / อื่น ๆ (พับได้ หมวดที่ปกติทั้งหมดพับไว้ จำการพับระหว่างรีเฟรช) · คลิกแถวหรือเกจ = หน้า sensor
+- เอาข้อความอธิบายใต้ชื่อหน้า (หน้าแรก / Status & Logs / Apps & Web / Settings) และข้อความแนะนำวิธีคลิกออก

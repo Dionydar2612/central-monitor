@@ -1906,43 +1906,55 @@ function devTime(v) {
     const n = typeof v === "number" ? (v < 1e12 ? v * 1000 : v) : Date.parse(v);
     return Number.isFinite(n) ? formatTimestamp(new Date(n).toISOString()) : "-";
 }
+const DEV_CAT = [
+    ["perf", "ประสิทธิภาพ", ["cpu", "memory", "mem_available", "disk", "disk_latency"]],
+    ["net", "การเชื่อมต่อ / เครือข่าย", ["availability", "net_latency", "packet_loss", "log_pull"]],
+    ["svc", "Service / โปรแกรม", ["service", "rule", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker"]],
+    ["bn", "Bottleneck", ["bottleneck"]],
+];
+function devCat(x) {
+    const k = String(x.kind || "");
+    const c = DEV_CAT.find(c => c[2].includes(k) || (k.startsWith("rule") && c[0] === "svc"));
+    return c ? c[0] : "other";
+}
 function renderDevice() {
     const box = q("#devPanel"), d = S.dev;
     if (!box || !d || d.web !== S.web) return;
-    const w = (S.webs || []).find(x => x.web === S.web) || {};
-    const list = d.sensors.slice().sort((a, b) => (SB_RANK[b.status] || 0) - (SB_RANK[a.status] || 0) || String(a.name).localeCompare(String(b.name)));
+    S.devOpen = S.devOpen || {};
+    const rank = x => (SB_RANK[x.status] || 0);
+    const sorted = d.sensors.slice().sort((a, b) => rank(b) - rank(a) || String(a.name).localeCompare(String(b.name)));
     const cnt = k => d.sensors.filter(x => x.status === k).length;
-    const sl = (k) => `/sensor?id=${encodeURIComponent(k)}`;
-    const big = ["cpu", "memory"].map(k => d.sensors.find(x => x.kind === k)).concat([d.sensors.filter(x => x.kind === "disk" && x.value != null).sort((a, b) => b.value - a.value)[0]]).filter(Boolean);
-    const small = d.sensors.filter(x => !big.includes(x) && x.value !== null && x.value !== undefined && Number.isFinite(Number(x.value)) && x.unit && x.kind !== "availability");
-    const gcard = (x, size) => {
-        const [ic, , cls] = DEV_ST[x.status] || DEV_ST.unknown;
-        return `<a class="dg ${size} s-${cls}" href="${sl(x.id)}" title="${escapeHtml(x.message || "")}"><span class="dgbar"><i>${ic}</i></span><span class="dgtx"><b>${escapeHtml(x.name)}</b><small>${escapeHtml((DEV_ST[x.status] || DEV_ST.unknown)[1])}</small><em>${escapeHtml(CMGauge.fmt(x.value, x.unit))}</em></span>${CMGauge.svg(x, { size: size === "big" ? "lg" : "sm" })}</a>`;
-    };
+    const sl = id => `/sensor?id=${encodeURIComponent(id)}`;
+    const cls = x => (DEV_ST[x.status] || DEV_ST.unknown)[2];
+    const num = x => x.value !== null && x.value !== undefined && Number.isFinite(Number(x.value));
     const av = d.av;
-    const cell = (k, v) => `<div><small>${k}:</small><b>${v}</b></div>`;
-    const [, stl, stc] = DEV_ST[{ HEALTHY: "ok", WARNING: "warning", PROBLEM: "error", DOWN: "down", PAUSED: "paused" }[w.state] || "unknown"];
+    /* แถวบน: ชื่อ + จำนวนตามสถานะ + ตัวเลขสั้น ๆ */
+    const chip = (k, ic, n) => n ? `<span class="dchip ${k}">${ic} ${n}</span>` : "";
+    const stat = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
+    const head = `<div class="dhead"><h2>Sensors</h2><div class="dchips">${chip("ok", "✓", cnt("ok"))}${chip("wr", "!", cnt("warning"))}${chip("cr", "✕", cnt("error") + cnt("down"))}${chip("ps", "II", cnt("paused"))}${chip("na", "?", cnt("unknown"))}</div>
+<div class="dstats">${stat("Uptime 30 วัน", av ? av.uptime_pct.toFixed(2) + "%" : "-")}${stat("Downtime", av ? av.downtime_pct.toFixed(2) + "%" : "-")}${stat("Down ล่าสุด", av && av.last_down ? escapeHtml(devTime(av.last_down)) : "ไม่เคย")}${stat("ตรวจล่าสุด", d.updated ? escapeHtml(devTime(d.updated)) : "-")}</div></div>`;
+    /* เกจ: เฉพาะค่าตัวเลข (ประสิทธิภาพ + เครือข่าย) ขนาดเท่ากันทุกใบ */
+    const gauges = sorted.filter(x => num(x) && x.unit && ["perf", "net"].includes(devCat(x)))
+        .sort((a, b) => ["cpu", "memory", "disk"].indexOf(b.kind) - ["cpu", "memory", "disk"].indexOf(a.kind));
+    const gk = ["cpu", "memory", "mem_available", "disk", "disk_latency", "net_latency", "packet_loss"];
+    gauges.sort((a, b) => (gk.indexOf(a.kind) + 1 || 99) - (gk.indexOf(b.kind) + 1 || 99) || String(a.name).localeCompare(String(b.name)));
+    const tiles = gauges.length ? `<div class="dtiles">${gauges.map(x => `<a class="dtile ${cls(x)}" href="${sl(x.id)}" title="${escapeHtml(x.message || "")}">${CMGauge.svg(x, { size: "sm" })}<span><small>${escapeHtml(x.name)}</small><b>${escapeHtml(CMGauge.fmt(x.value, x.unit))}</b></span></a>`).join("")}</div>` : "";
+    /* รายการแยกหมวด (พับได้ จำไว้ระหว่างรีเฟรช) */
     const bar = x => {
-        const n = Number(x.value);
-        if (!Number.isFinite(n) || x.value === null) return `<span class="st-mut">-</span>`;
-        const max = x.unit === "%" ? 100 : Math.max(Number(x.error) * 1.25 || 0, n, 1), f = Math.min(1, n / max);
-        return `<span class="dbar"><i style="width:${(f * 100).toFixed(0)}%" class="${(DEV_ST[x.status] || DEV_ST.unknown)[2]}"></i></span><span class="dbv">${escapeHtml(CMGauge.fmt(n, x.unit))}</span>`;
+        if (!num(x)) return "";
+        const n = Number(x.value), max = x.unit === "%" ? 100 : Math.max(Number(x.error) * 1.25 || 0, n, 1);
+        return `<span class="dbar"><i style="width:${(Math.min(1, n / max) * 100).toFixed(0)}%" class="${cls(x)}"></i></span><span class="dbv">${escapeHtml(CMGauge.fmt(n, x.unit))}</span>`;
     };
-    box.innerHTML = `<div class="devtitle"><h2>Sensors · ${escapeHtml(S.web)}</h2><small class="st-mut">ภาพรวม sensor แบบ PRTG · คลิกเกจหรือชื่อ sensor เพื่อเปิดหน้า sensor</small></div><section class="card devinfo"><div class="devgrid">
-${cell("Status", `<span class="ovst ${stc}">${escapeHtml(stl)}</span>`)}
-${cell("Last Scan", d.updated ? escapeHtml(devTime(d.updated)) : "-")}
-${cell("Uptime (30 d)", av ? av.uptime_pct.toFixed(4) + "%" : "-")}
-${cell("Downtime (30 d)", av ? av.downtime_pct.toFixed(4) + "%" : "-")}
-${cell("Last Down", av && av.last_down ? escapeHtml(devTime(av.last_down)) : "never")}
-${cell("Sensors", `${d.sensors.length} <span class="dsc"><i class="ok">✓ ${cnt("ok")}</i>${cnt("warning") ? `<i class="wr">! ${cnt("warning")}</i>` : ""}${cnt("error") + cnt("down") ? `<i class="cr">✕ ${cnt("error") + cnt("down")}</i>` : ""}${cnt("paused") ? `<i class="ps">II ${cnt("paused")}</i>` : ""}</span>`)}
-${cell("OS / IP", `${w.os === "windows" ? "Windows" : "Linux"} · ${escapeHtml(w.host || w.instance || "-")}`)}
-${cell("Group", escapeHtml(w.group || "-"))}
-</div></section>
-${big.length || small.length ? `<section class="card"><div class="devg">${big.map(x => gcard(x, "big")).join("")}</div>${small.length ? `<div class="devg sm">${small.map(x => gcard(x, "small")).join("")}</div>` : ""}</section>` : ""}
-<section class="card"><div class="top"><h2>Sensors (${d.sensors.length})</h2><small class="st-mut">คลิกชื่อเพื่อเปิดหน้า sensor (กราฟ Live / 2 / 30 / 365 days)</small></div>
-<div class="tblw"><table class="ovtbl devtbl"><thead><tr><th>Pos</th><th>Sensor</th><th>Status</th><th>Message</th><th>Graph</th><th>Limits</th></tr></thead><tbody>
-${list.map((x, i) => { const [ic, l, c] = DEV_ST[x.status] || DEV_ST.unknown; return `<tr><td class="st-mut">${i + 1}.</td><td><a href="${sl(x.id)}" class="dsn"><i class="evico sm ${c}">${ic}</i>${escapeHtml(x.name)}</a>${x.ack ? ` <span class="ovack">ACK</span>` : ""}</td><td><span class="ovst ${c}">${escapeHtml(l)}</span></td><td class="dmsg" title="${escapeHtml(x.message || "")}">${escapeHtml(x.message || "-")}</td><td class="dgr">${bar(x)}</td><td class="st-mut">${x.warning != null || x.error != null ? escapeHtml(`${CMGauge.fmt(x.warning, "")} / ${CMGauge.fmt(x.error, "")}`) : "-"}</td></tr>`; }).join("")}
-</tbody></table></div></section>`;
+    const cats = DEV_CAT.concat([["other", "อื่น ๆ", []]]).map(([key, label]) => {
+        const items = sorted.filter(x => devCat(x) === key);
+        if (!items.length) return "";
+        const bad = items.filter(x => !["ok", "paused"].includes(x.status)).length;
+        const open = S.devOpen[key] !== undefined ? S.devOpen[key] : (bad > 0 || key === "perf" || key === "net");
+        return `<details class="dcat" data-cat="${key}"${open ? " open" : ""}><summary><span class="dcn">${escapeHtml(label)}</span><span class="dcc">${items.length}</span>${bad ? `<span class="dchip ${items.some(x => ["error", "down"].includes(x.status)) ? "cr" : "wr"}">${bad} มีปัญหา</span>` : `<span class="dcok">ปกติทั้งหมด</span>`}</summary>
+<div class="drows">${items.map(x => `<a class="drow" href="${sl(x.id)}"><span class="ddot ${cls(x)}"></span><span class="dname">${escapeHtml(x.name)}${x.ack ? ` <em>ACK</em>` : ""}</span><span class="dval">${bar(x)}</span><span class="dmsg" title="${escapeHtml(x.message || "")}">${escapeHtml(x.message || "")}</span></a>`).join("")}</div></details>`;
+    }).join("");
+    box.innerHTML = `<section class="card dpanel">${head}${tiles}<div class="dcats">${cats}</div></section>`;
+    box.querySelectorAll("details.dcat").forEach(el => el.addEventListener("toggle", () => { S.devOpen[el.dataset.cat] = el.open; }));
 }
 
 /* ปิดรายละเอียดเครื่อง (กลับไปเห็นแค่ WEB status + Logs) */

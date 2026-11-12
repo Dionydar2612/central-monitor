@@ -1477,4 +1477,42 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .dgr{white-space:nowrap}.dbar{display:inline-block;width:110px;height:8px;border-radius:4px;background:var(--chip);vertical-align:middle;overflow:hidden}
 .dbar i{display:block;height:100%;background:#a8c522}.dbar i.wr{background:#f5b400}.dbar i.cr{background:#e5484d}.dbar i.ps{background:#4c8ff0}
 .dbv{margin-left:8px;font-size:12.5px}
-#devPanel{margin-top:16px}.devtitle{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:4px 2px 8px}.devtitle h2{margin:0;font-size:17px}
+
+/* ส่วน Sensors ของเครื่อง (ล่างสุดก่อน Logs) */
+#devPanel{margin-top:16px}
+.dpanel{padding:16px 18px}
+.dhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.dhead h2{margin:0;font-size:17px}
+.dchips{display:flex;gap:6px}
+.dchip{font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--chip)}
+.dchip.ok{color:#1f9d55;background:rgba(31,157,85,.12)}.dchip.wr{color:#b26b00;background:rgba(245,166,35,.16)}
+.dchip.cr{color:#c4363b;background:rgba(229,72,77,.14)}.dchip.ps{color:var(--blue);background:rgba(31,123,255,.12)}.dchip.na{color:var(--mut)}
+.dstats{display:flex;gap:22px;margin-left:auto;flex-wrap:wrap}
+.dstats span{display:flex;flex-direction:column}.dstats small{color:var(--mut);font-size:11.5px}.dstats b{font-size:13.5px;font-weight:600}
+.dtiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin-bottom:14px}
+.dtile{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 6px;border:1px solid var(--line);border-left:4px solid #a8c522;border-radius:8px;text-decoration:none;color:var(--ink);background:var(--bg);min-width:0}
+.dtile.wr{border-left-color:#f5b400}.dtile.cr{border-left-color:#e5484d}.dtile.ps{border-left-color:#4c8ff0}.dtile.na{border-left-color:#b9c0cb}
+.dtile:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.dtile .cmg.sm{width:58px;flex:none}
+.dtile span{display:flex;flex-direction:column;min-width:0}
+.dtile small{color:var(--mut);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dtile b{font-size:17px}
+.dcats{display:flex;flex-direction:column;gap:8px}
+.dcat{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.dcat summary{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;background:var(--chip);list-style:none;user-select:none}
+.dcat summary::-webkit-details-marker{display:none}
+.dcat summary::before{content:"▸";color:var(--mut);font-size:11px;width:10px}
+.dcat[open] summary::before{content:"▾"}
+.dcn{font-weight:600;font-size:14px}.dcc{color:var(--mut);font-size:12.5px}
+.dcok{margin-left:auto;color:#1f9d55;font-size:12px}.dcat summary .dchip{margin-left:auto}
+.drows{display:flex;flex-direction:column}
+.drow{display:grid;grid-template-columns:minmax(160px,1.1fr) minmax(150px,.9fr) 2fr;align-items:center;gap:12px;padding:7px 12px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:13px}
+.drow:hover{background:rgba(31,123,255,.05)}
+.dname{display:flex;align-items:center;gap:6px;font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dname em{font-style:normal;font-size:10.5px;color:var(--blue);font-weight:600}
+.drow{position:relative;padding-left:26px}
+.ddot{position:absolute;left:10px;top:50%;width:9px;height:9px;border-radius:50%;margin-top:-4.5px;background:#a8c522}
+.ddot.wr{background:#f5b400}.ddot.cr{background:#e5484d}.ddot.ps{background:#4c8ff0}.ddot.na{background:#b9c0cb}
+.drow .dmsg{color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:none}
+.dval{display:flex;align-items:center;white-space:nowrap}
+@media (max-width:760px){.drow{grid-template-columns:1fr auto}.drow .dmsg{display:none}.dstats{margin-left:0}}
