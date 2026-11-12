@@ -254,6 +254,17 @@ def audit(action, target=None, ok=True, status=None, details=None, user=None, ro
 
 
 @app.after_request
+def no_stale_frontend(response):
+    """หน้าเว็บ / .js / .css: ให้ browser ถามเซิร์ฟเวอร์ทุกครั้ง (ไฟล์ไม่เปลี่ยน = ตอบ 304 เร็ว)
+    กันอาการ "อัปเดตแล้วแต่หน้าเว็บยังเป็นแบบเก่า" ที่ต้องกด Ctrl+F5"""
+    if request.method == "GET" and not request.path.startswith("/api/") and "Cache-Control" not in response.headers:
+        p = request.path
+        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/login") or p.endswith((".js", ".css", ".html")):
+            response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.after_request
 def audit_changes(response):
     if request.method not in ("POST", "PUT", "DELETE") or not request.path.startswith("/api/"):
         return response
