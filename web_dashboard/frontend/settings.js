@@ -482,6 +482,28 @@ async function saveRetention() {
     } finally { $("r_save").disabled = false; }
 }
 
+/* ---------- ป๊อปอัปแจ้งเตือน (popup.js) ---------- */
+async function loadPopup() {
+    try {
+        const d = await api("GET", "/api/popup-settings");
+        $("pp_on").checked = d.enabled !== false;
+        document.querySelectorAll("[data-lv]").forEach(c => { c.checked = (d.levels || []).includes(c.dataset.lv); });
+    } catch (e) { if (e.message !== "auth") say("pp_msg", "โหลดค่าไม่สำเร็จ: " + e.message, "bad"); }
+    $("pp_os").checked = !!(window.cmPopup && window.cmPopup.osOn());
+}
+
+async function savePopup() {
+    const levels = [...document.querySelectorAll("[data-lv]")].filter(c => c.checked).map(c => c.dataset.lv);
+    $("pp_save").disabled = true;
+    try {
+        await api("PUT", "/api/popup-settings", { enabled: $("pp_on").checked, levels });
+        if (window.cmPopup) window.cmPopup.reload();
+        say("pp_msg", "บันทึกแล้ว · หน้าอื่นที่เปิดอยู่จะใช้ค่าใหม่ภายใน 5 นาที (หรือรีเฟรช)", "ok");
+    } catch (e) {
+        say("pp_msg", "บันทึกไม่สำเร็จ: " + ((e.fields && e.fields.levels) || e.message), "bad");
+    } finally { $("pp_save").disabled = false; }
+}
+
 async function loadUser() {
     try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; } catch (e) { /* api() พาไป /login เอง */ }
 }
@@ -515,7 +537,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const SHOW_CHECKS = false;
     $("checksCard").hidden = !SHOW_CHECKS;
     $("r_save").onclick = saveRetention;
+    $("pp_save").onclick = savePopup;
+    $("pp_test").onclick = () => { if (window.cmPopup) window.cmPopup.test(); };
+    $("pp_os").addEventListener("change", async e => {
+        if (!window.cmPopup) return;
+        const want = e.target.checked, ok = await window.cmPopup.setOs(want);
+        e.target.checked = ok;
+        say("pp_msg", ok ? "เปิดแจ้งเตือนของ Windows บน browser นี้แล้ว"
+            : want ? (window.isSecureContext ? "browser ไม่อนุญาต: กดไอคอนแม่กุญแจหน้า URL > Notifications > Allow แล้วติ๊กใหม่"
+                                             : "ต้องเปิดเว็บผ่าน https:// หรือ http://localhost ถึงจะใช้ได้")
+            : "ปิดแจ้งเตือนของ Windows บน browser นี้แล้ว", ok || !want ? "ok" : "bad");
+    });
     ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
-    loadUser(); loadTargets(); loadUsers(); loadRetention();
+    loadUser(); loadTargets(); loadUsers(); loadRetention(); loadPopup();
     if (SHOW_CHECKS) loadChecks();
 });

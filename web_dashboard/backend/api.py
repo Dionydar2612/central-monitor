@@ -41,6 +41,7 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/sensors?status=warning,error&web=&history=1   sensor ต่อเครื่อง (puller/sensor_monitor.py)
     GET  /api/events?kind=system|activity&limit=&since=&q=   System log / Activity log (activity = admin)
     GET  /api/events/summary?since_system=&since_activity=   ตัวเลขบนป้ายหัวหน้าเว็บ
+    GET  /api/popup-settings  /  PUT (admin)                  ป๊อปอัปแจ้งเตือนบนหน้าเว็บ (popup.js)
     POST /api/sensors/ack {"id","note"}  /api/sensors/unack {"id"}   รับทราบปัญหา (operator ขึ้นไป)
     GET  /api/sensors/history?id=&range=1h|6h|24h|7d|30d               กราฟย้อนหลังของ sensor
     GET  /api/incidents?hours=24&web=   ปัญหาที่เกิดแล้ว (เริ่ม/จบ/นานเท่าไหร่/ค่าสูงสุด) + ที่ยังเป็นอยู่
@@ -77,6 +78,7 @@ import checks_service
 import sensors_service
 import users_service
 import retention_service
+import popup_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
@@ -167,6 +169,8 @@ def _required_role(method, path):
         return "viewer" if method == "GET" else "operator"
     if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention")):
         return "admin"
+    if path == "/api/popup-settings":
+        return "viewer" if method == "GET" else "admin"
     if path.startswith("/api/checks"):
         return "viewer" if method == "GET" else "admin"
     if path == "/api/info-logs":
@@ -201,6 +205,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/retention$"), "settings.retention",
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.update", ("role",)),
+    ("PUT", re.compile(r"^/api/popup-settings$"), "settings.popup", ("enabled", "levels")),
     ("DELETE", re.compile(r"^/api/users/(?P<t>[^/]+)$"), "user.delete", ()),
 ]
 
@@ -324,6 +329,20 @@ def retention_put():
     if not ok:
         return jsonify(out), 400
     return jsonify({**out, "settings": retention_service.get_settings()})
+
+
+@app.get("/api/popup-settings")
+def popup_settings_get():
+    """ป๊อปอัปแจ้งเตือนบนหน้าเว็บ (popup.js อ่านทุกหน้า ทุก role)"""
+    return jsonify(popup_service.get_settings())
+
+
+@app.put("/api/popup-settings")
+def popup_settings_put():
+    ok, out = popup_service.update_settings(request.get_json(silent=True) or {})
+    if not ok:
+        return jsonify(out), 400
+    return jsonify(out)
 
 
 @app.get("/api/users")

@@ -133,6 +133,25 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 </div>
 <div class="st-msg" id="userMsg" role="status"></div>
 </section>
+<!-- ป๊อปอัปแจ้งเตือนบนหน้าเว็บ (/api/popup-settings + popup.js) -->
+<section class="card svc">
+<div class="top"><h2>Popup notifications</h2></div>
+<div style="color:var(--mut);font-size:13px">เด้งกล่องแจ้งเตือนมุมขวาล่างทุกหน้าเมื่อ sensor เปลี่ยนสถานะ (Availability / CPU / Memory / Disk / Log pull) · ขึ้นเฉพาะตอนเปิดหน้าเว็บอยู่ · ช้าสุดประมาณ 1 นาที</div>
+<div class="st-grid">
+<div class="st-f" style="grid-column:span 3"><label>ป๊อปอัปบนหน้าเว็บ (ทุกคนที่เปิดเว็บ)</label>
+<label class="st-check"><input type="checkbox" id="pp_on"> เปิดป๊อปอัป</label></div>
+<div class="st-f" data-p="levels" style="grid-column:span 3"><label>แจ้งเมื่อ</label><div class="ppLv">
+<label class="st-check"><input type="checkbox" data-lv="down"> 🔴 Down (เครื่องดึงข้อมูลไม่ได้)</label>
+<label class="st-check"><input type="checkbox" data-lv="error"> 🔴 Error</label>
+<label class="st-check"><input type="checkbox" data-lv="warning"> 🟡 Warning</label>
+<label class="st-check"><input type="checkbox" data-lv="recovered"> 🟢 กลับมาปกติ</label>
+</div><div class="st-err"></div></div>
+<div class="st-f" style="grid-column:span 3"><label>แจ้งเตือนของ Windows (ตั้งแยกต่อ browser)</label>
+<label class="st-check"><input type="checkbox" id="pp_os"> เด้งที่มุมจอ Windows แม้อยู่แท็บอื่นหรือย่อหน้าต่าง (ต้องเปิดเว็บผ่าน https:// หรือ http://localhost)</label></div>
+</div>
+<div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="pp_save" type="button">Save popup</button><button class="st-btn" id="pp_test" type="button">ทดลองป๊อปอัป</button></div>
+<div class="st-msg" id="pp_msg" role="status"></div>
+</section>
 <!-- อายุการเก็บข้อมูล (/api/retention): log ใน OpenSearch (ISM), ประวัติปัญหา + สถานะเครื่องย้อนหลัง (puller.yaml storage) -->
 <section class="card svc">
 <div class="top"><h2>Data retention</h2></div>
@@ -150,6 +169,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <datalist id="groupList"></datalist>
 </div>
 <script src="/badges.js"></script>
+<script src="/popup.js"></script>
 <script src="/settings.js"></script>
 </body>
 </html>
