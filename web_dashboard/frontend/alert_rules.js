@@ -39,12 +39,13 @@ function rlCond(r) {
 function rlRender() {
     const tb = $("rlRows"); tb.textContent = "";
     if (!RL.rules.length) {
-        tb.append(el("tr", {}, el("td", { colspan: "8", class: "st-mut" }, "ยังไม่มีกฎ กด + Add rule")));
+        tb.append(el("tr", {}, el("td", { colspan: "9", class: "st-mut" }, "ยังไม่มีกฎ กด + Add rule")));
         return;
     }
     RL.rules.forEach((r, i) => {
-        const on = el("input", { type: "checkbox", title: "เปิด / ปิดกฎนี้" });
-        on.checked = r.enabled !== false;
+        const mine = r.can_edit !== false;
+        const on = el("input", { type: "checkbox", title: mine ? "เปิด / ปิดกฎนี้" : "กฎของ " + (r.owner || "admin") + " (แก้ไม่ได้)" });
+        on.checked = r.enabled !== false; on.disabled = !mine;
         on.onchange = () => { r.enabled = on.checked; rlSave(`${on.checked ? "เปิด" : "ปิด"}กฎ ${r.name} แล้ว`); };
         const m = rlMetric(r.metric);
         const what = m.label + (r.mount ? ` · ${r.mount}` : "") + (r.metric === "promql" ? ` · ${r.promql}` : "")
@@ -54,9 +55,11 @@ function rlRender() {
             el("td", {}, rlWhere(r)), el("td", {}, rlCond(r)), el("td", {}, `${r.for_minutes} นาที`),
             el("td", { class: r.notify !== false && !r.teams_url_set && !RL.data.main_url_set ? "rlwarn" : "" },
                 r.notify === false ? "ไม่ส่ง" : r.teams_url_set ? "ช่องของกฎ" : RL.data.main_url_set ? "ช่องหลัก" : "ยังไม่ตั้งช่อง"),
-            el("td", { class: "act" },
+            el("td", { class: "st-mut" }, r.owner ? (r.owner === RL.data.me ? `${r.owner} (ฉัน)` : r.owner) : "admin"),
+            el("td", { class: "act" }, mine ? [
                 el("button", { class: "st-btn sm", type: "button", onclick: () => rlOpen(i) }, "Edit"),
-                el("button", { class: "st-btn sm", type: "button", onclick: () => rlDelete(i) }, "Delete"))));
+                el("button", { class: "st-btn sm", type: "button", onclick: () => rlDelete(i) }, "Delete")]
+                : el("small", { class: "st-mut" }, "ดูอย่างเดียว"))));
     });
 }
 

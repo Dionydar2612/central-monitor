@@ -156,7 +156,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <!-- ผู้ใช้ + สิทธิ์ (data/state/users.json) -->
 <section class="card svc">
 <div class="top"><h2>Users</h2></div>
-<div style="color:var(--mut);font-size:13px"><b>viewer</b> ดูอย่างเดียว · <b>operator</b> + Pause/Resume, Load INFO log, เลือก service · <b>admin</b> + หน้า Settings ทั้งหมด · บัญชีจาก docker/.env เป็น admin เสมอ (ใช้กู้ระบบได้)</div>
+<div style="color:var(--mut);font-size:13px"><b>viewer</b> ดูอย่างเดียว · <b>operator</b> + Pause/Resume, Acknowledge, Load INFO log, เลือก service, สร้าง Custom alert rules (แก้/ลบได้เฉพาะกฎของตัวเอง) · <b>admin</b> + หน้า Settings ทั้งหมด (แก้กฎของทุกคน) · บัญชีจาก docker/.env เป็น admin เสมอ (ใช้กู้ระบบได้)</div>
 <div class="tblw"><table>
 <thead><tr><th>Username</th><th>Role</th><th>Last login</th><th></th></tr></thead>
 <tbody id="userBody"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
@@ -185,11 +185,11 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-msg" id="al_msg" role="status"></div>
 </section>
 <!-- กฎแจ้งเตือนที่สร้างเอง (/api/alert-rules): puller.yaml -> alert_rules (ตัวตรวจ: puller/custom_rules.py) -->
-<section class="card svc">
+<section class="card svc" id="rulesCard">
 <div class="top"><h2>Custom alert rules</h2><button class="st-btn sm" id="r_add" type="button">+ Add rule</button></div>
 <div style="color:var(--mut);font-size:13px">สร้างกฎแจ้งเตือนเอง: เลือกค่าที่จะดู · เครื่อง / กลุ่ม · เกณฑ์ · นานแค่ไหน · ส่ง Teams ไหม · ข้อความบนการ์ด
 ผลขึ้นเป็น sensor ในหน้า Events (Acknowledge / ประวัติปัญหาได้เหมือน sensor ปกติ) · ตรวจทุก 30 วินาที</div>
-<div class="tblw"><table class="st-tbl rltbl"><thead><tr><th></th><th>กฎ</th><th>ค่าที่ดู</th><th>ใช้กับ</th><th>เงื่อนไข</th><th>นาน</th><th>Teams</th><th></th></tr></thead><tbody id="rlRows"></tbody></table></div>
+<div class="tblw"><table class="st-tbl rltbl"><thead><tr><th></th><th>กฎ</th><th>ค่าที่ดู</th><th>ใช้กับ</th><th>เงื่อนไข</th><th>นาน</th><th>Teams</th><th>เจ้าของ</th><th></th></tr></thead><tbody id="rlRows"></tbody></table></div>
 <div class="st-box" id="rlForm" hidden>
 <div class="st-h3" id="rl_title">กฎใหม่</div>
 <div class="st-grid">

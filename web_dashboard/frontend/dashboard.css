@@ -1010,7 +1010,8 @@ td.bad{color:#e5484d}
 .ovtools input{flex:1;min-width:200px;font:14px inherit;font-family:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
 .ovtools input:focus{outline:2px solid var(--blue);outline-offset:0}
 .gtree{max-height:560px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 0}
-.gnode .gnode{margin-left:16px;border-left:1px dashed var(--line)}
+.gnode{margin-left:calc(var(--d) * 18px)}
+.gnode .gnode{border-left:1px dashed var(--line)}
 .ghead{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;user-select:none;border-radius:6px}
 .ghead:hover{background:var(--chip)}
 .ghead:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}

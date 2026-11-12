@@ -2113,7 +2113,7 @@ async function loadCurrentUser() {
         if (!d.authenticated) { window.location.href = "/login"; return; }
         setText("currentUsername", d.username || "Unknown");
         S.role = d.role || "viewer";
-        document.querySelectorAll(".st-nav[href='/settings']").forEach(a => { a.hidden = S.role !== "admin"; });
+        document.querySelectorAll(".st-nav[href='/settings']").forEach(a => { a.hidden = S.role !== "admin" && S.role !== "operator"; });
         const info = q(".infold"); if (info) info.hidden = !canOperate();
         if (S.ov) renderMachines();
     } catch (err) { console.error("Failed to load current user:", err); }

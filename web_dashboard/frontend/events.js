@@ -231,7 +231,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         E.role = me.role || "viewer";
         $("currentUsername").textContent = me.username || "?";
         $("tabActivity").hidden = E.role !== "admin";
-        $("settingsLink").hidden = E.role !== "admin";
+        $("settingsLink").hidden = E.role !== "admin" && E.role !== "operator";
         if (E.tab === "activity" && E.role !== "admin") E.tab = "system";
     } catch (e) { return; }
     $("evTabs").addEventListener("click", e => {

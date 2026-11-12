@@ -781,6 +781,15 @@ document.addEventListener("DOMContentLoaded", () => {
         $("agCopyMsg").textContent = "คัดลอกแล้ว"; setTimeout(() => { $("agCopyMsg").textContent = ""; }, 2500);
     };
     ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
-    loadUser(); loadTargets(); loadUsers(); loadRetention(); loadAlerts(); loadNotify();
-    if (SHOW_CHECKS) loadChecks();
+    (async () => {
+        let role = "admin";
+        try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; role = d.role || "viewer"; }
+        catch (e) { return; }
+        if (role !== "admin") {                    /* operator: เห็นเฉพาะ Custom alert rules (กฎของตัวเองแก้ได้) */
+            document.querySelectorAll("section.card").forEach(c => { if (c.id !== "rulesCard") c.hidden = true; });
+            return;
+        }
+        loadTargets(); loadUsers(); loadRetention(); loadAlerts(); loadNotify();
+        if (SHOW_CHECKS) loadChecks();
+    })();
 });

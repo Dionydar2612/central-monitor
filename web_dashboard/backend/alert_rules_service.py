@@ -56,7 +56,14 @@ def _doc():
     return targets_service._load_doc(y)
 
 
-def list_rules():
+def can_edit(rule, user=None, role="admin"):
+    """admin แก้ได้ทุกกฎ · operator แก้/ลบได้เฉพาะกฎที่ตัวเองสร้าง (owner = ชื่อผู้ใช้)"""
+    if role == "admin":
+        return True
+    return role == "operator" and bool(user) and str((rule or {}).get("owner") or "") == str(user)
+
+
+def list_rules(user=None, role="admin"):
     doc = _doc()
     rules = targets_service._plain(doc.get("alert_rules") or [])
     rules = [migrate_rule(r) for r in rules] if isinstance(rules, list) else []
@@ -64,11 +71,13 @@ def list_rules():
         url = str(r.pop("teams_url", "") or "")
         r["teams_url_set"] = bool(url)
         r["teams_url_hint"] = notify_service._hint(url)
+        r["owner"] = str(r.get("owner") or "")
+        r["can_edit"] = can_edit(r, user, role)
     targets = [{"name": t.get("name"), "group": t.get("group") or "", "host": t.get("host") or "",
                 "os": "windows" if str(t.get("type") or "") == "agent" else "linux"}
                for t in targets_service._plain(doc.get("targets") or []) if isinstance(t, dict) and t.get("name")]
     groups = sorted({t["group"] for t in targets if t["group"]})
-    return {"rules": rules, "metrics": _catalog(), "main_url_set": bool(notify_service.main_url()), "targets": targets, "groups": groups,
+    return {"rules": rules, "me": user or "", "role": role, "metrics": _catalog(), "main_url_set": bool(notify_service.main_url()), "targets": targets, "groups": groups,
             "template_keys": ["icon", "machine", "group", "host", "sensor", "text", "value", "unit", "threshold",
                               "level", "time", "duration"]}
 
@@ -283,29 +292,47 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None
     return rule, errors
 
 
-def save_rules(payload):
-    """payload: {rules: [...]} (ทั้งรายการ)  -> (ok, ผล | {error, fields})"""
+def save_rules(payload, user=None, role="admin"):
+    """payload: {rules: [...]} (ทั้งรายการ)  -> (ok, ผล | {error, fields})
+    operator: เพิ่มกฎได้ (เป็นเจ้าของ) · แก้/ลบได้เฉพาะกฎของตัวเอง · กฎของคนอื่นคงไว้ตามเดิมเสมอ"""
     from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
     items = (payload or {}).get("rules")
     if not isinstance(items, list) or len(items) > 200:
         return False, {"error": "rules ต้องเป็นรายการ (ไม่เกิน 200 กฎ)"}
     stored = [r for r in targets_service._plain(_doc().get("alert_rules") or []) if isinstance(r, dict)]
+    by_id = {str(r.get("id")): r for r in stored}
+    locked = {rid for rid, r in by_id.items() if not can_edit(r, user, role)}   # กฎที่ผู้ใช้นี้แก้ไม่ได้
     old = {str(r.get("id")): str(r.get("teams_url") or "") for r in stored}
     old_web = {str(r.get("id")): str(r.get("url") or "") for r in stored if r.get("metric") in ("http_local", "http_url")}
-    out, fields, ids = [], {}, set()
+    out, fields, ids = [], {}, set(locked)
     for i, item in enumerate(items):
         rid = str((item or {}).get("id") or "").strip() or None
-        if rid and (rid in ids or not re.match(r"^[a-z0-9-]{1,60}$", rid)):
+        if rid in locked:
+            continue                               # กฎของคนอื่น: ไม่รับค่าที่ส่งมา
+        if rid and (rid in ids or not re.match(r"^[a-z0-9-]{1,60}$", rid) or (role != "admin" and rid not in by_id)):
             rid = None
         rule, errors = clean_rule(item, ids, keep_id=rid, old_url=old.get(rid or "", ""),
                                   old_web_url=old_web.get(rid or ""))
+        owner = str(by_id[rid].get("owner") or "") if rid in by_id else str(user or "")
+        if owner:
+            rule["owner"] = owner
         for k, v in errors.items():
             fields[f"rules.{i}.{k}"] = v
         ids.add(rule["id"])
         out.append(rule)
     if fields:
         return False, {"error": "ค่าไม่ถูกต้อง", "fields": fields}
+    if locked:                                     # ใส่กฎที่แก้ไม่ได้กลับที่เดิม (ลำดับเดิม) + กฎใหม่ต่อท้าย
+        mine = {r["id"]: r for r in out}
+        merged = []
+        for r in stored:
+            rid = str(r.get("id"))
+            if rid in locked:
+                merged.append(r)
+            elif rid in mine:
+                merged.append(mine.pop(rid))
+        out = merged + list(mine.values())
 
     y = targets_service._yaml()
     with targets_service._locked():
@@ -326,7 +353,7 @@ def save_rules(payload):
                 seq.append(node)
             doc["alert_rules"] = seq
         targets_service._write_doc(y, doc)
-    return True, list_rules()
+    return True, list_rules(user, role)
 
 
 def preview(data):
@@ -340,11 +367,12 @@ def preview(data):
         return 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
 
 
-def send_test(data):
+def send_test(data, user=None, role="admin"):
     """ส่งการ์ดตัวอย่างของกฎนี้ไป Teams (ช่องของกฎ หรือช่องหลัก) -> (status, ผล)"""
     rid = str((data or {}).get("id") or "")
     old = {str(r.get("id")): str(r.get("teams_url") or "")
-           for r in targets_service._plain(_doc().get("alert_rules") or []) if isinstance(r, dict)}
+           for r in targets_service._plain(_doc().get("alert_rules") or [])
+           if isinstance(r, dict) and can_edit(r, user, role)}    # ช่องของกฎคนอื่นใช้ทดสอบไม่ได้
     rule, errors = clean_rule(data, keep_id=rid or "test", old_url=old.get(rid, ""))
     if errors:
         return 400, {"error": "ค่าไม่ถูกต้อง", "fields": errors}

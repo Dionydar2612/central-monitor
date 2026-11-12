@@ -172,9 +172,9 @@ def _required_role(method, path):
         return "operator"
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
-    if path in ("/settings", "/settings.html") or path.startswith(("/api/targets", "/api/users", "/api/retention",
-                                                                     "/api/alert-settings", "/api/notify-settings",
-                                                                     "/api/alert-rules")):
+    if path in ("/settings", "/settings.html") or path.startswith("/api/alert-rules"):
+        return "operator"                          # operator: หน้า Settings เห็นเฉพาะ Custom alert rules (แก้ได้เฉพาะกฎของตัวเอง)
+    if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
         return "admin"
     if path.startswith(("/api/checks", "/api/apps")):
         return "viewer" if method == "GET" else "admin"
@@ -578,11 +578,16 @@ def apps_delete(rule_id):
     return jsonify(out), (200 if ok else 404 if out.get("error") == "ไม่พบรายการนี้" else 400)
 
 
+def _who():
+    """(ชื่อผู้ใช้, role) ของ request นี้"""
+    return session.get("username", ""), (getattr(g, "role", None) or session.get("role") or "viewer")
+
+
 @app.get("/api/alert-rules")
 def alert_rules_get():
     """กฎแจ้งเตือนที่สร้างเอง + รายการ metric / เครื่อง / กลุ่ม ให้ฟอร์มเลือก (admin)"""
     try:
-        return jsonify(alert_rules_service.list_rules())
+        return jsonify(alert_rules_service.list_rules(*_who()))
     except (OSError, YAMLError) as e:
         return _config_error(e)
 
@@ -591,7 +596,7 @@ def alert_rules_get():
 def alert_rules_put():
     """บันทึกกฎทั้งรายการ  body: {rules: [...]}"""
     try:
-        ok, out = alert_rules_service.save_rules(request.get_json(silent=True) or {})
+        ok, out = alert_rules_service.save_rules(request.get_json(silent=True) or {}, *_who())
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (200 if ok else 400)
@@ -601,7 +606,7 @@ def alert_rules_put():
 def alert_rules_test():
     """ส่งการ์ดตัวอย่างของกฎไป Teams"""
     try:
-        status, data = alert_rules_service.send_test(request.get_json(silent=True) or {})
+        status, data = alert_rules_service.send_test(request.get_json(silent=True) or {}, *_who())
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(data), status

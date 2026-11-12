@@ -190,6 +190,50 @@ class Backend(unittest.TestCase):
         self.assertEqual(c.get("/api/apps").status_code, 200)
         self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "x"}).status_code, 403)
 
+    def test_operator_owns_rules(self):
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/users", json={"username": "op1", "password": "password1", "role": "operator"})
+        c.post("/api/users", json={"username": "op2", "password": "password2", "role": "operator"})
+        base = c.get("/api/alert-rules").json["rules"]
+        adm = c.put("/api/alert-rules", json={"rules": base + [{"name": "Admin CPU", "metric": "cpu", "warning": 90}]}).json["rules"]
+        aid = [r for r in adm if r["name"] == "Admin CPU"][0]["id"]
+        # operator: เข้า Settings + alert rules ได้ แต่ส่วนอื่นของ admin ไม่ได้
+        self.assertEqual(self.login("op1", "password1"), 200)
+        self.assertNotIn(c.get("/settings").status_code, (302, 403))              # ไม่ถูกเด้งกลับหน้าแรก
+        self.assertEqual(c.get("/api/targets").status_code, 403)
+        self.assertEqual(c.get("/api/notify-settings").status_code, 403)
+        d = c.get("/api/alert-rules").json
+        self.assertFalse([r for r in d["rules"] if r["id"] == aid][0]["can_edit"])
+        # เพิ่มกฎของตัวเอง + พยายามแก้/ลบกฎ admin -> กฎ admin คงเดิม
+        rules = [dict(r, warning=10) if r["id"] == aid else r for r in d["rules"] if r["id"] != aid]
+        r1 = c.put("/api/alert-rules", json={"rules": rules + [{"name": "Op1 Disk", "metric": "disk", "warning": 80}]})
+        self.assertEqual(r1.status_code, 200, r1.json)
+        got = {r["name"]: r for r in r1.json["rules"]}
+        self.assertEqual(got["Admin CPU"]["warning"], 90)                       # ลบ/แก้กฎคนอื่นไม่ได้
+        self.assertEqual((got["Op1 Disk"]["owner"], got["Op1 Disk"]["can_edit"]), ("op1", True))
+        # op2 แก้กฎของ op1 ไม่ได้
+        self.assertEqual(self.login("op2", "password2"), 200)
+        rs = c.get("/api/alert-rules").json["rules"]
+        self.assertFalse([r for r in rs if r["name"] == "Op1 Disk"][0]["can_edit"])
+        c.put("/api/alert-rules", json={"rules": []})
+        names = [r["name"] for r in c.get("/api/alert-rules").json["rules"]]
+        self.assertIn("Op1 Disk", names)
+        self.assertIn("Admin CPU", names)
+        # op1 แก้กฎของตัวเองได้ เจ้าของยังเป็น op1
+        self.assertEqual(self.login("op1", "password1"), 200)
+        rs = c.get("/api/alert-rules").json["rules"]
+        rs = [dict(r, warning=70) if r["name"] == "Op1 Disk" else r for r in rs]
+        got = {r["name"]: r for r in c.put("/api/alert-rules", json={"rules": rs}).json["rules"]}
+        self.assertEqual((got["Op1 Disk"]["warning"], got["Op1 Disk"]["owner"]), (70, "op1"))
+        # admin แก้ได้ทุกกฎ เจ้าของคงเดิม แล้วล้างกลับ
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        rs = c.get("/api/alert-rules").json["rules"]
+        self.assertTrue(all(r["can_edit"] for r in rs))
+        got = {r["name"]: r for r in c.put("/api/alert-rules", json={"rules": rs}).json["rules"]}
+        self.assertEqual(got["Op1 Disk"]["owner"], "op1")
+        c.put("/api/alert-rules", json={"rules": base})
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

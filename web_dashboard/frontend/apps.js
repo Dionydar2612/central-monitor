@@ -337,7 +337,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const me = await api("GET", "/api/me");
         A.role = me.role || "viewer";
         $("currentUsername").textContent = me.username || "?";
-        $("settingsLink").hidden = A.role !== "admin";
+        $("settingsLink").hidden = A.role !== "admin" && A.role !== "operator";
         $("apAddBtn").hidden = A.role !== "admin";
     } catch (e) { return; }
     $("logoutButton").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.href = "/login"; };
