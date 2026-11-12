@@ -8,7 +8,11 @@
    ===================================================================== */
 "use strict";
 const $ = id => document.getElementById(id);
-const E = { ov: { range: "2d", mode: "max", metric: "cpu", off: new Set(), data: {}, at: {} }, tab: "overview", role: "viewer", data: null, find: "", rows: [], hist: null };
+const OV_SAVED = (() => { try { return JSON.parse(sessionStorage.getItem("cm.ov") || "{}"); } catch (e) { return {}; } })();
+function ovSave() {
+    try { sessionStorage.setItem("cm.ov", JSON.stringify({ range: E.ov.range, mode: E.ov.mode, metric: E.ov.metric, off: [...E.ov.off] })); } catch (e) { /* ignore */ }
+}
+const E = { ov: { range: OV_SAVED.range || "2d", mode: OV_SAVED.mode || "max", metric: OV_SAVED.metric || "cpu", off: new Set(OV_SAVED.off || []), data: {}, at: {} }, tab: "overview", role: "viewer", data: null, find: "", rows: [], hist: null };
 
 function esc(v) {
     return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -304,6 +308,7 @@ function ovPeaks(lines) {
 
 async function showOverview() {
     $("evMeta").textContent = "";
+    ovSave();
     const r = E.ov.range;
     if (!E.ov.data[r]) $("evBody").innerHTML = `<div class="empty">Loading...</div>`;
     const d = await ovLoad(r);

@@ -7,6 +7,23 @@
    ใช้ร่วมกันใน index.html / settings.html / events.html  ต้องมี <div id="sbadges"> ในหน้า
    ===================================================================== */
 "use strict";
+/* reload แล้วกลับไปตำแหน่งเดิมของหน้า (ข้อมูลโหลดทีหลัง -> รอจนหน้ายาวพอ สูงสุด 5 วินาที) */
+(function () {
+    const k = "cm.scroll:" + location.pathname + location.search;
+    try { history.scrollRestoration = "manual"; } catch (e) { /* ignore */ }
+    window.addEventListener("beforeunload", () => { try { sessionStorage.setItem(k, String(window.scrollY)); } catch (e) { /* ignore */ } });
+    let want = 0;
+    try { want = Number(sessionStorage.getItem(k)) || 0; } catch (e) { /* ignore */ }
+    if (want <= 0) return;
+    const t0 = Date.now();
+    const tick = () => {
+        if (!want) return;
+        if (document.documentElement.scrollHeight - window.innerHeight >= want - 4) { window.scrollTo(0, want); return; }
+        if (Date.now() - t0 < 5000) setTimeout(tick, 150); else window.scrollTo(0, want);
+    };
+    window.addEventListener("load", () => setTimeout(tick, 100));
+    ["wheel", "touchstart", "keydown"].forEach(ev => window.addEventListener(ev, () => { want = 0; }, { once: true, passive: true }));
+})();
 (function () {
     const box = document.getElementById("sbadges");
     if (!box) return;
