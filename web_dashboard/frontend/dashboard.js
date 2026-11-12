@@ -734,7 +734,7 @@ const S = {
     pullInterval: 3600,                    // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
     ovOs: "", ovState: "", sort: null,     // ตัวกรอง OS / สถานะ + การเรียงตาราง ({key, dir})
-    view: loadView(),                      // มุมมอง WEB status: table / tiles / cards / problems
+    mview: loadView(),                     // มุมมอง WEB status: table / tiles / cards / problems / sunburst (S.view = ของกราฟ System Load ห้ามใช้ร่วม)
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
     showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
@@ -1157,8 +1157,8 @@ function sunburstHtml(webs, cur) {
 /* เครื่องในกลุ่ม ตามมุมมองที่เลือก */
 function serversHtml(list, cur) {
     if (!list.length) return "";
-    if (S.view === "tiles") return tilesHtml(list, cur);
-    if (S.view === "cards") return cardsHtml(list, cur);
+    if (S.mview === "tiles") return tilesHtml(list, cur);
+    if (S.mview === "cards") return cardsHtml(list, cur);
     return `<div class="tblw">${serverRows(list, cur)}</div>`;
 }
 
@@ -1239,17 +1239,17 @@ function renderMachines(ov) {
     /* เครื่อง/check ที่ไม่ได้ตั้งกลุ่ม: แสดงตารางตรง ๆ ไม่มีหัวกลุ่ม (กลุ่มแสดงเฉพาะที่ตั้งชื่อไว้) */
     const loose = (tree.servers.length ? `<div class="gloose">${serversHtml(tree.servers, cur)}</div>` : "") +
         (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "");
-    document.querySelectorAll("#ovView button").forEach(b => b.classList.toggle("on", b.dataset.view === S.view));
-    q("#ovExpand").hidden = q("#ovCollapse").hidden = S.view === "problems" || S.view === "sunburst";
+    document.querySelectorAll("#ovView button").forEach(b => b.classList.toggle("on", b.dataset.view === S.mview));
+    q("#ovExpand").hidden = q("#ovCollapse").hidden = S.mview === "problems" || S.mview === "sunburst";
     q("#mach").classList.remove("sbmode");
-    if (S.view === "sunburst" && webs.length) {
+    if (S.mview === "sunburst" && webs.length) {
         const list = webs.filter(w => matchesFilter(w, f));
         q("#mach").classList.add("sbmode");
         q("#mach").innerHTML = list.length ? sunburstHtml(list, cur) : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
-        if (!S.sb || Date.now() - S.sb.at > 30000) sbSensors().then(() => { if (S.view === "sunburst") renderMachines(); });
+        if (!S.sb || Date.now() - S.sb.at > 30000) sbSensors().then(() => { if (S.mview === "sunburst") renderMachines(); });
         return;
     }
-    if (S.view === "problems" && webs.length) {             /* ปัญหาก่อน: ไม่แบ่งกลุ่ม เรียงตามความรุนแรง */
+    if (S.mview === "problems" && webs.length) {             /* ปัญหาก่อน: ไม่แบ่งกลุ่ม เรียงตามความรุนแรง */
         const list = bySeverity(webs.filter(w => matchesFilter(w, f)));
         const bad = list.filter(w => !["HEALTHY", "PAUSED"].includes(w.state));
         q("#mach").innerHTML = !list.length ? `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`
@@ -2429,7 +2429,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
     q("#ovOs").addEventListener("change", e => { S.ovOs = e.target.value; renderMachines(); });
     q("#ovState").addEventListener("change", e => { S.ovState = e.target.value; renderMachines(); });
-    document.querySelectorAll("#ovView button").forEach(b => b.addEventListener("click", () => { S.view = b.dataset.view; saveView(S.view); renderMachines(); }));
+    document.querySelectorAll("#ovView button").forEach(b => b.addEventListener("click", () => { S.mview = b.dataset.view; saveView(S.mview); renderMachines(); }));
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });
     q("#ovCollapse").addEventListener("click", () => {
         const all = [...(S.ov && S.ov.servers || []), ...(SHOW_CHECKS && S.ov && S.ov.checks || [])];
