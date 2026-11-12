@@ -165,7 +165,7 @@ def require_authentication():
     return None
 
 
-_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$")
+_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 _TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
 
@@ -216,6 +216,8 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/sensors/unack$"), "sensor.unack", ("id",)),
     ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note")),
     ("POST", re.compile(r"^/api/logs/unack$"), "log.unack", ("web",)),
+    ("POST", re.compile(r"^/api/logs/ack-fp$"), "log.ack_fp", ("fp", "hours", "web", "note")),
+    ("POST", re.compile(r"^/api/logs/unack-fp$"), "log.unack_fp", ("fp",)),
     ("POST", re.compile(r"^/api/users$"), "user.add", ("username", "role")),
     ("PUT", re.compile(r"^/api/retention$"), "settings.retention",
      ("log_retention", "incident_retention", "system_history_retention")),
@@ -918,6 +920,29 @@ def logs_ack():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"acknowledged": n})
+
+
+@app.post("/api/logs/ack-fp")
+def logs_ack_fp():
+    """รับทราบทั้งกลุ่ม (ทุกบรรทัดที่ fp ตรง รวมบรรทัดที่จะเข้ามาใหม่) จนหมดเวลา
+    body: {"fp": "...", "hours": 1 | 24 | 168, "note": "...", "web": ""(ทุกเครื่อง) | "web-01,web-02"}"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        a = log_ack_service.ack_fp(body.get("fp"), session.get("username", ""), body.get("note"),
+                                   body.get("hours", 24), body.get("web"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"acknowledged": a})
+
+
+@app.post("/api/logs/unack-fp")
+def logs_unack_fp():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    return jsonify({"removed": log_ack_service.unack_fp(body.get("fp"))})
 
 
 @app.post("/api/logs/unack")

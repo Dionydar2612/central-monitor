@@ -255,15 +255,18 @@ def _visible(web, include_acked=False):
 
 
 def _not_acked(entries):
-    """ตัด log ที่ acknowledge แล้วออก (log_ack_service)"""
+    """ตัด log ที่ acknowledge แล้วออก: _id ตรง (แบบเดิม) หรือ fp ตรงและยังไม่หมดเวลา (log_ack_service.ack_of)"""
     acks = log_ack_service.load()
-    return [e for e in entries if e.get("id") not in acks] if acks else entries
+    if not acks:
+        return entries
+    now = time.time()
+    return [e for e in entries if not log_ack_service.ack_of(e, acks, now)]
 
 
 def _public(entry):
     """แถวที่ส่งให้หน้าเว็บ: ตัดคีย์ภายใน + แนบ metrics ตอนเกิด log (+ ข้อมูล acknowledge ถ้ามี)"""
     out = {k: v for k, v in entry.items() if not k.startswith("_")}
-    ack = log_ack_service.load().get(entry.get("id"))
+    ack = log_ack_service.ack_of(entry)
     if ack:
         out["ack"] = ack
     out["correlated_metrics"] = _metrics_cached(entry["timestamp"], entry["web"])
@@ -424,6 +427,11 @@ def get_grouped_logs(web, size=200, levels=None, types=None, start=None, end=Non
     for g in groups:
         row = {k: v for k, v in g.items() if not k.startswith("_")}
         row["sample"] = _public(g["sample"])
+        fa = log_ack_service.load().get("fp:" + g["fp"]) if g["fp"] else None     # ack ทั้งกลุ่มที่ยังไม่หมดเวลา
+        if fa and (fa.get("until") or 0) > time.time():
+            row["ack"] = fa
+        elif row["sample"].get("ack"):
+            row["ack"] = row["sample"]["ack"]
         out.append(row)
     return out
 

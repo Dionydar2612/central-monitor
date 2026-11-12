@@ -1877,14 +1877,40 @@ function renderGroups(list) {
         const ackTag = g.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${g.ack.by || "-"}${g.ack.until ? " · ถึง " + new Date(g.ack.until * 1000).toLocaleString("en-GB") : ""}${g.ack.note ? " · " + g.ack.note : ""}`)}">ACK</span>` : "";
         tr.innerHTML = `<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td>${escapeHtml((g.types || []).join(", ") || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}${selectable ? `<td class="gack">${groupAckHtml(g)}</td>` : ""}`;
         tr.addEventListener("click", e => {
+            const b = e.target.closest("button[data-gack],button[data-gunack]");
+            if (b) { ackGroup(b); return; }
             if (e.target.closest("td.gack")) return;
             if (p.id) openLogDetail(p);
         });
         tb.appendChild(tr);
     });
 }
-/* ปุ่ม ack ท้ายแถวกลุ่ม (ขั้นที่ 3) */
-function groupAckHtml(g) { return ""; }
+/* ปุ่ม ack ท้ายแถวกลุ่ม: Ack ทั้งกลุ่ม (ตาม fingerprint) เลือกเวลา 1 ชม. / 24 ชม. / 7 วัน
+   ซ่อนทุกบรรทัดที่ fp ตรง รวมบรรทัดที่จะเข้ามาใหม่ หมดเวลาแล้วโผล่กลับมาเอง */
+function groupAckHtml(g) {
+    if (!g.fp) return "";
+    if (g.ack && g.ack.fp) return `<button type="button" class="svbtn sm" data-gunack="${escapeHtml(g.fp)}">ยกเลิก ack</button>`;
+    return `<select class="gackh" aria-label="ซ่อนนานเท่าไร"><option value="1">1 ชม.</option><option value="24" selected>24 ชม.</option><option value="168">7 วัน</option></select><button type="button" class="svbtn sm" data-gack="${escapeHtml(g.fp)}" title="Acknowledge ทั้งกลุ่ม: ซ่อนทุกบรรทัดของปัญหานี้ (รวมที่เข้ามาใหม่) จนหมดเวลา">Ack กลุ่ม</button>`;
+}
+async function ackGroup(btn) {
+    const on = !!btn.dataset.gack, fp = btn.dataset.gack || btn.dataset.gunack;
+    const tr = btn.closest("tr"), hours = on ? Number(tr.querySelector(".gackh").value) : 0;
+    let note = "";
+    if (on) {
+        const label = { 1: "1 ชั่วโมง", 24: "24 ชั่วโมง", 168: "7 วัน" }[hours] || `${hours} ชั่วโมง`;
+        note = prompt(`Acknowledge ทั้งกลุ่ม ${label}?\nทุกบรรทัดของปัญหานี้ (รวมที่เข้ามาใหม่) จะถูกซ่อนจากตารางและตัวนับจนหมดเวลา\nโน้ต (ไม่บังคับ):`, "");
+        if (note === null) return;
+    }
+    btn.disabled = true;
+    try {
+        const r = await fetch(`/api/logs/${on ? "ack-fp" : "unack-fp"}`, {
+            method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(on ? { fp, hours, note, web: "" } : { fp }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+        await reloadLogs();
+        loadHist();
+    } catch (err) { alert("Acknowledge failed: " + err.message); btn.disabled = false; }
+}
 
 /* Metrics ย่อในตาราง: เฉพาะ CPU / Memory / Disk (สีตามเกณฑ์) ที่เหลือดูในหน้าต่างรายละเอียด */
 function compactMetrics(m) {

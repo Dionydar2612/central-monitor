@@ -301,3 +301,10 @@
 - หน้าแรก ตาราง Logs: สวิตช์ **Group duplicates** (ค่าเริ่มต้นเปิด, จำใน browser `cm.logsGroup`) · ตัวเลขบนปุ่ม level = จำนวนชนิดเมื่อรวมกลุ่ม · แถบสรุปเครื่อง "Problem logs 5120 (3 ชนิด)"
 - ไม่แตะข้อมูลใน OpenSearch และไม่แตะ puller · ปิดสวิตช์ = ตารางเดิมทุกอย่าง
 - หน้า Status & Logs (events.js) ไม่ได้แก้: แท็บ System log เป็นเหตุการณ์ของ sensor ไม่ใช่ log จาก OpenSearch
+
+## ลด log ซ้ำ ขั้นที่ 3: Acknowledge ตาม fingerprint
+- `log_ack_service.ack_fp(fp, user, note, until_hours=24, web=None)` / `unack_fp(fp)` / `ack_of(entry)` · เก็บใน `data/state/log_acks.json` คีย์ `fp:<fp>` = {by, at, note, web, until, fp} (ไฟล์เดียวกับ ack ตาม _id)
+- กรอง (`_not_acked` / `_public`): ack ถ้า _id ตรง (แบบเดิม) **หรือ** fp ตรง + ยังไม่หมด until + (ถ้าระบุ web) เครื่องตรง · หมดเวลา = กลับมาแสดงเอง และถูกลบออกจากไฟล์ตอนเขียนครั้งถัดไป
+- API `POST /api/logs/ack-fp` {fp, hours, note, web} · `POST /api/logs/unack-fp` {fp} (operator ขึ้นไป, บันทึก Activity log `log.ack_fp` / `log.unack_fp`)
+- หน้าแรก ตาราง Logs แบบรวมกลุ่ม: ปุ่ม Ack กลุ่ม + เลือก 1 ชม. / 24 ชม. / 7 วัน · แถวที่ ack แล้ว (Show acknowledged) มีป้าย ACK + "ยกเลิก ack"
+- แก้ cache ของ log_acks.json: เขียนแล้วอัปเดต cache ทันที (เดิมเขียน 2 ครั้งในวินาทีเดียวอาจอ่านค่าเก่า)

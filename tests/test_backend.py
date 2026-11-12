@@ -312,6 +312,44 @@ class Backend(unittest.TestCase):
         finally:
             logs_service._visible = orig
 
+    def test_ack_by_fingerprint(self):
+        import log_ack_service, logs_service, time as _t
+        rows = self._fake_logs()
+        fp_err = rows[0]["fp"]
+        orig_vis = logs_service._visible
+        logs_service._visible = lambda web, include_acked=False: list(rows) if include_acked else logs_service._not_acked(list(rows))
+        try:
+            self.assertEqual(self.login("admin", "rootpass"), 200)
+            r = self.c.post("/api/logs/ack-fp", json={"fp": fp_err, "hours": 24, "note": "known issue"})
+            self.assertEqual(r.status_code, 200, r.json)
+            vis = logs_service._visible("all")
+            self.assertEqual([e["id"] for e in vis], ["w1"])                       # ทั้งกลุ่มถูกซ่อน
+            # บรรทัดใหม่ที่ fp ตรง (เข้ามาทีหลัง) ต้องถูกซ่อนด้วย
+            new = dict(rows[0], id="new-1", _ts=99999)
+            self.assertIsNotNone(log_ack_service.ack_of(new))
+            g = logs_service.get_grouped_logs("all", include_acked=True)
+            self.assertEqual(g[0]["ack"]["note"], "known issue")
+            st = logs_service.get_log_stats("all")
+            self.assertEqual((st["total"], st["acknowledged"]), (1, 50))
+            # หมดเวลาแล้วต้องกลับมา
+            data = dict(log_ack_service.load()); data["fp:" + fp_err] = dict(data["fp:" + fp_err], until=_t.time() - 1)
+            log_ack_service._save(data); log_ack_service._CACHE["mtime"] = None
+            self.assertEqual(len(logs_service._visible("all")), 51)
+            # เครื่องเดียว: web-01 ซ่อน web-02 ไม่ซ่อน
+            log_ack_service.ack_fp(fp_err, "admin", web="web-01")
+            self.assertEqual({e["web"] for e in logs_service._visible("all") if e["level"] == "ERROR"}, {"web-02"})
+            self.assertTrue(self.c.post("/api/logs/unack-fp", json={"fp": fp_err}).json["removed"])
+            # ack แบบ _id เดิมยังทำงาน
+            self.assertEqual(self.c.post("/api/logs/ack", json={"ids": ["w1"]}).status_code, 200)
+            self.assertNotIn("w1", [e["id"] for e in logs_service._visible("all")])
+            self.c.post("/api/logs/unack", json={"ids": ["w1"]})
+            self.assertEqual(self.c.post("/api/logs/ack-fp", json={"fp": "zz!", "hours": 1}).status_code, 400)
+            self.assertEqual(self.c.post("/api/logs/ack-fp", json={"fp": fp_err, "hours": 0}).status_code, 400)
+            acts = [e["action"] for e in self.c.get("/api/events?kind=activity").json["entries"]]
+            self.assertIn("log.ack_fp", acts)
+        finally:
+            logs_service._visible = orig_vis
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

@@ -1523,3 +1523,4 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .pl td.gcnt b{color:var(--ink)}
 .gmore{font-size:11px;color:var(--mut);margin-left:4px;white-space:nowrap}
 .pl th.gack,.pl td.gack{white-space:nowrap;width:1%}
+.gackh{font:12px inherit;font-family:inherit;padding:3px 4px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);margin-right:4px}
