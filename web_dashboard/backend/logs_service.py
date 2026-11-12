@@ -47,7 +47,8 @@ import log_ack_service
 from clients import opensearch_request, prometheus_query_range, puller_info_logs
 from fingerprint import fingerprint
 from log_levels import detect_log_level
-from metrics_service import _labels, get_metrics_at_time, get_web_prometheus_config
+from clients import prom_vector
+from metrics_service import WIN_PROMQL, _labels, get_metrics_at_time, get_web_prometheus_config, win_mem_total
 from settings import load_web_targets, resolve_web_name
 from system_state import load_system_snapshot_at
 from timeutil import to_unix
@@ -505,7 +506,80 @@ def get_log_detail(web, log_id):
     entry["system_events"] = system.get("system_events", [])
     entry["system_snapshot_timestamp"] = system.get("system_timestamp")
 
+    # เครื่อง Windows (agent) ไม่มี snapshot จาก SSH -> ถาม Prometheus (windows_exporter) ณ เวลาของ log แทน
+    ts = to_unix(timestamp)
+    config = get_web_prometheus_config(web) or {}
+    if ts and config.get("os") == "windows":
+        labels = _labels(config)
+        if not entry["services"]:
+            entry["services"] = _win_services_at(labels, ts)
+            entry["services_note"] = "Service แบบ Automatic ที่ไม่ได้ทำงาน ณ เวลานั้น (ว่าง = ทำงานครบ)"
+        if not entry["processes"]:
+            entry["processes"] = _win_processes_at(labels, ts)
+
+    # ข้อมูลประกอบ: ปัญหานี้เกิดซ้ำแค่ไหน · sensor ที่มีปัญหาตอนนั้น · log อื่นของเครื่องนี้ช่วงเดียวกัน
+    try:
+        entry["related"] = _related(web, log_id, body, ts)
+    except Exception as e:
+        print("[LOGS] related error:", repr(e))
+        entry["related"] = {}
+
     return entry
+
+
+def _win_services_at(labels, ts):
+    """service ที่ตั้งเป็น Automatic แต่ไม่ได้ทำงาน ณ เวลา ts"""
+    q = (f'windows_service_state{{{labels},state!="running"}} == 1 '
+         f'and on(service, name) (windows_service_start_mode{{{labels},start_mode=~"auto|auto_delayed|automatic"}} == 1)')
+    out = []
+    for metric, _ in prom_vector(q, ts):
+        name = metric.get("service") or metric.get("name")
+        if name:
+            out.append({"name": name, "status": str(metric.get("state") or "unknown").replace(" ", "-")})
+    return sorted(out, key=lambda x: x["name"].lower())[:30]
+
+
+def _win_processes_at(labels, ts, limit=10):
+    """process ที่ใช้ CPU สูงสุด ณ เวลา ts (+ Memory % ของ process นั้น)"""
+    skip = 'process!~"_Total|Idle"'
+    sel = f'{{__name__=~"windows_process_cpu_time(_seconds)?_total",{labels},{skip}}}'
+    cpu = prom_vector(f"topk({limit}, sum by(process) (rate({sel}[2m])) * 100 / scalar({WIN_PROMQL['cores'](labels)}))", ts)
+    mem = {m.get("process"): v for m, v in prom_vector(
+        f"sum by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}}) * 100 / scalar({win_mem_total(labels)})", ts)}
+    rows = [{"name": m.get("process"), "cpu": round(v, 2), "memory": round(mem[m.get("process")], 2) if m.get("process") in mem else None}
+            for m, v in cpu if m.get("process")]
+    return sorted(rows, key=lambda r: -(r["cpu"] or 0))
+
+
+def _related(web, log_id, body, ts, window=600):
+    """ข้อมูลประกอบในหน้าต่างรายละเอียด log"""
+    import sensors_service                      # import ตอนใช้ (กัน import วน)
+    out = {}
+    fp = fingerprint(body)
+    rows = _visible("all", include_acked=True)
+    same = [e for e in rows if fp and e.get("fp") == fp]
+    if same:
+        webs = {}
+        for e in same:
+            webs[e["web"]] = webs.get(e["web"], 0) + 1
+        out["repeat"] = {"fp": fp, "count": len(same), "first": min(same, key=lambda e: e["_ts"])["timestamp"],
+                         "last": max(same, key=lambda e: e["_ts"])["timestamp"], "machines": len(webs),
+                         "webs": sorted(webs, key=lambda w: -webs[w])[:10]}
+    if ts:
+        near = [e for e in rows if e["web"] == web and e.get("id") != log_id and abs(e["_ts"] - ts) <= window]
+        near.sort(key=lambda e: abs(e["_ts"] - ts))
+        out["nearby"] = [{"id": e["id"], "web": e["web"], "timestamp": e["timestamp"], "level": e["level"],
+                          "type": e["type"], "message": str(e["message"] or "")[:300], "same": e.get("fp") == fp}
+                         for e in near[:15]]
+        out["nearby_window"] = window
+        inc = []
+        for i in sensors_service.get_incidents(hours=24 * 40, web=web):
+            a, b = float(i.get("start") or 0), float(i.get("end") or time.time())
+            if a - 60 <= ts <= b + 60:
+                inc.append({"name": i.get("name"), "kind": i.get("kind"), "worst": i.get("worst") or i.get("status"),
+                            "start": a, "end": i.get("end"), "peak": i.get("peak"), "unit": i.get("unit"), "state": i.get("state")})
+        out["sensors"] = inc[:15]
+    return out
 
 
 # ---------------------------------------------------------------------------

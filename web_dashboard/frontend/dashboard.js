@@ -480,6 +480,27 @@ function showProblemModal(problem) {
             .join("");
 
 
+    /* ข้อมูลประกอบ: เกิดซ้ำแค่ไหน · sensor ที่มีปัญหาตอนนั้น · log อื่นของเครื่องนี้ช่วงเดียวกัน (logs_service._related) */
+    const rel = problem.related || {};
+    const rp = rel.repeat;
+    const repeatHtml = rp ? `<div class="modal-block"><div class="modal-block-title">ปัญหานี้ (fingerprint ${escapeHtml(rp.fp)})</div>
+        <div class="mrel-grid"><div><span>เกิดทั้งหมด</span><strong>${escapeHtml(String(rp.count))} ครั้ง</strong></div>
+        <div><span>ครั้งแรก</span><strong>${escapeHtml(formatTimestamp(rp.first))}</strong></div>
+        <div><span>ล่าสุด</span><strong>${escapeHtml(formatTimestamp(rp.last))}</strong></div>
+        <div><span>เครื่อง</span><strong title="${escapeHtml((rp.webs || []).join(", "))}">${escapeHtml(String(rp.machines))}${rp.machines > 1 ? ` <small>(${escapeHtml((rp.webs || []).slice(0, 3).join(", "))}${rp.machines > 3 ? " ..." : ""})</small>` : ""}</strong></div></div>
+        <div class="mrel-note">นับจาก log ที่ระบบเห็นอยู่ (รวมที่ acknowledge แล้ว)</div></div>` : "";
+    const ST_TXT = { down: "Down", error: "Error", warning: "Warning", unknown: "Unknown", paused: "Paused" };
+    const sensHtml = Array.isArray(rel.sensors) ? `<div class="modal-block"><div class="modal-block-title">SENSOR ที่มีปัญหาตอนนั้น</div>${rel.sensors.length
+        ? `<div class="mrel-list">${rel.sensors.map(x => `<div class="mrel-row"><span class="ovst ${x.worst === "warning" ? "wr" : "cr"}">${escapeHtml(ST_TXT[x.worst] || x.worst || "-")}</span><strong>${escapeHtml(x.name || x.kind || "-")}</strong><small>${escapeHtml(formatTimestamp(new Date(x.start * 1000).toISOString()))} → ${x.end ? escapeHtml(formatTimestamp(new Date(x.end * 1000).toISOString())) : "ยังไม่จบ"}${hasValue(x.peak) ? ` · สูงสุด ${escapeHtml(String(x.peak))}${escapeHtml(x.unit || "")}` : ""}</small></div>`).join("")}</div>`
+        : `<div class="mrel-empty">ไม่มี sensor ของเครื่องนี้ที่มีปัญหา ณ เวลานั้น</div>`}</div>` : "";
+    const nearHtml = Array.isArray(rel.nearby) ? `<div class="modal-block"><div class="modal-block-title">LOG อื่นของเครื่องนี้ช่วงเดียวกัน (±${Math.round((rel.nearby_window || 600) / 60)} นาที)</div>${rel.nearby.length
+        ? `<div class="mrel-list">${rel.nearby.map(x => `<div class="mrel-row mrel-log" data-nid="${escapeHtml(x.id)}" data-nweb="${escapeHtml(x.web)}" role="button" tabindex="0"><span class="lv ${String(x.level).toLowerCase()}">${escapeHtml(x.level)}</span><small>${escapeHtml(formatTimestamp(x.timestamp))}${x.same ? " · ปัญหาเดียวกัน" : ""}</small><span class="mrel-msg" title="${escapeHtml(x.message)}">${escapeHtml(x.message)}</span></div>`).join("")}</div>`
+        : `<div class="mrel-empty">ไม่มี log อื่นในช่วงนี้</div>`}</div>` : "";
+    const relatedHtml = repeatHtml + sensHtml + nearHtml;
+    const svcTitle = problem.services_note ? `SERVICES · ${problem.services_note}` : "SERVICES";
+    const svcEmptyNote = problem.services_note && !serviceHtml
+        ? `<div class="modal-block"><div class="modal-block-title">SERVICES</div><div class="mrel-empty">Service แบบ Automatic ทำงานครบ ณ เวลานั้น</div></div>` : "";
+
     modal.innerHTML = `
 
         <div
@@ -595,13 +616,15 @@ function showProblemModal(problem) {
                 }
 
 
+                ${relatedHtml}
+                ${svcEmptyNote}
                 ${
                     serviceHtml
                         ? `
                             <div class="modal-block">
 
                                 <div class="modal-block-title">
-                                    SERVICES
+                                    ${escapeHtml(svcTitle)}
                                 </div>
 
                                 <div class="dynamic-service-list">
@@ -681,6 +704,11 @@ function showProblemModal(problem) {
 }
 
 /* ปิดหน้าต่างรายละเอียด (ปุ่มปิด หรือกด Esc) */
+/* คลิก log ข้างเคียงในหน้าต่างรายละเอียด = เปิด log นั้นแทน */
+document.addEventListener("click", e => {
+    const r = e.target.closest && e.target.closest("#problemModal [data-nid]");
+    if (r) openLogDetail({ id: r.dataset.nid, web: r.dataset.nweb, message: "", timestamp: null });
+});
 function closeProblemModal() {
 
     const modal =

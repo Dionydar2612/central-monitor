@@ -372,6 +372,24 @@ class Backend(unittest.TestCase):
         finally:
             logs_service._visible, logs_service._metrics_cached, logs_service._metric_minutes = orig_vis, orig_mc, orig_mm
 
+    def test_log_detail_related(self):
+        """หน้าต่างรายละเอียด log: เกิดซ้ำกี่ครั้ง / log ข้างเคียง / sensor ที่มีปัญหาตอนนั้น"""
+        import logs_service, sensors_service
+        rows = self._fake_logs()
+        orig_vis, orig_inc = logs_service._visible, sensors_service.get_incidents
+        logs_service._visible = lambda web, include_acked=False: list(rows)
+        sensors_service.get_incidents = lambda hours=24, web=None, **k: [
+            {"name": "CPU average 5m", "kind": "cpu", "worst": "error", "start": 1000, "end": 1100, "peak": 97, "unit": "%"},
+            {"name": "Disk", "kind": "disk", "worst": "warning", "start": 5000, "end": 6000}]
+        try:
+            e = rows[0]
+            r = logs_service._related("web-01", e["id"], e["message"], e["_ts"])
+            self.assertEqual((r["repeat"]["count"], r["repeat"]["machines"]), (50, 2))
+            self.assertEqual([x["name"] for x in r["sensors"]], ["CPU average 5m"])
+            self.assertTrue(r["nearby"] and all(x["web"] == "web-01" and x["id"] != e["id"] for x in r["nearby"]))
+        finally:
+            logs_service._visible, sensors_service.get_incidents = orig_vis, orig_inc
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)
