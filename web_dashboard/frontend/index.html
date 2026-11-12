@@ -72,9 +72,6 @@
 </div>
 <div class="dpane" data-pane="overview">
 
-<!-- ภาพรวมเครื่องแบบ PRTG (dashboard.js renderDevice): กล่องข้อมูล + เกจของ sensor + ตาราง sensor (คลิก = หน้า sensor) -->
-<div id="devPanel"></div>
-
 <!-- KPI 4 ใบ: CPU average 5m / Memory Usage % / Disk Usage % (Per Mount Point) / Disk I/O utilization (%)
      (ค่าปัจจุบัน + เส้นกราฟเล็ก จาก /api/metrics/history ; รายการ mount point จาก /api/metrics -> disk_mounts) -->
 <div class="grid kpis" id="kpis"></div>
@@ -131,6 +128,9 @@
 </div>
 <div class="dpane" data-pane="software" hidden><div id="pnSw" class="pn"></div></div>
 <div class="dpane" data-pane="alerts" hidden><div id="pnAl" class="pn"></div></div>
+<!-- ภาพรวม sensor ของเครื่องแบบ PRTG (dashboard.js renderDevice): ล่างสุดของรายละเอียดเครื่อง ก่อนตาราง Logs ·
+     กล่องข้อมูล + เกจ + ตาราง sensor (คลิก = หน้า sensor) -->
+<div id="devPanel"></div>
 </div>
 
 <!-- ตาราง Logs (#plog): log ของเครื่องที่เลือก คลิกแถวเพื่อเปิดหน้าต่างรายละเอียด (showProblemModal) -->

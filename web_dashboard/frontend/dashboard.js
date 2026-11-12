@@ -1901,6 +1901,11 @@ async function loadDevice(force) {
         renderDevice();
     } catch (e) { box.innerHTML = `<div class="empty">โหลด sensor ไม่ได้: ${escapeHtml(e.message)}</div>`; }
 }
+/* เวลา: รับได้ทั้ง unix วินาที / มิลลิวินาที / ISO (เดิมส่งตัวเลขวินาทีเข้า formatTimestamp -> ปี 2513) */
+function devTime(v) {
+    const n = typeof v === "number" ? (v < 1e12 ? v * 1000 : v) : Date.parse(v);
+    return Number.isFinite(n) ? formatTimestamp(new Date(n).toISOString()) : "-";
+}
 function renderDevice() {
     const box = q("#devPanel"), d = S.dev;
     if (!box || !d || d.web !== S.web) return;
@@ -1923,12 +1928,12 @@ function renderDevice() {
         const max = x.unit === "%" ? 100 : Math.max(Number(x.error) * 1.25 || 0, n, 1), f = Math.min(1, n / max);
         return `<span class="dbar"><i style="width:${(f * 100).toFixed(0)}%" class="${(DEV_ST[x.status] || DEV_ST.unknown)[2]}"></i></span><span class="dbv">${escapeHtml(CMGauge.fmt(n, x.unit))}</span>`;
     };
-    box.innerHTML = `<section class="card devinfo"><div class="devgrid">
+    box.innerHTML = `<div class="devtitle"><h2>Sensors · ${escapeHtml(S.web)}</h2><small class="st-mut">ภาพรวม sensor แบบ PRTG · คลิกเกจหรือชื่อ sensor เพื่อเปิดหน้า sensor</small></div><section class="card devinfo"><div class="devgrid">
 ${cell("Status", `<span class="ovst ${stc}">${escapeHtml(stl)}</span>`)}
-${cell("Last Scan", d.updated ? escapeHtml(formatTimestamp(d.updated)) : "-")}
+${cell("Last Scan", d.updated ? escapeHtml(devTime(d.updated)) : "-")}
 ${cell("Uptime (30 d)", av ? av.uptime_pct.toFixed(4) + "%" : "-")}
 ${cell("Downtime (30 d)", av ? av.downtime_pct.toFixed(4) + "%" : "-")}
-${cell("Last Down", av && av.last_down ? escapeHtml(formatTimestamp(new Date(av.last_down * 1000).toISOString())) : "never")}
+${cell("Last Down", av && av.last_down ? escapeHtml(devTime(av.last_down)) : "never")}
 ${cell("Sensors", `${d.sensors.length} <span class="dsc"><i class="ok">✓ ${cnt("ok")}</i>${cnt("warning") ? `<i class="wr">! ${cnt("warning")}</i>` : ""}${cnt("error") + cnt("down") ? `<i class="cr">✕ ${cnt("error") + cnt("down")}</i>` : ""}${cnt("paused") ? `<i class="ps">II ${cnt("paused")}</i>` : ""}</span>`)}
 ${cell("OS / IP", `${w.os === "windows" ? "Windows" : "Linux"} · ${escapeHtml(w.host || w.instance || "-")}`)}
 ${cell("Group", escapeHtml(w.group || "-"))}

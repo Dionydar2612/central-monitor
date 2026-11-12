@@ -1477,3 +1477,4 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .dgr{white-space:nowrap}.dbar{display:inline-block;width:110px;height:8px;border-radius:4px;background:var(--chip);vertical-align:middle;overflow:hidden}
 .dbar i{display:block;height:100%;background:#a8c522}.dbar i.wr{background:#f5b400}.dbar i.cr{background:#e5484d}.dbar i.ps{background:#4c8ff0}
 .dbv{margin-left:8px;font-size:12.5px}
+#devPanel{margin-top:16px}.devtitle{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:4px 2px 8px}.devtitle h2{margin:0;font-size:17px}
