@@ -43,6 +43,7 @@ sensor เพิ่มเติม
 """
 
 import json
+import math
 import os
 import threading
 import time
@@ -429,7 +430,38 @@ def _last_contact(name, checkpoints):
     return max(times) if times else None
 
 
+def _target_opts(t, opts):
+    """ค่าแจ้งเตือนเฉพาะเครื่อง (targets[].alert: {minutes, hysteresis, bottleneck}) ไม่ใส่ = ค่าทั้งระบบ"""
+    a = t.get("alert") if isinstance(t.get("alert"), dict) else {}
+    o = dict(opts)
+    try:
+        if a.get("hysteresis") is not None:
+            o["hyst"] = max(0.0, min(float(a["hysteresis"]), 20.0))
+    except (TypeError, ValueError):
+        pass
+    if a.get("bottleneck") is not None:
+        o["bottleneck"] = a["bottleneck"] is not False
+    o["target_confirm"] = None
+    try:
+        if a.get("minutes") is not None:
+            o["target_confirm"] = max(1, min(int(math.ceil(float(a["minutes"]) * 60 / INTERVAL)), 2880))
+    except (TypeError, ValueError):
+        pass
+    return o
+
+
 def _target_sensors(t, global_th, interval, checkpoints, previous, opts):
+    """sensor ของเครื่อง + ค่าแจ้งเตือนเฉพาะเครื่อง (นานกี่นาทีก่อนแจ้ง / hysteresis / bottleneck)"""
+    o = _target_opts(t, opts)
+    out = _target_sensors_raw(t, global_th, interval, checkpoints, previous, o)
+    if o["target_confirm"]:
+        for s in out:
+            if not s.get("confirm"):                 # กฎที่สร้างเองตั้งระยะเวลาเองไว้แล้ว -> ใช้ของกฎ
+                s["confirm"] = o["target_confirm"]
+    return out
+
+
+def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     """ค่าดิบของทุก sensor ของเครื่อง (status = ระดับจากค่าตอนนี้ ยังไม่ผ่านการยืนยัน N รอบ)"""
     name = t["name"]
     hyst = opts["hyst"]

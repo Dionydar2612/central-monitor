@@ -1344,3 +1344,22 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .gpick .gpa{font:12px inherit;font-family:inherit;border:1px solid var(--line);background:transparent;color:var(--blue);border-radius:5px;padding:1px 7px;cursor:pointer}
 .gcrumb{display:block;margin-top:4px;font-size:12px;color:var(--mut)}
 .gcrumb b{color:var(--ink);font-weight:600}
+
+/* ฟอร์มเครื่อง (Settings): แท็บ + หมวด */
+.ftabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:4px 0 14px;overflow-x:auto}
+.ftabs button{font:inherit;font-size:14px;background:none;border:0;border-bottom:2px solid transparent;color:var(--mut);padding:8px 14px;cursor:pointer;white-space:nowrap;margin-bottom:-1px}
+.ftabs button:hover{color:var(--ink)}
+.ftabs button.on{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
+.fsec{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
+.fsec-h{font-weight:600;font-size:14px;margin-bottom:10px}
+.fsec .st-h3:first-child{margin-top:0}
+.fnote{font-size:13px;margin-bottom:12px}
+.thtbl{width:100%;max-width:640px}
+.thtbl th:first-child{text-align:left;font-weight:normal;width:46%}
+.thtbl th small{display:block;color:var(--mut);font-size:11.5px}
+.thtbl td .st-f{margin:0}
+.thtbl td input{width:100%;max-width:140px}
+.thtbl input::placeholder,#formCard [data-p="alert"] input::placeholder{color:var(--mut);opacity:.55}
+.thtbl .lv{font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px}
+.thtbl .lv.wr{background:rgba(245,166,35,.16);color:#b26b00}
+.thtbl .lv.er{background:rgba(229,72,77,.14);color:#c4363b}

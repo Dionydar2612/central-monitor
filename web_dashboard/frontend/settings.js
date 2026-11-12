@@ -175,6 +175,7 @@ function setType(type) {
     document.querySelectorAll("#formCard .agent-only").forEach(n => { n.hidden = !agent; });
     $("f_type_hint").textContent = agent ? "เครื่องส่งข้อมูลเข้ามาเอง (ไม่ต้องเปิด SSH) · Host ไม่บังคับ" : "central เข้าไปดึง log ทาง SSH";
     $("f_host").placeholder = agent ? "(ไม่บังคับ) 10.0.0.21" : "10.0.10.13";
+    if ($("fa_min")) formDefaults();
 }
 
 function agentCentralGuess() {
@@ -202,10 +203,42 @@ async function makeAgentCommand() {
     } catch (e) { if (e.message !== "auth") $("agStatus").textContent = "สร้างคำสั่งไม่สำเร็จ: " + e.message; }
 }
 
+/* ฟอร์มเครื่อง: แท็บ ทั่วไป / การเชื่อมต่อ / Log / การแจ้งเตือน */
+function formTab(name) {
+    document.querySelectorAll("#formCard .ftabs button").forEach(b => b.classList.toggle("on", b.dataset.t === name));
+    document.querySelectorAll("#formCard .fpane").forEach(p => { p.hidden = p.dataset.p !== name; });
+}
+
+/* ช่องว่าง = ค่าเริ่มต้น: แสดงค่าที่ระบบใช้อยู่เป็นตัวจางในช่อง */
+function formDefaults() {
+    const win = $("f_type").value === "agent", d = AL || {};
+    const th = (win ? d.thresholds_windows : d.thresholds) || {};
+    TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => {
+        const v = th[k] ? th[k][lv] : undefined;
+        $(`th_${k}_${lv}`).placeholder = v != null ? String(v) : "ค่าเริ่มต้น";
+    }));
+    $("fa_min").placeholder = d.alert_minutes != null ? String(d.alert_minutes) : "3";
+    $("fa_hyst").placeholder = d.hysteresis != null ? String(d.hysteresis) : "2";
+    $("fa_bn").options[0].textContent = `ค่าเริ่มต้น (${d.bottleneck === false ? "ไม่ตรวจ" : "ตรวจ"})`;
+    $("a_crit").placeholder = (d.critical_services || []).join(", ") || "ค่าเริ่มต้น";
+}
+
+function fillAlertFields(t) {
+    const a = (t && t.alert) || {};
+    $("fa_min").value = a.minutes ?? ""; $("fa_hyst").value = a.hysteresis ?? "";
+    $("fa_bn").value = a.bottleneck === true ? "1" : a.bottleneck === false ? "0" : "";
+}
+
+function readAlertFields() {
+    const b = $("fa_bn").value;
+    return { minutes: $("fa_min").value.trim(), hysteresis: $("fa_hyst").value.trim(), bottleneck: b === "" ? null : b === "1" };
+}
+
 function openForm(t) {
     S.editing = t ? t.name : null; S.scanned = []; S.hostKeyKnown = !!(t && t.host_key_known);
     setType(t ? (t.type || "ssh") : "ssh");
     $("f_type").disabled = !!t;
+    formTab("general"); fillAlertFields(t); formDefaults();
     $("agCmd").value = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
     $("agCentral").value = agentCentralGuess();
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
@@ -267,6 +300,9 @@ function showErrors(fields) {
         if (box) { box.classList.add("has-err"); box.querySelector(".st-err").textContent = msg; }
         else general.push(msg);
     });
+    const first = document.querySelector("#formCard .has-err");
+    const pane = first && first.closest(".fpane");
+    if (pane) formTab(pane.dataset.p);
     return general.join(" · ");
 }
 
@@ -279,6 +315,7 @@ function readForm() {
             paused: $("f_paused").checked,
             host: $("f_host").value.trim(),
             thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
+            alert: readAlertFields(),
             /* ว่าง = ค่าทั้งระบบ (null) · "-" = ไม่ตรวจ ([]) */
             critical_services: $("a_crit").value.trim() === "" ? null : $("a_crit").value.trim() === "-" ? [] : $("a_crit").value.split(",").map(s => s.trim()).filter(Boolean),
             agent: {
@@ -297,6 +334,7 @@ function readForm() {
         group: $("f_group").value.trim(),
         paused: $("f_paused").checked,
         thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
+        alert: readAlertFields(),
         host: $("f_host").value.trim(),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
         prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim(),
@@ -774,6 +812,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     $("n_clear").onclick = () => { if (confirm("ลบ webhook URL? (หยุดส่งแจ้งเตือนไป Teams)")) saveNotify({ webhook_url: "-", enabled: false }); };
     $("f_type").addEventListener("change", e => setType(e.target.value));
+    document.querySelectorAll("#formCard .ftabs button").forEach(b => { b.onclick = () => formTab(b.dataset.t); });
     $("agMake").onclick = makeAgentCommand;
     $("agCopy").onclick = async () => {
         const t = $("agCmd"); if (!t.value) return; t.select();

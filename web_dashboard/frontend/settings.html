@@ -35,72 +35,35 @@
 
 <section class="card svc" id="formCard" hidden>
 <div class="top"><h2 id="formTitle">Add target</h2></div>
+<nav class="ftabs" role="tablist">
+<button type="button" data-t="general" class="on">ทั่วไป</button>
+<button type="button" data-t="conn">การเชื่อมต่อ</button>
+<button type="button" data-t="logs">Log</button>
+<button type="button" data-t="alert">การแจ้งเตือน</button>
+</nav>
+
+<div class="fpane" data-p="general">
+<div class="fsec"><div class="fsec-h">ข้อมูลเครื่อง</div>
 <div class="st-grid">
 <div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH)</option><option value="agent">Windows (agent / Fluent Bit)</option></select><small id="f_type_hint">central เข้าไปดึง log ทาง SSH</small><div class="st-err"></div></div>
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
-<div class="st-f" data-f="group"><label for="f_group">กลุ่ม (group)</label><input id="f_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><small>คั่นชั้นด้วย / (ซ้อนได้ 10 ชั้น) · คลิกกลุ่มด้านล่างเพื่อเลือก หรือ “+ ย่อย” เพื่อสร้างกลุ่มย่อยใต้กลุ่มนั้น · เว้นว่าง = Ungrouped</small><span class="gcrumb" id="f_group_crumb"></span><div class="gpick" id="f_group_pick"></div><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
-<div class="st-f ssh-only" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div>
-<div class="st-f ssh-only" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
-<div class="st-f ssh-only" data-f="prometheus.job"><label for="f_job">Prometheus job</label><input id="f_job" autocomplete="off" placeholder="(อัตโนมัติ: ชื่อเครื่อง-node)"><div class="st-err"></div></div>
-<div class="st-f ssh-only" data-f="prometheus.instance"><label for="f_inst">node_exporter (host:port)</label><input id="f_inst" autocomplete="off" placeholder="(อัตโนมัติ: host:9100) หรือ https://web.com/metrics"><div class="st-err"></div></div>
-<div class="st-f ssh-only" data-f="prometheus.scheme"><label for="f_scheme">node_exporter scheme</label><select id="f_scheme"><option value="http">http</option><option value="https">https</option></select><div class="st-err"></div></div>
-<div class="st-f ssh-only" data-f="prometheus.metrics_path"><label for="f_mpath">metrics path</label><input id="f_mpath" autocomplete="off" placeholder="/metrics"><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
-</div>
-
-<div class="st-h3">เกณฑ์แจ้งสถานะเฉพาะเครื่องนี้ (ไม่บังคับ)</div>
-<div style="color:var(--mut);font-size:13px">เว้นว่าง = ใช้ค่าทั้งระบบของ OS นั้น (การ์ด Alerts ด้านล่าง) · ใช้กับเครื่องที่ค่าสูงเป็นปกติ เช่น DB ที่ disk 85% ตลอด</div>
-<div class="st-grid th-grid">
-<div class="st-f" data-f="thresholds.cpu.warning"><label for="th_cpu_warning">CPU average 5m warning %</label><input id="th_cpu_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.cpu.error"><label for="th_cpu_error">CPU average 5m error %</label><input id="th_cpu_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.memory.warning"><label for="th_memory_warning">Memory warning %</label><input id="th_memory_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.memory.error"><label for="th_memory_error">Memory error %</label><input id="th_memory_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.disk.warning"><label for="th_disk_warning">Disk (ทุก mount point) warning %</label><input id="th_disk_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.disk.error"><label for="th_disk_error">Disk (ทุก mount point) error %</label><input id="th_disk_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.disk_latency.warning"><label for="th_disk_latency_warning">Disk latency warning ms</label><input id="th_disk_latency_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.disk_latency.error"><label for="th_disk_latency_error">Disk latency error ms</label><input id="th_disk_latency_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.packet_loss.warning"><label for="th_packet_loss_warning">Packet loss warning %</label><input id="th_packet_loss_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.packet_loss.error"><label for="th_packet_loss_error">Packet loss error %</label><input id="th_packet_loss_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.net_latency.warning"><label for="th_net_latency_warning">Ping latency warning ms</label><input id="th_net_latency_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f" data-f="thresholds.net_latency.error"><label for="th_net_latency_error">Ping latency error ms</label><input id="th_net_latency_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f agent-only" data-f="thresholds.mem_available.warning" hidden><label for="th_mem_available_warning">Available RAM warning % (ต่ำกว่า)</label><input id="th_mem_available_warning" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-<div class="st-f agent-only" data-f="thresholds.mem_available.error" hidden><label for="th_mem_available_error">Available RAM error % (ต่ำกว่า)</label><input id="th_mem_available_error" inputmode="decimal" placeholder="ค่าทั้งระบบ"><div class="st-err"></div></div>
-</div>
-
-<!-- Windows (agent): เครื่องส่งข้อมูลเองผ่าน Fluent Bit -> central-agent-gw :4318 (agent/windows/install-fluentbit.ps1) -->
-<div class="agent-only" hidden>
-<div class="st-h3">Log ที่จะส่งจากเครื่อง Windows</div>
-<div style="color:var(--mut);font-size:13px">ส่งเฉพาะ ERROR / WARN (Event Log: Critical / Error / Warning) · IIS (path มี inetpub) ส่งเฉพาะ HTTP 5xx</div>
-<div class="st-grid">
-<div class="st-f" data-f="agent.channels"><label for="a_channels">Event Log channels (คั่นด้วย ,)</label><input id="a_channels" autocomplete="off" value="System, Application" placeholder="System, Application"><small>เช่น Microsoft-Windows-Sysmon/Operational</small><div class="st-err"></div></div>
-<div class="st-f" data-f="critical_services"><label for="a_crit">Service สำคัญ (คั่นด้วย ,)</label><input id="a_crit" autocomplete="off" placeholder="เว้นว่าง = ค่าทั้งระบบ"><small>แจ้งเตือนเมื่อหยุดทั้งที่ตั้งเป็น Automatic · ใส่ - = ไม่ตรวจ</small><div class="st-err"></div></div>
-<div class="st-f" data-f="agent.logs" style="grid-column:span 2"><label for="a_logs">ไฟล์ log (บรรทัดละ 1 path · wildcard ได้)</label><textarea id="a_logs" class="st-code" rows="3" placeholder="C:\inetpub\logs\LogFiles\*\*.log&#10;D:\app\logs\*.log"></textarea><div class="st-err"></div></div>
-</div>
-<div class="st-h3">ติดตั้ง agent บนเครื่อง Windows</div>
-<div class="st-box">
-<div id="agStatus" style="color:var(--mut)">บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่</div>
-<ol class="agsteps">
-<li><a class="st-btn sm" id="agZip" href="/api/targets/agent-package.zip" download>Download installer (zip)</a> บนเครื่อง Windows (เก็บไว้ใน Downloads ไม่ต้องแตกไฟล์) · ถ้าเครื่องออกอินเทอร์เน็ตไม่ได้ วาง <code>fluent-bit-5.1.5-win64.zip</code> และ <code>windows_exporter-0.32.1-amd64.exe</code> ไว้ใน Downloads ด้วย</li>
-<li><div class="rtin" style="max-width:520px"><input id="agCentral" placeholder="IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก" autocomplete="off"><button class="st-btn sm" id="agMake" type="button">Make command</button></div></li>
-<li>เปิด <b>PowerShell</b> แบบ <b>Run as Administrator</b> (user เดียวกับที่ดาวน์โหลด) แล้ววางคำสั่งนี้ (แตก zip ล่าสุดใน Downloads ให้เอง):
-<textarea class="st-code" id="agCmd" readonly rows="3"></textarea>
-<div style="margin-top:6px"><button class="st-btn sm" id="agCopy" type="button">Copy command</button> <span id="agCopyMsg" style="color:var(--mut);font-size:12px"></span></div></li>
-<li>ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · ทดสอบ: <code>eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"</code></li>
-</ol>
-<div class="rtnote">คำสั่งมี token ของ central (เหมือนรหัสผ่าน) อย่าแชร์ในที่สาธารณะ · เครื่อง Windows ต้องต่อออกไปที่ central พอร์ต <span id="agPort">4318</span> ได้</div>
+</div></div>
+<div class="fsec"><div class="fsec-h">กลุ่ม</div>
+<div class="st-f" data-f="group"><label for="f_group">กลุ่ม (group)</label><input id="f_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><small>คั่นชั้นด้วย / (ซ้อนได้ 10 ชั้น) · คลิกกลุ่มด้านล่างเพื่อเลือก หรือ “+ ย่อย” เพื่อสร้างกลุ่มย่อยใต้กลุ่มนั้น · เว้นว่าง = Ungrouped</small><span class="gcrumb" id="f_group_crumb"></span><div class="gpick" id="f_group_pick"></div><div class="st-err"></div></div>
 </div>
 </div>
 
+<div class="fpane" data-p="conn" hidden>
 <div class="ssh-only">
-<div class="st-h3">Log files ที่ต้องการดึง</div>
-<div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
-journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>
-<div id="logs"></div>
-<div class="st-err" id="logsErr" style="color:#e5484d;font-size:12px;margin-top:6px"></div>
-<button class="st-btn sm" id="addLog" style="margin-top:10px">+ Add log file</button>
-<button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
-
+<div class="fsec"><div class="fsec-h">SSH (ดึง log)</div><div class="st-grid">
+<div class="st-f ssh-only" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div><div class="st-f ssh-only" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
+</div></div>
+<div class="fsec"><div class="fsec-h">Prometheus / node_exporter (CPU · Memory · Disk)</div><div class="st-grid">
+<div class="st-f ssh-only" data-f="prometheus.instance"><label for="f_inst">node_exporter (host:port)</label><input id="f_inst" autocomplete="off" placeholder="(อัตโนมัติ: host:9100) หรือ https://web.com/metrics"><div class="st-err"></div></div><div class="st-f ssh-only" data-f="prometheus.scheme"><label for="f_scheme">node_exporter scheme</label><select id="f_scheme"><option value="http">http</option><option value="https">https</option></select><div class="st-err"></div></div><div class="st-f ssh-only" data-f="prometheus.metrics_path"><label for="f_mpath">metrics path</label><input id="f_mpath" autocomplete="off" placeholder="/metrics"><div class="st-err"></div></div><div class="st-f ssh-only" data-f="prometheus.job"><label for="f_job">Prometheus job</label><input id="f_job" autocomplete="off" placeholder="(อัตโนมัติ: ชื่อเครื่อง-node)"><div class="st-err"></div></div>
+</div></div>
+<div class="fsec">
 <div class="st-h3">SSH host key</div>
 <div class="st-box" id="hkBox">
 <div id="hkStatus" style="color:var(--mut)">-</div>
@@ -120,6 +83,67 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div style="color:var(--mut);font-size:13px;margin-bottom:6px">ให้ central ล็อกอินเข้าเครื่องนั้นได้: สร้าง user และวาง public key นี้</div>
 <textarea class="st-code" id="setupCmd" readonly rows="6"></textarea>
 <div style="margin-top:8px"><button class="st-btn sm" id="copyCmd">Copy commands</button> <span id="copyMsg" style="color:var(--mut);font-size:12px"></span></div>
+</div>
+</div>
+<div class="agent-only" hidden>
+<div class="fsec">
+<div class="st-h3">ติดตั้ง agent บนเครื่อง Windows</div>
+<div class="st-box">
+<div id="agStatus" style="color:var(--mut)">บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่</div>
+<ol class="agsteps">
+<li><a class="st-btn sm" id="agZip" href="/api/targets/agent-package.zip" download>Download installer (zip)</a> บนเครื่อง Windows (เก็บไว้ใน Downloads ไม่ต้องแตกไฟล์) · ถ้าเครื่องออกอินเทอร์เน็ตไม่ได้ วาง <code>fluent-bit-5.1.5-win64.zip</code> และ <code>windows_exporter-0.32.1-amd64.exe</code> ไว้ใน Downloads ด้วย</li>
+<li><div class="rtin" style="max-width:520px"><input id="agCentral" placeholder="IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก" autocomplete="off"><button class="st-btn sm" id="agMake" type="button">Make command</button></div></li>
+<li>เปิด <b>PowerShell</b> แบบ <b>Run as Administrator</b> (user เดียวกับที่ดาวน์โหลด) แล้ววางคำสั่งนี้ (แตก zip ล่าสุดใน Downloads ให้เอง):
+<textarea class="st-code" id="agCmd" readonly rows="3"></textarea>
+<div style="margin-top:6px"><button class="st-btn sm" id="agCopy" type="button">Copy command</button> <span id="agCopyMsg" style="color:var(--mut);font-size:12px"></span></div></li>
+<li>ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · ทดสอบ: <code>eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"</code></li>
+</ol>
+<div class="rtnote">คำสั่งมี token ของ central (เหมือนรหัสผ่าน) อย่าแชร์ในที่สาธารณะ · เครื่อง Windows ต้องต่อออกไปที่ central พอร์ต <span id="agPort">4318</span> ได้</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="fpane" data-p="logs" hidden>
+<div class="ssh-only"><div class="fsec">
+<div class="st-h3">Log files ที่ต้องการดึง</div>
+<div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
+journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>
+<div id="logs"></div>
+<div class="st-err" id="logsErr" style="color:#e5484d;font-size:12px;margin-top:6px"></div>
+<button class="st-btn sm" id="addLog" style="margin-top:10px">+ Add log file</button>
+<button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
+</div></div>
+<!-- Windows (agent): เครื่องส่งข้อมูลเองผ่าน Fluent Bit -> central-agent-gw :4318 -->
+<div class="agent-only" hidden><div class="fsec"><div class="fsec-h">Log ที่จะส่งจากเครื่อง Windows</div>
+<div class="st-mut" style="font-size:13px">ส่งเฉพาะ ERROR / WARN (Event Log: Critical / Error / Warning) · IIS (path มี inetpub) ส่งเฉพาะ HTTP 5xx</div>
+<div class="st-grid">
+<div class="st-f" data-f="agent.channels"><label for="a_channels">Event Log channels (คั่นด้วย ,)</label><input id="a_channels" autocomplete="off" value="System, Application" placeholder="System, Application"><small>เช่น Microsoft-Windows-Sysmon/Operational</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.logs" style="grid-column:span 2"><label for="a_logs">ไฟล์ log (บรรทัดละ 1 path · wildcard ได้)</label><textarea id="a_logs" class="st-code" rows="3" placeholder="C:\inetpub\logs\LogFiles\*\*.log&#10;D:\app\logs\*.log"></textarea><div class="st-err"></div></div>
+</div></div></div>
+</div>
+
+<div class="fpane" data-p="alert" hidden>
+<div class="st-mut fnote">ช่องที่เว้นว่าง = ใช้ <b>ค่าเริ่มต้น</b> (ตัวเลขสีจางในช่อง) · ใส่เฉพาะค่าที่ต้องการให้ต่างจากปกติ เช่น DB ที่ disk 85% เป็นปกติ</div>
+<div class="fsec"><div class="fsec-h">เงื่อนไขการแจ้ง</div><div class="st-grid">
+<div class="st-f" data-f="alert.minutes"><label for="fa_min">แจ้งเมื่อเกินเกณฑ์ต่อเนื่อง (นาที)</label><input id="fa_min" type="number" min="0.5" max="1440" step="0.5" inputmode="decimal"><small>ค่ากระตุกสั้นกว่านี้ไม่แจ้ง · ตรวจทุก 30 วินาที</small><div class="st-err"></div></div>
+<div class="st-f" data-f="alert.hysteresis"><label for="fa_hyst">Hysteresis</label><input id="fa_hyst" type="number" min="0" max="20" step="0.5" inputmode="decimal"><small>ต้องลดต่ำกว่าเกณฑ์ − ค่านี้ก่อนกลับเป็น OK (กันเด้งไปมา)</small><div class="st-err"></div></div>
+<div class="st-f" data-f="alert.bottleneck"><label for="fa_bn">ตรวจ Bottleneck</label><select id="fa_bn"><option value="">ค่าเริ่มต้น</option><option value="1">ตรวจ</option><option value="0">ไม่ตรวจ</option></select><small>CPU / Memory / Disk / Network ติดคอขวด</small><div class="st-err"></div></div>
+</div></div>
+<div class="fsec"><div class="fsec-h">เกณฑ์ (Warning / Error)</div>
+<table class="st-tbl thtbl"><thead><tr><th>ค่าที่ตรวจ</th><th><span class="lv wr">Warning</span></th><th><span class="lv er">Error</span></th></tr></thead><tbody>
+<tr class=""><th><b>CPU</b> <span class="st-mut">%</span><small>ค่าเฉลี่ย 5 นาที</small></th><td><div class="st-f" data-f="thresholds.cpu.warning"><input id="th_cpu_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.cpu.error"><input id="th_cpu_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class=""><th><b>Memory used</b> <span class="st-mut">%</span></th><td><div class="st-f" data-f="thresholds.memory.warning"><input id="th_memory_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.memory.error"><input id="th_memory_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class=""><th><b>Disk used</b> <span class="st-mut">%</span><small>ทุกไดรฟ์ / mount point</small></th><td><div class="st-f" data-f="thresholds.disk.warning"><input id="th_disk_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.disk.error"><input id="th_disk_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class="agent-only" hidden><th><b>Available RAM</b> <span class="st-mut">%</span><small>ต่ำกว่า = แจ้ง</small></th><td><div class="st-f" data-f="thresholds.mem_available.warning"><input id="th_mem_available_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.mem_available.error"><input id="th_mem_available_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class=""><th><b>Disk latency</b> <span class="st-mut">ms</span></th><td><div class="st-f" data-f="thresholds.disk_latency.warning"><input id="th_disk_latency_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.disk_latency.error"><input id="th_disk_latency_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class=""><th><b>Packet loss (ping)</b> <span class="st-mut">%</span></th><td><div class="st-f" data-f="thresholds.packet_loss.warning"><input id="th_packet_loss_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.packet_loss.error"><input id="th_packet_loss_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class=""><th><b>Ping latency</b> <span class="st-mut">ms</span></th><td><div class="st-f" data-f="thresholds.net_latency.warning"><input id="th_net_latency_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.net_latency.error"><input id="th_net_latency_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+</tbody></table>
+</div>
+<div class="fsec agent-only" hidden><div class="fsec-h">Service สำคัญของ Windows</div>
+<div class="st-f" data-f="critical_services"><label for="a_crit">ชื่อ service (คั่นด้วย ,)</label><input id="a_crit" autocomplete="off"><small>แจ้ง Error เมื่อหยุดทั้งที่ตั้งเป็น Automatic · ใส่ - = ไม่ตรวจ · service ที่ไม่มีบนเครื่องจะถูกข้าม</small><div class="st-err"></div></div>
+</div>
 </div>
 
 <div class="st-msg" id="formMsg" role="alert"></div>
@@ -171,7 +195,8 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-msg" id="userMsg" role="status"></div>
 </section>
 <!-- การแจ้งเตือน (/api/alert-settings): puller.yaml -> sensors / thresholds (Linux) / thresholds_windows (Windows) -->
-<section class="card svc">
+<!-- ค่าเริ่มต้นทั้งระบบ: ซ่อนไว้ (ตั้งเฉพาะเครื่องในฟอร์มของเครื่อง แท็บ การแจ้งเตือน) -->
+<section class="card svc" id="alertsCard" hidden>
 <div class="top"><h2>Alerts</h2></div>
 <div style="color:var(--mut);font-size:13px">ใช้กับทุกเครื่อง (ตั้งเฉพาะเครื่องได้ในฟอร์มของเครื่อง) · puller ใช้ค่าใหม่ในรอบตรวจถัดไป (~30 วินาที) ไม่ต้องรีสตาร์ต</div>
 <div class="st-grid">

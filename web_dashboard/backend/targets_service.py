@@ -136,6 +136,32 @@ def clean_thresholds(value, errors, prefix="thresholds"):
     return out
 
 
+def clean_alert(value, errors, prefix="alert"):
+    """ค่าแจ้งเตือนเฉพาะเครื่อง {minutes, hysteresis, bottleneck}  ช่องว่าง/None = ใช้ค่าทั้งระบบ  คืน dict (อาจว่าง)"""
+    out = {}
+    if not isinstance(value, dict):
+        return out
+    for key, lo, hi in (("minutes", 0.5, 1440), ("hysteresis", 0, 20)):
+        v = value.get(key)
+        if v in (None, ""):
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            errors[f"{prefix}.{key}"] = f"ต้องเป็นตัวเลข {lo:g}-{hi:g}"
+            continue
+        if not lo <= v <= hi:
+            errors[f"{prefix}.{key}"] = f"ต้องอยู่ระหว่าง {lo:g}-{hi:g}"
+            continue
+        out[key] = int(v) if v.is_integer() else v
+    b = value.get("bottleneck")
+    if b in (True, False):
+        out["bottleneck"] = b
+    elif b not in (None, ""):
+        errors[f"{prefix}.bottleneck"] = "เลือก ตรวจ / ไม่ตรวจ / ค่าทั้งระบบ"
+    return out
+
+
 def clean_services(value, errors, field="critical_services"):
     """รายชื่อ service (list หรือข้อความคั่นด้วย , / ขึ้นบรรทัด)  None = ใช้ค่าทั้งระบบ"""
     if value is None:
@@ -231,12 +257,13 @@ def validate_agent_target(data, existing_names, editing=None):
     group = clean_group(data.get("group"), errors)
     paused = bool(data.get("paused", False))
     thresholds = clean_thresholds(data.get("thresholds"), errors)
+    alert = clean_alert(data.get("alert"), errors)
     crit = data.get("critical_services")
     crit = clean_services(crit, errors) if crit not in (None, "") else None
     if errors:
         raise ValidationError(errors)
     return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "paused": paused,
-            "thresholds": thresholds, "critical_services": crit, "agent": {"logs": logs, "channels": channels}}
+            "thresholds": thresholds, "alert": alert, "critical_services": crit, "agent": {"logs": logs, "channels": channels}}
 
 
 def is_agent(t):
@@ -327,6 +354,7 @@ def validate_target(data, existing_names, editing=None):
     group = clean_group(data.get("group"), errors)
     paused = bool(data.get("paused", False))
     thresholds = clean_thresholds(data.get("thresholds"), errors)
+    alert = clean_alert(data.get("alert"), errors)
 
     if errors:
         raise ValidationError(errors)
@@ -337,6 +365,7 @@ def validate_target(data, existing_names, editing=None):
         "group": group,
         "paused": paused,
         "thresholds": thresholds,
+        "alert": alert,
         "prometheus": {"job": job, "instance": instance,
                        "scheme": scheme, "metrics_path": metrics_path},
         "ssh": {"port": ssh_port, "user": ssh_user},
@@ -410,6 +439,8 @@ def _to_node(t):
             node["paused"] = True
         if t.get("thresholds"):
             node["thresholds"] = _thresholds_node(t["thresholds"])
+        if t.get("alert"):
+            node["alert"] = _flow(t["alert"])
         if t.get("critical_services") is not None:
             cs = CommentedSeq(t["critical_services"])
             cs.fa.set_flow_style()
@@ -423,6 +454,8 @@ def _to_node(t):
         node["paused"] = True
     if t.get("thresholds"):
         node["thresholds"] = _thresholds_node(t["thresholds"])
+    if t.get("alert"):
+        node["alert"] = _flow(t["alert"])
     prom = CommentedMap(t["prometheus"])
     node["prometheus"] = prom
     node["ssh"] = CommentedMap(t["ssh"])
@@ -436,7 +469,8 @@ def _to_node(t):
 def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
     if is_agent(t) or is_agent(node):
-        for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent", "critical_services"):
+        for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent", "critical_services",
+                    "group", "paused", "thresholds", "alert"):
             if key in node:
                 del node[key]
         for k, v in _to_node(t).items():
@@ -447,6 +481,7 @@ def _apply(node, t):
     _set_or_drop(node, "group", t.get("group") or None)
     _set_or_drop(node, "paused", True if t.get("paused") else None)
     _set_or_drop(node, "thresholds", _thresholds_node(t["thresholds"]) if t.get("thresholds") else None)
+    _set_or_drop(node, "alert", _flow(t["alert"]) if t.get("alert") else None)
     for key in ("prometheus", "ssh"):
         if not isinstance(node.get(key), CommentedMap):
             node[key] = CommentedMap()
@@ -456,6 +491,12 @@ def _apply(node, t):
     for item in t["logs"]:
         logs.append(CommentedMap(item))
     node["logs"] = logs
+
+
+def _flow(d):
+    m = CommentedMap(d)
+    m.fa.set_flow_style()
+    return m
 
 
 def _thresholds_node(th):
@@ -640,6 +681,7 @@ def _view(t):
         agent = t.get("agent") or {}
         return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
                 "group": t.get("group") or "", "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
+                "alert": t.get("alert") or {},
                 "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"]},
                 "critical_services": t.get("critical_services"),
                 "watch_services": t.get("watch_services") or []}
@@ -652,6 +694,7 @@ def _view(t):
         "group": t.get("group") or "",
         "paused": bool(t.get("paused")),
         "thresholds": t.get("thresholds") or {},
+        "alert": t.get("alert") or {},
         "prometheus": t.get("prometheus") or {},
         "ssh": {"port": port, "user": ssh.get("user", "")},
         "logs": t.get("logs") or [],

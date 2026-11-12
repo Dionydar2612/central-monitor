@@ -30,6 +30,13 @@ import notify             # noqa: E402
 class SensorGrade(unittest.TestCase):
     TH = {"warning": 80, "error": 90}
 
+    def test_target_alert_options(self):
+        opts = {"confirm": 6, "hyst": 2.0, "bottleneck": True}
+        o = sensor_monitor._target_opts({"alert": {"minutes": 10, "hysteresis": 5, "bottleneck": False}}, opts)
+        self.assertEqual((o["target_confirm"], o["hyst"], o["bottleneck"]), (20, 5.0, False))
+        o = sensor_monitor._target_opts({}, opts)                       # ไม่ใส่ = ค่าทั้งระบบ
+        self.assertEqual((o["target_confirm"], o["hyst"], o["bottleneck"]), (None, 2.0, True))
+
     def test_hysteresis(self):
         g = sensor_monitor._grade
         self.assertEqual(g(81, self.TH), "warning")

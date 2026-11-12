@@ -47,6 +47,14 @@ class Backend(unittest.TestCase):
         bad = c.post("/api/targets", json={"name": "web-02", "host": "10.0.0.2", "ssh": {"user": "cp"},
                                            "thresholds": {"cpu": {"warning": 95, "error": 90}}, "logs": []}).json
         self.assertIn("thresholds.cpu.warning", bad["fields"])
+        # ค่าแจ้งเตือนเฉพาะเครื่อง (ว่าง = ค่าเริ่มต้น)
+        r = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "group": "TQ/IT", "logs": [],
+                                               "alert": {"minutes": 10, "hysteresis": "", "bottleneck": False}})
+        self.assertLess(r.status_code, 300, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "web-01"][0]
+        self.assertEqual(t["alert"], {"minutes": 10, "bottleneck": False})
+        bad = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "logs": [], "alert": {"minutes": 0}}).json
+        self.assertIn("alert.minutes", bad["fields"])
         self.assertEqual(c.post("/api/users", json={"username": "v1", "password": "password1", "role": "viewer"}).status_code, 201)
         self.assertEqual(self.login("v1", "password1"), 200)
         self.assertEqual(c.put("/api/targets/web-01/pause", json={"paused": True}).status_code, 403)
