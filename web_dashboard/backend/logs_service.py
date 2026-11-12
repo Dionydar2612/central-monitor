@@ -184,6 +184,14 @@ def _light_entry(web, marker, hit):
 _MINUTES_CACHE = {}           # web -> (หมดอายุ, t0, t1, set ของนาทีที่มีข้อมูล)
 MINUTES_TTL = 60
 PRESENCE_QUERY = "count(node_memory_MemTotal_bytes{%s})"
+# Windows (agent): metrics ของ windows_exporter (รองรับชื่อใหม่ / เก่า) label cm_web="<เครื่อง>"
+PRESENCE_QUERY_WINDOWS = 'count({__name__=~"windows_cpu_time_total|windows_cpu_time_seconds_total",%s})'
+METRIC_KEYS = ("cpu", "memory", "disk")       # ต้องมีอย่างน้อย 1 ค่า จึงถือว่า "มี Metrics at time"
+
+
+def _has_metrics(m):
+    """correlated_metrics มีค่าจริง (CPU / Memory / Disk อย่างน้อย 1 ค่า)"""
+    return isinstance(m, dict) and any(m.get(k) is not None for k in METRIC_KEYS)
 
 
 def _metric_minutes(web, t0, t1):
@@ -202,7 +210,8 @@ def _metric_minutes(web, t0, t1):
         start = t0
         while start <= t1:                          # Prometheus รับไม่เกิน 11000 จุดต่อครั้ง
             end = min(t1, start + 10000 * 60)
-            res = prometheus_query_range(PRESENCE_QUERY % _labels(config), start, end, 60)
+            query = PRESENCE_QUERY_WINDOWS if config.get("os") == "windows" else PRESENCE_QUERY
+            res = prometheus_query_range(query % _labels(config), start, end, 60)
             for series in (res.get("data") or {}).get("result", []):
                 minutes.update(int(float(ts)) // 60 for ts, _ in series.get("values", []))
             start = end + 60
@@ -218,16 +227,15 @@ def _is_agent(web):
 
 
 def _with_metrics(entries, web):
-    """เอาเฉพาะ log ที่มี metrics ณ เวลานั้น (Prometheus ล่ม/ถามไม่ได้ -> แสดงทั้งหมด ดีกว่าหายหมด)
-    เครื่อง Windows (agent) ยังไม่มี metrics (ขั้นถัดไป) -> แสดงทุก log"""
-    if _is_agent(web):
-        return entries
+    """เอาเฉพาะ log ที่มี metrics ณ เวลานั้น — log ที่แสดงทุกแถวต้องมี Metrics at time เสมอ
+    ใช้กับทุกเครื่อง รวม Windows (agent: windows_exporter)
+    Prometheus ถามไม่ได้และไม่มีผลเก่าใน cache -> ไม่แสดง (เดิมแสดงทั้งหมดแม้ไม่มี metrics)"""
     stamps = [e["_ts"] for e in entries if e.get("_ts")]
     if not stamps:
         return []
     minutes = _metric_minutes(web, min(stamps), max(stamps))
     if minutes is None:
-        return entries
+        return []
     return [e for e in entries if e.get("_ts") and
             (int(e["_ts"]) // 60 in minutes or int(e["_ts"]) // 60 + 1 in minutes)]
 
@@ -369,12 +377,15 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
         if wanted_types and entry["type"] not in wanted_types:
             continue
 
-        output.append(entry)
+        row = _public(entry)
+        if not _has_metrics(row.get("correlated_metrics")):      # กันอีกชั้น: ถามค่าจริงแล้วว่างเปล่า -> ไม่แสดง
+            continue
+        output.append(row)
 
         if len(output) >= size:
             break
 
-    return [_public(e) for e in output]
+    return output
 
 
 def _filtered(web, levels=None, types=None, start=None, end=None, include_acked=False):
@@ -399,8 +410,9 @@ def group_entries(entries):
         g = groups.get(key)
         if g is None:
             groups[key] = g = {"fp": e.get("fp") or "", "level": e["level"], "sample": e, "count": 0,
-                               "_first": e, "_webs": {}, "_types": set()}
+                               "_first": e, "_webs": {}, "_types": set(), "_entries": []}
         g["count"] += 1
+        g["_entries"].append(e)
         if e["level"] == "ERROR":
             g["level"] = "ERROR"
         if e["_ts"] >= g["sample"]["_ts"]:
@@ -415,18 +427,28 @@ def group_entries(entries):
                     "first": g["_first"]["timestamp"], "last": g["sample"]["timestamp"],
                     "_first_ts": g["_first"]["_ts"], "_last_ts": g["sample"]["_ts"],
                     "machines": len(g["_webs"]), "webs": sorted(g["_webs"], key=lambda w: -g["_webs"][w])[:20],
-                    "types": sorted(g["_types"])})
+                    "types": sorted(g["_types"]), "_entries": g["_entries"]})
     out.sort(key=lambda g: g["_last_ts"], reverse=True)
     return out
 
 
 def get_grouped_logs(web, size=200, levels=None, types=None, start=None, end=None, include_acked=False):
     """รายการ log แบบรวมกลุ่ม (1 ปัญหา = 1 แถว) ตัวกรองเหมือน get_logs  -> /api/logs/grouped"""
-    groups = group_entries(_filtered(web, levels, types, start, end, include_acked))[:size]
     out = []
-    for g in groups:
+    for g in group_entries(_filtered(web, levels, types, start, end, include_acked)):
+        if len(out) >= size:
+            break
         row = {k: v for k, v in g.items() if not k.startswith("_")}
-        row["sample"] = _public(g["sample"])
+        # ตัวอย่าง = บรรทัดล่าสุดที่มี Metrics at time (ไม่มีเลยทั้งกลุ่ม -> ไม่แสดงกลุ่มนี้)
+        sample = None
+        for e in g["_entries"][:20]:
+            pub = _public(e)
+            if _has_metrics(pub.get("correlated_metrics")):
+                sample = pub
+                break
+        if sample is None:
+            continue
+        row["sample"] = sample
         fa = log_ack_service.load().get("fp:" + g["fp"]) if g["fp"] else None     # ack ทั้งกลุ่มที่ยังไม่หมดเวลา
         if fa and (fa.get("until") or 0) > time.time():
             row["ack"] = fa
@@ -637,11 +659,16 @@ def search_logs(query, web=None, levels=None, types=None, start=None, end=None, 
             "_ts": to_unix(timestamp) or 0.0,
         })
 
-    # เอาเฉพาะ log ที่มี metrics (แยกตามเครื่อง)
+    # เอาเฉพาะ log ที่มี metrics (แยกตามเครื่อง) + แนบ Metrics at time ทุกแถว (ว่าง -> ไม่แสดง)
     kept = []
     for w in {e["web"] for e in out}:
         kept += _with_metrics([e for e in out if e["web"] == w], w)
-    out = [{k: v for k, v in e.items() if k != "_ts"} for e in kept]
+    out = []
+    for e in kept:
+        e = {k: v for k, v in e.items() if k != "_ts"}
+        e["correlated_metrics"] = _metrics_cached(e["timestamp"], e["web"])
+        if _has_metrics(e["correlated_metrics"]):
+            out.append(e)
 
     out.sort(key=lambda e: to_unix(e["timestamp"]) or 0, reverse=True)
     return {"results": out[:size], "total": total, "matched": len(out),
@@ -675,8 +702,10 @@ def get_info_logs(web, lines=500, source=None, start=None, end=None):
             "type": item.get("type") or "application",
             "message": item.get("message", ""),
             "source_file": item.get("source_file"),
-            "correlated_metrics": {},
+            "correlated_metrics": _metrics_cached(item.get("timestamp"), web),
         })
+    # INFO ก็เช่นกัน: แสดงเฉพาะบรรทัดที่มี Metrics at time
+    entries = [e for e in entries if _has_metrics(e["correlated_metrics"])]
 
     return {"entries": entries, "errors": result.get("errors") or [], "lines": result.get("lines")}
 

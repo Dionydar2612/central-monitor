@@ -301,8 +301,9 @@ class Backend(unittest.TestCase):
         self.assertEqual((g[0]["count"], g[0]["machines"], g[0]["level"]), (50, 2, "ERROR"))
         self.assertEqual(g[0]["sample"]["id"], "e49")                         # บรรทัดล่าสุด
         self.assertEqual(g[0]["first"], rows[-2]["timestamp"])
-        orig = logs_service._visible
+        orig, orig_mc = logs_service._visible, logs_service._metrics_cached
         logs_service._visible = lambda web, include_acked=False: list(rows)
+        logs_service._metrics_cached = lambda ts, web: {"cpu": 1.0}
         try:
             st = logs_service.get_log_stats("all")
             self.assertEqual((st["total"], st["kinds"]["total"]), (51, 2))
@@ -310,14 +311,15 @@ class Backend(unittest.TestCase):
             self.assertEqual((logs_service.get_problem_count("all"), logs_service.get_problem_count("all", kinds=True)), (51, 2))
             self.assertEqual(len(logs_service.get_grouped_logs("all", levels="WARN")), 1)
         finally:
-            logs_service._visible = orig
+            logs_service._visible, logs_service._metrics_cached = orig, orig_mc
 
     def test_ack_by_fingerprint(self):
         import log_ack_service, logs_service, time as _t
         rows = self._fake_logs()
         fp_err = rows[0]["fp"]
-        orig_vis = logs_service._visible
+        orig_vis, orig_mc = logs_service._visible, logs_service._metrics_cached
         logs_service._visible = lambda web, include_acked=False: list(rows) if include_acked else logs_service._not_acked(list(rows))
+        logs_service._metrics_cached = lambda ts, web: {"cpu": 1.0}
         try:
             self.assertEqual(self.login("admin", "rootpass"), 200)
             r = self.c.post("/api/logs/ack-fp", json={"fp": fp_err, "hours": 24, "note": "known issue"})
@@ -348,7 +350,27 @@ class Backend(unittest.TestCase):
             acts = [e["action"] for e in self.c.get("/api/events?kind=activity").json["entries"]]
             self.assertIn("log.ack_fp", acts)
         finally:
-            logs_service._visible = orig_vis
+            logs_service._visible, logs_service._metrics_cached = orig_vis, orig_mc
+            log_ack_service.unack_fp(fp_err)
+
+    def test_logs_without_metrics_hidden(self):
+        """log ที่แสดงทุกแถวต้องมี Metrics at time"""
+        import logs_service
+        rows = self._fake_logs()
+        orig_vis, orig_mc, orig_mm = logs_service._visible, logs_service._metrics_cached, logs_service._metric_minutes
+        logs_service._visible = lambda web, include_acked=False: list(rows)
+        # มี metrics เฉพาะ web-01
+        logs_service._metrics_cached = lambda ts, web: {"cpu": 5.0, "memory": 40.0} if web == "web-01" else {}
+        try:
+            got = logs_service.get_logs("all", size=500)
+            self.assertTrue(got and all(r["web"] == "web-01" and r["correlated_metrics"] for r in got))
+            g = logs_service.get_grouped_logs("all")
+            self.assertTrue(all(x["sample"]["web"] == "web-01" for x in g))
+            # Prometheus ถามไม่ได้ -> ไม่แสดง (เดิมแสดงทั้งหมด)
+            logs_service._metric_minutes = lambda web, t0, t1: None
+            self.assertEqual(logs_service._with_metrics(rows, "web-01"), [])
+        finally:
+            logs_service._visible, logs_service._metrics_cached, logs_service._metric_minutes = orig_vis, orig_mc, orig_mm
 
     def test_alert_rules(self):
         c = self.c

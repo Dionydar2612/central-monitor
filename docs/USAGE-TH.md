@@ -186,6 +186,7 @@ service:
 - เข้า `http://127.0.0.1:8090` (หรือ HTTPS ผ่าน nginx ตามข้อ 9 ของ INSTALL-TH.md) → login ด้วย user/password จาก `.env`
 - เลือกเครื่องด้านบน → เห็น CPU / Memory / Disk / Network, สถานะ online/offline, จำนวน problem, errors 15 นาทีล่าสุด, เวลาที่ดึงล่าสุด
 - ตาราง Logs: log ทั้งหมดของเครื่องที่เลือก (ล่าสุด 300 รายการ, เลื่อนดูในกล่อง) พร้อมค่า metrics ตอนนั้น — คลิกแถวเพื่อดูรายละเอียด สถานะ service/process/system events และ raw log
+  - **แสดงเฉพาะ log ที่มี Metrics at time เสมอ** (ทุกเครื่อง รวม Windows) — log ที่ Prometheus ไม่มีข้อมูลของเครื่อง ณ เวลานั้น (เก่ากว่าที่ Prometheus เก็บ / exporter ล่ม / Prometheus ติดต่อไม่ได้) ไม่แสดงและไม่นับ แต่ยังอยู่ใน OpenSearch ตามปกติ ใช้กับผลค้นหาและ INFO ด้วย
 - กล่อง Service, System events, ตาราง process และ Logs เลื่อนดูในกล่องได้ ไม่ทำให้หน้าเว็บยาว
 - ตัวเลข "Problem logs" / "Errors 15m" ด้านบนยังนับเฉพาะข้อความที่เป็น error/warn ตามเดิม และมี "(N ชนิด)" ต่อท้าย = จำนวนปัญหาที่ไม่ซ้ำกัน
 - **Group duplicates** (ติ๊กไว้เป็นค่าเริ่มต้น): รวมบรรทัดที่เป็นปัญหาเดียวกัน (ต่างกันแค่เวลา / ตัวเลข / IP / id — ดู fingerprint) เป็นแถวเดียว

@@ -315,3 +315,9 @@
 - เปิดที่ `puller.yaml`: `storage.collapse_repeats: {enabled: false, keep: 20}` (ไม่ใส่ = ปิด) ใช้กับทั้งไฟล์ log และ journal
 - ยุบแล้วบันทึกใน System log (`events.py`, source puller): "ยุบ log ซ้ำ N รายการ (M ชนิด) ของ <source> ..." และใน docker logs `[COLLAPSE]`
 - ข้อมูลที่อยู่ใน OpenSearch แล้วไม่ถูกแตะ
+
+## Log ทุกแถวต้องมี Metrics at time
+- `logs_service._with_metrics` ใช้กับเครื่อง Windows (agent) ด้วย (ถามว่ามีข้อมูลจาก windows_exporter ณ นาทีนั้นไหม) — เดิมเครื่อง Windows แสดงทุก log แม้ไม่มี metrics
+- Prometheus ถามไม่ได้ (และไม่มีผลเก่าใน cache) -> ไม่แสดง (เดิมแสดงทั้งหมด)
+- กันอีกชั้นตอนส่งให้หน้าเว็บ: แถวที่ค่าจริง CPU / Memory / Disk ว่างทั้งหมดถูกตัด (`_has_metrics`) ทั้งตารางปกติ, แบบรวมกลุ่ม (ตัวอย่างของกลุ่มเลือกบรรทัดล่าสุดที่มี metrics), ผลค้นหา (แนบ metrics ให้ทุกแถวแล้ว) และ INFO
+- ข้อควรรู้: ตัวเลขบนปุ่ม/ตัวนับคิดจาก "นาทีที่มีข้อมูล" ถ้าบางแถวถูกตัดตอนกันชั้นที่สอง ตัวเลขอาจมากกว่าแถวที่เห็นเล็กน้อย
