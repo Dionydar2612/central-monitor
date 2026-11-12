@@ -328,3 +328,10 @@
 - **Log อื่นของเครื่องนี้ช่วงเดียวกัน (±10 นาที)**: เรียงตามความใกล้ ป้าย "ปัญหาเดียวกัน" · คลิกเพื่อเปิด log นั้น
 - **เครื่อง Windows (agent)**: ไม่มี snapshot จาก SSH -> ถาม Prometheus (windows_exporter) ณ เวลาของ log แทน: Service แบบ Automatic ที่ไม่ได้ทำงาน + process ที่ใช้ CPU สูงสุด (CPU / Memory %) — เดิมมีแค่ CPU / Memory / Disk / I/O
 - `logs_service.get_log_detail` เพิ่ม `related` {repeat, sensors, nearby} · `services_note` · ฟังก์ชัน `_related`, `_win_services_at`, `_win_processes_at`
+
+## ปิด sensor (เช่น ping ไปไม่ถึงเครื่อง)
+- หน้า sensor: ปุ่ม **⏸ ปิด sensor / ▶ เปิด sensor** บนแถบหัว (operator ขึ้นไป) มีผลรอบตรวจถัดไป (~30 วินาที)
+- Settings > เครื่อง > แท็บ การแจ้งเตือน > **ปิด sensor**: ติ๊ก Ping (Ping latency + Packet loss + Bottleneck: Network) · Disk latency · Bottleneck ทั้งหมด · Log pull · ช่อง "อื่น ๆ" ใส่ชื่อ sensor เอง (เช่น `disk:/boot`, `service:Spooler`)
+- sensor ที่ปิด = สถานะ **Paused** ข้อความ "ปิด sensor นี้ไว้ ..." ไม่แจ้งเตือน (Teams / ป๊อปอัป) ไม่นับเป็นปัญหาของเครื่อง
+- puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
+- API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`

@@ -390,6 +390,25 @@ class Backend(unittest.TestCase):
         finally:
             logs_service._visible, sensors_service.get_incidents = orig_vis, orig_inc
 
+    def test_sensor_toggle(self):
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "ping-x", "host": "10.0.0.77", "ssh": {"user": "cp"}, "logs": []})
+        c.post("/api/users", json={"username": "op9", "password": "password9", "role": "operator"})
+        self.assertEqual(self.login("op9", "password9"), 200)
+        for k in ("net_latency", "packet_loss"):
+            r = c.post("/api/targets/ping-x/sensor-toggle", json={"sensor": k, "disabled": True})
+            self.assertEqual(r.status_code, 200, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "ping-x"][0]
+        self.assertEqual(t["alert"]["disabled_sensors"], ["net_latency", "packet_loss"])
+        c.post("/api/targets/ping-x/sensor-toggle", json={"sensor": "net_latency", "disabled": False})
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "ping-x"][0]
+        self.assertEqual(t["alert"]["disabled_sensors"], ["packet_loss"])
+        self.assertEqual(c.post("/api/targets/ping-x/sensor-toggle", json={"sensor": "bad\"x", "disabled": True}).status_code, 400)
+        self.assertEqual(c.post("/api/targets/nope/sensor-toggle", json={"sensor": "cpu", "disabled": True}).status_code, 404)
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.delete("/api/targets/ping-x")
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

@@ -248,11 +248,23 @@ function fillAlertFields(t) {
     const a = (t && t.alert) || {};
     $("fa_min").value = a.minutes ?? ""; $("fa_hyst").value = a.hysteresis ?? "";
     $("fa_bn").value = a.bottleneck === true ? "1" : a.bottleneck === false ? "0" : "";
+    /* sensor ที่ปิดไว้: ติ๊กกล่องที่ครบทุกชื่อ ที่เหลือไปช่อง "อื่น ๆ" */
+    const ds = new Set(a.disabled_sensors || []), used = new Set();
+    document.querySelectorAll("#fa_ds [data-ds]").forEach(cb => {
+        const keys = cb.dataset.ds.split(",");
+        cb.checked = keys.every(k => ds.has(k));
+        if (cb.checked) keys.forEach(k => used.add(k));
+    });
+    $("fa_ds_more").value = [...ds].filter(k => !used.has(k)).join(", ");
 }
 
 function readAlertFields() {
     const b = $("fa_bn").value;
-    return { minutes: $("fa_min").value.trim(), hysteresis: $("fa_hyst").value.trim(), bottleneck: b === "" ? null : b === "1" };
+    const ds = [];
+    document.querySelectorAll("#fa_ds [data-ds]:checked").forEach(cb => ds.push(...cb.dataset.ds.split(",")));
+    $("fa_ds_more").value.split(",").map(x => x.trim()).filter(Boolean).forEach(x => ds.push(x));
+    return { minutes: $("fa_min").value.trim(), hysteresis: $("fa_hyst").value.trim(), bottleneck: b === "" ? null : b === "1",
+             disabled_sensors: [...new Set(ds)] };
 }
 
 function openForm(t) {

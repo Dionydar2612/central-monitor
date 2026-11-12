@@ -130,6 +130,16 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-f" data-f="alert.hysteresis"><label for="fa_hyst">Hysteresis</label><input id="fa_hyst" type="number" min="0" max="20" step="0.5" inputmode="decimal"><small>ต้องลดต่ำกว่าเกณฑ์ − ค่านี้ก่อนกลับเป็น OK (กันเด้งไปมา)</small><div class="st-err"></div></div>
 <div class="st-f" data-f="alert.bottleneck"><label for="fa_bn">ตรวจ Bottleneck</label><select id="fa_bn"><option value="">ค่าเริ่มต้น</option><option value="1">ตรวจ</option><option value="0">ไม่ตรวจ</option></select><small>CPU / Memory / Disk / Network ติดคอขวด</small><div class="st-err"></div></div>
 </div></div>
+<div class="fsec"><div class="fsec-h">ปิด sensor</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:8px">sensor ที่ปิด = สถานะ Paused ไม่แจ้งเตือน ไม่นับเป็นปัญหา (เช่น central ping เครื่องนี้ไม่ได้เพราะ firewall)</div>
+<div class="st-f" data-f="alert.disabled_sensors"><div class="dslist" id="fa_ds">
+<label class="st-check"><input type="checkbox" data-ds="net_latency,packet_loss,bottleneck:network"> Ping (Ping latency + Packet loss + Bottleneck: Network)</label>
+<label class="st-check"><input type="checkbox" data-ds="disk_latency"> Disk latency</label>
+<label class="st-check"><input type="checkbox" data-ds="bottleneck:*"> Bottleneck ทั้งหมด</label>
+<label class="st-check"><input type="checkbox" data-ds="log_pull"> Log pull (ดึง log)</label>
+</div>
+<label for="fa_ds_more" style="margin-top:8px">อื่น ๆ (ชื่อ sensor คั่นด้วย , เช่น <code>disk:/boot</code> <code>service:Spooler</code>)</label><input id="fa_ds_more" autocomplete="off" placeholder="ว่าง = ไม่มี"><small>ปิด / เปิดทีละตัวได้จากปุ่มในหน้า sensor ด้วย</small><div class="st-err"></div></div>
+</div>
 <div class="fsec"><div class="fsec-h">เกณฑ์ (Warning / Error)</div>
 <table class="st-tbl thtbl"><thead><tr><th>ค่าที่ตรวจ</th><th><span class="lv wr">Warning</span></th><th><span class="lv er">Error</span></th></tr></thead><tbody>
 <tr class=""><th><b>CPU</b> <span class="st-mut">%</span><small>ค่าเฉลี่ย 5 นาที</small></th><td><div class="st-f" data-f="thresholds.cpu.warning"><input id="th_cpu_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.cpu.error"><input id="th_cpu_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>

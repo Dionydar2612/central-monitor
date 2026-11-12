@@ -1536,3 +1536,5 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .mrel-log{cursor:pointer}.mrel-log:hover{background:rgba(31,123,255,.06)}
 .mrel-log .lv{font-weight:700;font-size:12px;min-width:44px}.mrel-log .lv.error{color:#d03b3f}.mrel-log .lv.warn{color:#b26b00}
 .mrel-msg{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.sntog{margin-left:12px;font:12.5px inherit;font-family:inherit;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.7);background:rgba(255,255,255,.15);color:#fff;cursor:pointer}.sntog:hover{background:rgba(255,255,255,.3)}.sntog:disabled{opacity:.8;cursor:default}
+.dslist{display:flex;flex-direction:column;gap:4px}

@@ -450,10 +450,36 @@ def _target_opts(t, opts):
     return o
 
 
+def sensor_disabled(rules, sensor):
+    """sensor นี้ถูกปิดไหม  rules = targets[].alert.disabled_sensors
+    ตรงกับ: ส่วนหลัง "<เครื่อง>:" ของ id (net_latency, disk:C:) / ชนิด (kind) / ขึ้นต้นด้วยส่วนหน้า * (bottleneck:*)"""
+    sid = str(sensor.get("id") or "").split(":", 1)[-1]
+    kind = str(sensor.get("kind") or "")
+    for r in rules or []:
+        r = str(r)
+        if r == sid or r == kind or (r.endswith("*") and sid.startswith(r[:-1])):
+            return True
+    return False
+
+
+def _apply_disabled(t, out):
+    """sensor ที่ผู้ใช้ปิด (เช่น ping ไปไม่ถึงเครื่อง) -> สถานะ Paused ไม่แจ้งเตือน / ไม่นับเป็นปัญหา"""
+    a = t.get("alert") if isinstance(t.get("alert"), dict) else {}
+    rules = a.get("disabled_sensors") or []
+    if not rules:
+        return
+    for s in out:
+        if sensor_disabled(rules, s):
+            s["status"] = "paused"
+            s["disabled"] = True
+            s["message"] = "ปิด sensor นี้ไว้ (เปิดได้ที่หน้า sensor หรือ Settings > เครื่อง > การแจ้งเตือน)"
+
+
 def _target_sensors(t, global_th, interval, checkpoints, previous, opts):
     """sensor ของเครื่อง + ค่าแจ้งเตือนเฉพาะเครื่อง (นานกี่นาทีก่อนแจ้ง / hysteresis / bottleneck)"""
     o = _target_opts(t, opts)
     out = _target_sensors_raw(t, global_th, interval, checkpoints, previous, o)
+    _apply_disabled(t, out)
     if o["target_confirm"]:
         for s in out:
             if not s.get("confirm"):                 # กฎที่สร้างเองตั้งระยะเวลาเองไว้แล้ว -> ใช้ของกฎ

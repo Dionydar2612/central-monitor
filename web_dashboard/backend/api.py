@@ -165,7 +165,8 @@ def require_authentication():
     return None
 
 
-_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$")
+_PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$"
+                         r"|^/api/targets/[^/]+/sensor-toggle$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 _TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
 
@@ -203,6 +204,7 @@ _AUDIT_RULES = [
     # (method, regex ของ path, ชื่อการกระทำ, ฟิลด์ที่เก็บจาก body)
     ("POST", re.compile(r"^/api/targets$"), "target.add", ("name", "host", "group", "paused")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/pause$"), "target.pause", ("paused",)),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-toggle$"), "target.sensor_toggle", ("sensor", "disabled")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
     ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
@@ -1238,6 +1240,22 @@ def targets_host_key():
     except ValidationError as e:
         return _bad_request(e)
     return jsonify({"keys": [{"type": k["type"], "fingerprint": k["fingerprint"]} for k in keys]})
+
+
+@app.post("/api/targets/<name>/sensor-toggle")
+def targets_sensor_toggle(name):
+    """ปิด / เปิด sensor เดียว (เช่น ping ไปไม่ถึงเครื่อง)  body: {"sensor": "net_latency", "disabled": true}
+    sensor = ส่วนหลัง "<เครื่อง>:" ของ sensor id · ปิดแล้ว puller แสดงเป็น Paused ไม่แจ้งเตือน (operator ขึ้นไป)"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        out = targets_service.set_sensor_disabled(name, body.get("sensor"), bool(body.get("disabled")))
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return (jsonify(out), 200) if out else (jsonify({"error": "not found"}), 404)
 
 
 @app.put("/api/targets/<name>/pause")

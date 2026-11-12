@@ -37,7 +37,10 @@ function renderHead() {
     $("snSt").innerHTML = `${esc(label)}${s.ack ? " · Acknowledged" : ""} <span>· ${esc(s.message || "")}</span>`;
     const path = (s.group ? s.group.split("/") : []);
     $("snCrumb").innerHTML = ["Devices", ...path].map(esc).join(" » ") + ` » <a href="/?web=${encodeURIComponent(s.web)}">${esc(s.web)}</a> » ${esc(s.name)}`;
-    $("snWho").innerHTML = `<a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b></a>${s.host ? ` · ${esc(s.host)}` : ""}${s.os ? ` · ${esc(s.os === "windows" ? "Windows" : "Linux")}` : ""}`;
+    const canOp = N.role === "operator" || N.role === "admin";
+    const toggle = canOp ? `<button type="button" class="sntog" id="snToggle">${s.disabled ? "▶ เปิด sensor" : "⏸ ปิด sensor"}</button>` : "";
+    $("snWho").innerHTML = `<a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b></a>${s.host ? ` · ${esc(s.host)}` : ""}${s.os ? ` · ${esc(s.os === "windows" ? "Windows" : "Linux")}` : ""}${toggle}`;
+    if (canOp) $("snToggle").onclick = toggleSensor;
     const d = N.d;
     const cell = (k, v) => `<div><small>${esc(k)}:</small><b>${v}</b></div>`;
     $("snInfo").innerHTML = `<div class="sngrid">`
@@ -148,6 +151,21 @@ ${rows.map(i => { const [, l, c] = ST[i.worst] || ST.unknown; return `<tr><td>${
 </tbody></table></div>` : `<div class="empty">ไม่มีปัญหาที่บันทึกไว้</div>`}</section>`;
 }
 
+/* ปิด / เปิด sensor นี้ (เช่น ping ไปไม่ถึงเครื่อง) -> targets[].alert.disabled_sensors  มีผลรอบตรวจถัดไป */
+async function toggleSensor() {
+    const s = N.d.sensor, sid = String(s.id).split(":").slice(1).join(":"), off = !s.disabled;
+    if (off && !confirm(`ปิด sensor "${s.name}" ของ ${s.web}?\nจะแสดงเป็น Paused ไม่แจ้งเตือน และไม่นับเป็นปัญหา จนกว่าจะกดเปิด`)) return;
+    const b = $("snToggle"); b.disabled = true;
+    try {
+        const r = await fetch(`/api/targets/${encodeURIComponent(s.web)}/sensor-toggle`, { method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sensor: sid, disabled: off }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || Object.values(j.fields || {}).join(" · ") || `HTTP ${r.status}`);
+        b.textContent = off ? "ปิดแล้ว · มีผลใน ~30 วินาที" : "เปิดแล้ว · มีผลใน ~30 วินาที";
+        setTimeout(render, 35000);
+    } catch (e) { alert("ทำไม่สำเร็จ: " + e.message); b.disabled = false; }
+}
+
 async function render() {
     try {
         N.d = await getJson(`/api/sensors/detail?id=${encodeURIComponent(N.id)}`);
@@ -164,7 +182,7 @@ async function render() {
 document.addEventListener("DOMContentLoaded", async () => {
     const p = new URLSearchParams(location.search);
     N.id = p.get("id") || ""; N.tab = p.get("tab") || "overview";
-    try { const me = await getJson("/api/me"); $("currentUsername").textContent = me.username || "?"; } catch (e) { return; }
+    try { const me = await getJson("/api/me"); $("currentUsername").textContent = me.username || "?"; N.role = me.role || "viewer"; } catch (e) { return; }
     $("snTabs").addEventListener("click", e => {
         const b = e.target.closest("button[data-t]"); if (!b || b.disabled) return;
         N.tab = b.dataset.t;

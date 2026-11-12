@@ -173,6 +173,22 @@ class CollapseRepeats(unittest.TestCase):
         self.assertEqual(log_filter.collapse_config({"storage": {"collapse_repeats": {"enabled": True, "keep": 5}}}), (True, 5))
 
 
+class DisabledSensors(unittest.TestCase):
+    """ปิด sensor (เช่น ping ไปไม่ถึงเครื่อง) -> Paused ไม่แจ้งเตือน"""
+
+    def test_match_and_apply(self):
+        f = sensor_monitor.sensor_disabled
+        self.assertTrue(f(["net_latency"], {"id": "web-01:net_latency", "kind": "net_latency"}))
+        self.assertTrue(f(["bottleneck:*"], {"id": "web-01:bottleneck:network", "kind": "bottleneck"}))
+        self.assertTrue(f(["disk"], {"id": "web-01:disk:/boot", "kind": "disk"}))
+        self.assertFalse(f(["disk:/boot"], {"id": "web-01:disk:/", "kind": "disk"}))
+        out = [{"id": "w:packet_loss", "kind": "packet_loss", "status": "error", "message": "100% loss"},
+               {"id": "w:cpu", "kind": "cpu", "status": "ok", "message": "1%"}]
+        sensor_monitor._apply_disabled({"alert": {"disabled_sensors": ["packet_loss"]}}, out)
+        self.assertEqual([x["status"] for x in out], ["paused", "ok"])
+        self.assertTrue(out[0]["disabled"])
+
+
 class LogFilter(unittest.TestCase):
     DATA = (b"2026-11-04T10:00:00+07:00 INFO started ok\n"
             b"2026-11-04T10:00:01+07:00 ERROR boom\n"

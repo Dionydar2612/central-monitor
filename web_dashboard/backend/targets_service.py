@@ -159,7 +159,54 @@ def clean_alert(value, errors, prefix="alert"):
         out["bottleneck"] = b
     elif b not in (None, ""):
         errors[f"{prefix}.bottleneck"] = "เลือก ตรวจ / ไม่ตรวจ / ค่าทั้งระบบ"
+    # sensor ที่ปิดไว้ (เช่น ping ไปไม่ถึงเครื่อง): ส่วนท้ายของ sensor id เช่น net_latency, packet_loss, disk:C:
+    #   หรือชนิด (kind) หรือขึ้นต้นแล้วตามด้วย * เช่น bottleneck:*  -> puller แสดงเป็น Paused ไม่แจ้งเตือน
+    ds = value.get("disabled_sensors")
+    if isinstance(ds, str):
+        ds = [x for x in ds.split(",")]
+    if ds:
+        clean = []
+        for x in ds if isinstance(ds, list) else []:
+            x = str(x or "").strip()
+            if not x:
+                continue
+            if not SENSOR_KEY_RE.match(x):
+                errors[f"{prefix}.disabled_sensors"] = f"ชื่อ sensor ไม่ถูกต้อง: {x[:60]}"
+                continue
+            if x not in clean:
+                clean.append(x)
+        if clean:
+            out["disabled_sensors"] = clean[:100]
     return out
+
+
+SENSOR_KEY_RE = re.compile(r"^[A-Za-z0-9_.:$@ /\\()&+-]{1,120}\*?$")
+
+
+def set_sensor_disabled(name, sensor, disabled):
+    """ปิด / เปิด sensor เดียวของเครื่อง (targets[].alert.disabled_sensors)  ไม่มีเครื่อง -> None"""
+    sensor = str(sensor or "").strip()
+    if not SENSOR_KEY_RE.match(sensor):
+        raise ValidationError({"sensor": "ชื่อ sensor ไม่ถูกต้อง"})
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        node = _find_target(doc, name)
+        if node is None:
+            return None
+        alert = dict(_plain(node.get("alert") or {}))
+        cur = [str(x) for x in alert.get("disabled_sensors") or []]
+        if disabled and sensor not in cur:
+            cur.append(sensor)
+        if not disabled:
+            cur = [x for x in cur if x != sensor]
+        if cur:
+            alert["disabled_sensors"] = cur
+        else:
+            alert.pop("disabled_sensors", None)
+        _set_or_drop(node, "alert", _flow(alert) if alert else None)
+        _write_doc(y, doc)
+    return {"name": name, "disabled_sensors": cur}
 
 
 def clean_services(value, errors, field="critical_services"):
