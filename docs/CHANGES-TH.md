@@ -345,3 +345,4 @@
 - `uninstall-fluentbit.ps1` ลบกฎ firewall ของโหมด pull
 - Settings > เครื่อง (Windows) > แท็บ การเชื่อมต่อ: "วิธีรับข้อมูล" push / pull + ช่อง windows_exporter · Make command สร้างคำสั่งตามโหมด · แท็บ Log บอกว่าโหมด pull ไม่มี log
 - แก้ `targets_service.regenerate_prometheus_targets` ให้ใส่ `__scheme__` / `__metrics_path__` เหมือน puller (เดิมเขียน web-nodes.json จากหน้า Settings แล้วค่า https หายจนกว่า puller จะสร้างใหม่)
+- เพิ่ม `agent/windows/install-pull.bat` / `uninstall-pull.bat` สำหรับเครื่องที่เปิด PowerShell ไม่ได้: ติดตั้งโหมด pull ด้วย cmd ล้วน (sc / netsh / copy) ถาม IP ของ central ตอนรัน · อยู่ใน zip ชุดติดตั้งอัตโนมัติ · ไม่มีแท็บ Software

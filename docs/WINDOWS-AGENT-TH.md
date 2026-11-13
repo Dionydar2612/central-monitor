@@ -124,6 +124,11 @@ central (Prometheus) ──ดึงทุก 15 วินาที──▶ Win
    - ถ้ามี service `cm-agent` (push) ค้างอยู่ จะหยุดและปิดไว้
 4. ทดสอบจาก central: `curl -s http://<IP เครื่อง Windows>:9182/metrics | head` · ภายใน ~1 นาที เครื่องขึ้น OK
    - ขึ้น Down ข้อความ "central cannot read windows_exporter ..." = central ต่อพอร์ต 9182 ไม่ได้ (เครื่องดับ / service หยุด / firewall ระหว่างวง)
+- **เครื่องที่เปิด PowerShell ไม่ได้ (ใช้ได้แต่ .bat):** แตก zip แล้วคลิกขวา `install-pull.bat` > Run as administrator ใส่ IP ของ central เมื่อถาม (หรือ `install-pull.bat 172.27.2.22` จาก cmd แบบ admin) — ใช้แค่ `sc` / `netsh` / `copy` ไม่เรียก PowerShell เลย
+  - ทำเหมือนกัน: windows_exporter เป็น service `cm-exporter` (ไฟล์อยู่ `C:\ProgramData\central-monitor-agent\`) ฟัง 0.0.0.0:9182 · กฎ firewall เปิดเฉพาะ IP ของ central · หยุด cm-agent ถ้ามี · ลองชุด collector เล็กลงเองถ้าเริ่มไม่ได้
+  - ไม่มีอินเทอร์เน็ต: วาง `windows_exporter-0.32.1-amd64.exe` ไว้ข้างไฟล์ .bat (ไม่งั้นดาวน์โหลดด้วย curl.exe / bitsadmin)
+  - ต่างจากแบบ PowerShell: ไม่ติดตั้ง scheduled task รายการโปรแกรม / Docker / เว็บ localhost -> แท็บ Software ว่าง
+  - ถอน: `uninstall-pull.bat` (ใส่ `purge` เพื่อลบโฟลเดอร์ด้วย)
 - เปลี่ยนกลับเป็น push: เปลี่ยนวิธีรับข้อมูลเป็น push แล้ว Save แล้วรันคำสั่งติดตั้งแบบปกติ (มี token) ใหม่
 - ถอนการติดตั้ง: `uninstall-fluentbit.ps1` ลบกฎ firewall ของโหมด pull ด้วย
 - ข้อควรรู้: windows_exporter ไม่มีการเข้ารหัส / ไม่มีรหัสผ่าน ใครที่ firewall ปล่อยให้ต่อพอร์ต 9182 ได้จะอ่าน metrics ได้ (สคริปต์จำกัดไว้เฉพาะ IP ของ central)

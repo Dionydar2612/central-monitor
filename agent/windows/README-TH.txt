@@ -40,3 +40,12 @@
 
 ถอนการติดตั้ง
   powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge] [-KeepExporter]
+
+
+โหมด pull (เครื่องนี้ต่อไปหา central ไม่ได้ แต่ central ต่อเข้ามาได้) - ได้เฉพาะ metrics ไม่มี log
+  ที่ central: Settings > เครื่อง > การเชื่อมต่อ > วิธีรับข้อมูล = central ดึงจาก Windows (pull) > Save
+  แบบ PowerShell:  powershell -ExecutionPolicy Bypass -File .\install-fluentbit.ps1 -Pull -Central <IP central> -Name <ชื่อ>
+  แบบไม่มี PowerShell (เปิด PowerShell ไม่ได้ / ถูกบล็อก): แตก zip แล้วคลิกขวา install-pull.bat > Run as administrator
+      ใส่ IP ของ central เมื่อถาม (ต้องเป็น IP ไม่ใช่ชื่อ) - ไม่มีอินเทอร์เน็ต: วาง windows_exporter-0.32.1-amd64.exe ไว้ข้างไฟล์ .bat
+      .bat ไม่ติดตั้งรายการโปรแกรม / Docker / เว็บ localhost (แท็บ Software จะว่าง) ถ้าต้องการใช้แบบ PowerShell
+  ถอน: uninstall-pull.bat (คลิกขวา > Run as administrator)  หรือ uninstall-fluentbit.ps1
