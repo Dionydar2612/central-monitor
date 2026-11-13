@@ -10,9 +10,14 @@ REM    - stops/disables "cm-agent" (push mode) if it exists
 REM  Metrics only (CPU / Memory / Disk / Network / Service / Process). No logs.
 REM
 REM  Use: extract the zip, right-click install-pull.bat > Run as administrator
-REM       (or from an admin cmd:  install-pull.bat 172.27.2.22)
+REM       (or from an admin cmd:  install-pull.bat 172.27.2.22 [name] [nops])
+REM
+REM  PowerShell first: if PowerShell can run on this machine, this file runs
+REM    install-fluentbit.ps1 -Pull  (better: also installs the Software inventory
+REM    tasks and tests windows_exporter properly). Only if PowerShell is blocked /
+REM    missing, it installs with plain cmd (sc / netsh) - no Software tab.
+REM    "nops" as 3rd argument = always use the plain cmd install.
 REM  Offline: put windows_exporter-0.32.1-amd64.exe next to this file.
-REM  Same as: install-fluentbit.ps1 -Pull  (PowerShell version, also installs Software inventory)
 REM  Remove:  uninstall-pull.bat
 REM ======================================================================
 setlocal EnableExtensions EnableDelayedExpansion
@@ -45,7 +50,44 @@ if "%CENTRAL%"=="" (
     goto :fail
 )
 echo central: %CENTRAL%   ^(only this IP may read port %PORT%^)
+set "NAME=%~2"
+if "%NAME%"=="-" set "NAME="
 
+REM ---------------------------------------------------------------- PowerShell first (better install)
+if /i "%~3"=="nops" goto :cmdonly
+if not exist "%~dp0install-fluentbit.ps1" (
+    echo [INFO] install-fluentbit.ps1 is not next to this file - using the plain cmd install.
+    goto :cmdonly
+)
+where powershell.exe >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] PowerShell not found - using the plain cmd install.
+    goto :cmdonly
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "exit 7" >nul 2>&1
+if not "%errorlevel%"=="7" (
+    echo [INFO] PowerShell is blocked on this machine - using the plain cmd install.
+    goto :cmdonly
+)
+echo.
+echo PowerShell is available - running install-fluentbit.ps1 -Pull ^(includes the Software tab^)
+echo.
+set "PSNAME="
+if not "%NAME%"=="" set "PSNAME=-Name %NAME%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-fluentbit.ps1" -Pull -Central %CENTRAL% %PSNAME%
+if errorlevel 1 (
+    echo.
+    echo [ERROR] install-fluentbit.ps1 -Pull failed ^(see the messages above^).
+    echo         To try the plain cmd install instead:  install-pull.bat %CENTRAL% - nops
+    goto :fail
+)
+echo.
+pause
+exit /b 0
+
+:cmdonly
+echo.
+echo --- plain cmd install ^(no Software tab^) ---
 REM ---------------------------------------------------------------- 1) windows_exporter file
 echo.
 echo [1/4] windows_exporter %VER%
