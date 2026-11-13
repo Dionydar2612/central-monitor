@@ -347,3 +347,4 @@
 - แก้ `targets_service.regenerate_prometheus_targets` ให้ใส่ `__scheme__` / `__metrics_path__` เหมือน puller (เดิมเขียน web-nodes.json จากหน้า Settings แล้วค่า https หายจนกว่า puller จะสร้างใหม่)
 - เพิ่ม `agent/windows/install-pull.bat` / `uninstall-pull.bat` สำหรับเครื่องที่เปิด PowerShell ไม่ได้: ติดตั้งโหมด pull ด้วย cmd ล้วน (sc / netsh / copy) ถาม IP ของ central ตอนรัน · อยู่ใน zip ชุดติดตั้งอัตโนมัติ · ไม่มีแท็บ Software
 - `install-pull.bat` เรียก `install-fluentbit.ps1 -Pull` ให้เองถ้าเครื่องรัน PowerShell ได้ (ได้แท็บ Software + ทดสอบ exporter จริง) · PowerShell ถูกบล็อก / ไม่มี -> ติดตั้งด้วย cmd ล้วนเหมือนเดิม · อาร์กิวเมนต์ `install-pull.bat <IP central> [ชื่อ] [nops]`
+- `install-fluentbit.ps1`: ไม่ใส่ -Name แล้วชื่อ Windows มีอักษรที่ใช้ไม่ได้ (เช่น `ALBEN_2016`) -> แปลงเป็น `alben-2016` ให้เอง (เดิมหยุดด้วย error)

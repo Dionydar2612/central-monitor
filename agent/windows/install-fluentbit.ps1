@@ -57,7 +57,12 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
           [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { throw "ต้องรันใน PowerShell แบบ Run as Administrator" }
 
-if (-not $Name) { $Name = $env:COMPUTERNAME.ToLower() }
+if (-not $Name) {
+    # ชื่อเครื่อง Windows อาจมี _ หรืออักษรอื่น (เช่น ALBEN_2016) -> แปลงเป็น a-z 0-9 - (alben-2016)
+    $Name = (($env:COMPUTERNAME.ToLower() -replace '[^a-z0-9-]+', '-') -replace '-{2,}', '-').Trim('-')
+    if ($Name.Length -gt 40) { $Name = $Name.Substring(0, 40).Trim('-') }
+    Write-Host "ชื่อเครื่องใน central: $Name (จากชื่อ Windows $env:COMPUTERNAME) ถ้าในหน้า Settings ตั้งชื่ออื่น ให้ระบุ -Name" -ForegroundColor Cyan
+}
 if ($Name -notmatch '^[a-z0-9][a-z0-9-]{0,39}$') {
     throw "ชื่อเครื่อง '$Name' ใช้ไม่ได้ (a-z 0-9 - เท่านั้น ยาวไม่เกิน 40) ระบุ -Name ให้ตรงกับที่เพิ่มในหน้า Settings"
 }
