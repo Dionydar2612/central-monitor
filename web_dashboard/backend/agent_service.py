@@ -33,7 +33,8 @@ ONLINE_WITHIN = 180                    # วินาที (agent ส่งท�
 AGENT_DIR = os.getenv("CENTRAL_AGENT_DIR", "/app/agent")
 AGENT_CA = os.getenv("CENTRAL_AGENT_CA", "/run/agent-tls/cert.pem")
 AGENT_PORT = os.getenv("CENTRAL_AGENT_PORT", "4318")
-_HB = '{__name__=~"fluentbit_uptime.*",cm_web="%s"}'
+# สัญญาณ "ยังทำงาน": push = fluentbit_uptime ที่ agent ส่งมา / pull = Prometheus ดึง windows_exporter ได้ (up == 1)
+_HB = '({__name__=~"fluentbit_uptime.*",cm_web="%(w)s"} or (up{cm_web="%(w)s"} == 1))'
 
 
 def is_agent(t):
@@ -51,7 +52,7 @@ def _iso(ts):
 
 def last_seen(web):
     """unix เวลาล่าสุดที่ได้ข้อมูลจาก agent หรือ None"""
-    hb = _HB % web
+    hb = _HB % {"w": web}
     seen = prom_value(f"max(timestamp({hb}))")                       # ภายใน 5 นาทีล่าสุด
     if seen is None:
         seen = prom_value(f"max(max_over_time(timestamp({hb})[1d:1m]))")
@@ -90,6 +91,13 @@ def setup_info(target, central):
     unzip = ("$z=Get-ChildItem \"$env:USERPROFILE\\Downloads\\cm-agent-windows*.zip\" | Sort-Object LastWriteTime -Descending | "
              "Select-Object -First 1; if(-not $z){throw 'cm-agent-windows.zip not found in Downloads - click Download installer first'}; "
              "$d=\"$env:TEMP\\cm-agent\"; Expand-Archive $z.FullName $d -Force; ")
+    if agent.get("mode") == "pull":
+        # โหมด pull: ไม่ใช้ token / Fluent Bit · central = IP ที่ central ใช้ต่อเข้าเครื่องนี้ (firewall เปิดรับเฉพาะ IP นี้)
+        cmd = (unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\install-fluentbit.ps1\" -Pull "
+               f"-Central {central or '<IP-ของ-central>'} -Name {target.get('name')}")
+        return {"name": target.get("name"), "command": cmd, "mode": "pull", "exporter": agent.get("exporter"),
+                "token_set": True, "port": 9182, "ca_available": True,
+                "package_available": os.path.isfile(os.path.join(AGENT_DIR, "windows", "install-fluentbit.ps1"))}
     parts = [
         unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\install-fluentbit.ps1\"",
         f"-Central {central or '<IP-ของ-central>'}",

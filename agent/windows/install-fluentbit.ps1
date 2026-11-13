@@ -11,6 +11,12 @@
       -Central 10.0.0.5 -Token <token> -Name win-app-01 `
       -Logs "C:\inetpub\logs\LogFiles\*\*.log;D:\app\logs\*.log" -Channels "System,Application"
 
+.EXAMPLE
+  # โหมด pull: เครื่อง Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้ามาได้
+  #   ติดตั้งเฉพาะ windows_exporter ฟังที่ 0.0.0.0:9182 + firewall เปิดรับเฉพาะ IP ของ central
+  #   central (Prometheus) เป็นฝ่ายดึง metrics เอง ไม่ต้องใช้ token / Fluent Bit (ไม่มี log ในโหมดนี้)
+  powershell -ExecutionPolicy Bypass -File .\install-fluentbit.ps1 -Pull -Central 172.27.2.22 -Name win-app-01
+
 .NOTES
   - ไม่มีอินเทอร์เน็ต: วางไฟล์ fluent-bit-<version>-win64.zip และ windows_exporter-<version>-amd64.exe
     ไว้ข้างสคริปต์ หรือระบุ -ZipPath / -ExporterExe
@@ -22,7 +28,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string] $Central,          # IP หรือชื่อของเครื่อง central (ที่เครื่องนี้มองเห็น)
-    [Parameter(Mandatory = $true)] [string] $Token,            # CENTRAL_AGENT_TOKEN ใน docker/.env ของ central
+    [string] $Token = "",                                       # CENTRAL_AGENT_TOKEN ใน docker/.env ของ central (โหมด pull ไม่ใช้)
     [string] $Name = "",                                        # ชื่อเครื่องใน central (ต้องตรงกับที่เพิ่มในหน้า Settings)
     [int]    $Port = 4318,
     [string] $Logs = "",                                        # path ไฟล์ log คั่นด้วย ; (wildcard ได้)
@@ -33,7 +39,8 @@ param(
     [switch] $SkipCertCheck,                                    # ไม่ตรวจใบรับรอง (ยังเข้ารหัส) ใช้เมื่อชื่อ/IP ไม่ตรงกับใบรับรอง
     [string] $ExporterVersion = "0.32.1",                       # เวอร์ชัน windows_exporter
     [string] $ExporterExe = "",                                 # ไฟล์ windows_exporter-<version>-amd64.exe (ใช้แทนการดาวน์โหลด)
-    [switch] $NoExporter                                        # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
+    [switch] $NoExporter,                                       # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
+    [switch] $Pull                                              # โหมด pull: central ดึง metrics จาก windows_exporter เอง (เครื่องนี้ต่อไปหา central ไม่ได้)
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,9 +61,22 @@ if (-not $Name) { $Name = $env:COMPUTERNAME.ToLower() }
 if ($Name -notmatch '^[a-z0-9][a-z0-9-]{0,39}$') {
     throw "ชื่อเครื่อง '$Name' ใช้ไม่ได้ (a-z 0-9 - เท่านั้น ยาวไม่เกิน 40) ระบุ -Name ให้ตรงกับที่เพิ่มในหน้า Settings"
 }
+if (-not $Pull -and -not $Token) { throw "ต้องระบุ -Token (หรือใช้ -Pull ถ้าเครื่องนี้ต่อไปหา central ไม่ได้)" }
+if ($Pull -and $NoExporter) { throw "โหมด -Pull ต้องใช้ windows_exporter (เอา -NoExporter ออก)" }
 $logPaths = @($Logs -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $channelList = (@($Channels -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) -join ','
 
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+if ($Pull) {
+    # ---------------------------------------------------------------- โหมด pull: central เป็นฝ่ายดึง
+    Say "เครื่อง: $Name  <-  central ($Central) ดึง metrics ที่พอร์ต 9182 (โหมด pull ไม่มี Fluent Bit / log)"
+    try {
+        $CentralIps = @([System.Net.Dns]::GetHostAddresses($Central) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
+                        ForEach-Object { $_.IPAddressToString })
+    } catch { $CentralIps = @() }
+    if (-not $CentralIps) { throw "แปลง '$Central' เป็น IP ไม่ได้ -> ใส่ -Central เป็น IP ของ central" }
+    Say "1/3 ข้ามการทดสอบต่อไปหา central (โหมด pull ไม่ต้องใช้)"
+} else {
 Say "เครื่อง: $Name  ->  central: ${Central}:$Port"
 
 # ---------------------------------------------------------------- 1) ทดสอบว่าต่อ central ได้
@@ -64,11 +84,11 @@ Say "1/7 ทดสอบการเชื่อมต่อ ${Central}:$Port"
 $tcp = Test-NetConnection -ComputerName $Central -Port $Port -WarningAction SilentlyContinue
 if (-not $tcp.TcpTestSucceeded) {
     Warn "ต่อ ${Central}:$Port ไม่ได้ (firewall / central ยังไม่เปิดพอร์ต) - ติดตั้งต่อได้ agent จะพักข้อมูลไว้แล้วส่งเมื่อต่อได้"
+    Warn "ถ้าเครื่องนี้ต่อไปหา central ไม่ได้จริง (firewall ระหว่างวง) แต่ central ต่อเข้ามาได้ ใช้โหมด -Pull แทน"
 }
 
 # ---------------------------------------------------------------- 2) Fluent Bit
 Say "2/7 เตรียม Fluent Bit $Version"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not $ZipPath) {
     foreach ($dir in @($Here, (Join-Path $env:USERPROFILE "Downloads"))) {
         $local = Join-Path $dir "fluent-bit-$Version-win64.zip"
@@ -94,6 +114,7 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Path (Join-Path $exe.Directory.Parent.FullName "*") -Destination $InstallDir -Recurse -Force
 Remove-Item $tmp -Recurse -Force
 $FluentExe = Join-Path $InstallDir "bin\fluent-bit.exe"
+}   # จบส่วน push (โหมด pull ไม่ติดตั้ง Fluent Bit)
 
 # ---------------------------------------------------------------- 3) windows_exporter (metrics)
 # ใช้ไฟล์ .exe ของ windows_exporter แล้วสร้าง Windows service "cm-exporter" เอง (ไม่ใช้ MSI)
@@ -102,6 +123,7 @@ $FluentExe = Join-Path $InstallDir "bin\fluent-bit.exe"
 #   - log ของ exporter: C:\ProgramData\central-monitor-agent\windows_exporter.log
 #   ใช้ไม่ได้เลย -> ใช้ตัวเก็บในตัว Fluent Bit แทน (ข้อมูลน้อยกว่า)
 $ExporterPort = 9182
+$ListenAddr   = if ($Pull) { "0.0.0.0" } else { "127.0.0.1" }   # pull: central ต้องเข้ามาอ่านได้ (firewall เปิดเฉพาะ IP ของ central)
 $ExporterUrl  = "http://127.0.0.1:$ExporterPort/metrics"
 $ExpService   = "cm-exporter"
 $ExpExe       = Join-Path $InstallDir "windows_exporter.exe"
@@ -186,9 +208,9 @@ function Show-ExporterDiag {
 if ($NoExporter) {
     Say "3/7 ข้าม windows_exporter (-NoExporter) -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit"
 } else {
-    Say "3/7 windows_exporter $ExporterVersion (service $ExpService ฟังเฉพาะ 127.0.0.1:$ExporterPort)"
+    Say "$(if ($Pull) { '2/3' } else { '3/7' }) windows_exporter $ExporterVersion (service $ExpService ฟังที่ ${ListenAddr}:$ExporterPort)"
     try {
-        New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $DataDir, $InstallDir | Out-Null
 
         # ไฟล์ .exe: -ExporterExe > วางไว้ข้างสคริปต์ > ดาวน์โหลด
         if (-not $ExporterExe) {
@@ -368,14 +390,14 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
         Write-Host "   collectors: $(($chosen[0]) -replace '--collectors.enabled=', '')"
 
         # สร้าง / อัปเดต service
-        $svcArgs = @("--web.listen-address=127.0.0.1:$ExporterPort") + $chosen +
+        $svcArgs = @("--web.listen-address=${ListenAddr}:$ExporterPort") + $chosen +
                    @("--log.file=`"$ExpLog`"", "--log.rotation.max-size=10", "--log.rotation.max-backups=2")
         $bin = "`"$ExpExe`" " + ($svcArgs -join " ")
         if (Get-Service $ExpService -ErrorAction SilentlyContinue) {
             sc.exe config $ExpService binPath= $bin start= auto | Out-Null
         } else {
             New-Service -Name $ExpService -BinaryPathName $bin -DisplayName "Central Monitor Exporter (windows_exporter)" `
-                -Description "เก็บ metrics ของเครื่อง ฟังเฉพาะ 127.0.0.1:$ExporterPort ให้ cm-agent ส่งต่อไปที่ Central Monitor" `
+                -Description "เก็บ metrics ของเครื่อง ($ListenAddr`:$ExporterPort) ให้ Central Monitor" `
                 -StartupType Automatic | Out-Null
         }
         sc.exe failure $ExpService reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
@@ -402,10 +424,11 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
         } catch { Warn "สร้าง scheduled task '$InvTask' ไม่ได้: $($_.Exception.Message) (รายการโปรแกรมจะไม่อัปเดต)" }
         $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
                   Select-Object -ExpandProperty LocalAddress -Unique
-        if ($listen | Where-Object { $_ -notin "127.0.0.1", "::1" }) {
+        if (-not $Pull -and ($listen | Where-Object { $_ -notin "127.0.0.1", "::1" })) {
             Warn "windows_exporter ฟังที่ $($listen -join ', ') (ควรเป็น 127.0.0.1 เท่านั้น)"
         }
     } catch {
+        if ($Pull) { throw "ใช้ windows_exporter ไม่ได้: $($_.Exception.Message) (โหมด pull ต้องมี windows_exporter)" }
         Warn "ใช้ windows_exporter ไม่ได้: $($_.Exception.Message) -> ใช้ตัวเก็บ metrics ในตัว Fluent Bit แทน (ข้อมูลน้อยกว่า)"
         if (Get-Service $ExpService -ErrorAction SilentlyContinue) {
             Stop-Service $ExpService -Force -ErrorAction SilentlyContinue
@@ -413,6 +436,31 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
         }
         $UseExporter = $false
     }
+}
+
+# ---------------------------------------------------------------- โหมด pull: เปิด firewall ให้ central แล้วจบ
+if ($Pull) {
+    Say "3/3 Windows Firewall: เปิดรับ TCP $ExporterPort เฉพาะจาก $($CentralIps -join ', ')"
+    $RuleName = "Central Monitor Exporter (pull)"
+    Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Protocol TCP -LocalPort $ExporterPort `
+        -RemoteAddress $CentralIps -Action Allow -Profile Any | Out-Null
+    # agent แบบ push ที่อาจติดตั้งไว้ก่อน (ส่งไม่ออกอยู่แล้ว) -> หยุดไว้ ไม่ให้พักข้อมูลค้าง
+    if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+        Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
+        sc.exe config $ServiceName start= disabled | Out-Null
+        Warn "หยุด service $ServiceName (โหมด push) ไว้แล้ว เพราะใช้โหมด pull แทน"
+    }
+    $ips = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+             Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } | Select-Object -ExpandProperty IPAddress)
+    Write-Host ""
+    Write-Host "เสร็จแล้ว (โหมด pull) - service $ExpService ฟังที่ ${ListenAddr}:$ExporterPort" -ForegroundColor Green
+    Write-Host "IP ของเครื่องนี้: $($ips -join ', ')"
+    Write-Host "ที่ central: Settings > เครื่อง '$Name' > วิธีรับข้อมูล = central ดึงจาก Windows (pull)"
+    Write-Host "            ช่อง windows_exporter = <IP ของเครื่องนี้>:$ExporterPort  (central ต้องต่อเข้ามาที่พอร์ตนี้ได้)"
+    Write-Host "ทดสอบจาก central:  curl -s http://<IP ของเครื่องนี้>:$ExporterPort/metrics | head"
+    Write-Host "หมายเหตุ: โหมด pull ได้ CPU / Memory / Disk / Network / Service / Process / Software แต่ไม่มี log (Event Log / ไฟล์ log)"
+    exit 0
 }
 
 # ---------------------------------------------------------------- 4) ใบรับรองของ central

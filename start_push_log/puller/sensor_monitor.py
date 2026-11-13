@@ -520,12 +520,17 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     if agent:
         # Windows agent: สัญญาณทุก 30 วินาที + metrics แบบ windows_exporter ผ่าน remote write
         labels = f'cm_web="{name}"'
-        age = _one(f'time() - max(timestamp({{__name__=~"fluentbit_uptime.*",{labels}}}))')
+        # push: fluentbit_uptime ที่ agent ส่งมา · pull (agent.mode: pull): Prometheus ดึง windows_exporter ได้ (up == 1)
+        age = _one(f'time() - max(timestamp({{__name__=~"fluentbit_uptime.*",{labels}}} or (up{{{labels}}} == 1)))')
+        pull = (t.get("agent") or {}).get("mode") == "pull"
         if age is None or age > AGENT_TIMEOUT:
             add("availability", "availability", "Availability", "down", unit="",
-                message="agent is not sending data (service cm-agent stopped, machine off, or port 4318 blocked)")
+                message=(f"central cannot read windows_exporter at {(t.get('agent') or {}).get('exporter')} "
+                         "(machine off, service cm-exporter stopped, or Windows Firewall / network blocks port 9182)") if pull else
+                        "agent is not sending data (service cm-agent stopped, machine off, or port 4318 blocked)")
             return out
-        add("availability", "availability", "Availability", "ok", unit="", message=f"Agent sending ({age:.0f}s ago)")
+        add("availability", "availability", "Availability", "ok", unit="",
+            message=f"central pulling windows_exporter ({age:.0f}s ago)" if pull else f"Agent sending ({age:.0f}s ago)")
     else:
         up = _one(f'up{{web="{name}"}}')
         if up is None:

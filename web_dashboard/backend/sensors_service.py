@@ -189,7 +189,8 @@ def _history_query(sensor, labels):
         l = f'{labels},volume="{vol}"'
         return f"(1 - windows_logical_disk_free_bytes{{{l}}} / windows_logical_disk_size_bytes{{{l}}}) * 100"
     if kind == "availability" and labels.startswith("cm_web="):
-        return f'(count(time() - timestamp({{__name__=~"fluentbit_uptime.*",{labels}}}) < 180) or vector(0)) * 100'
+        return (f'(count(time() - timestamp({{__name__=~"fluentbit_uptime.*",{labels}}} or (up{{{labels}}} == 1)) < 180) '
+                f'or vector(0)) * 100')
     if kind == "disk" and sensor.get("mount"):
         mount = str(sensor["mount"]).replace("\\", "\\\\").replace('"', '\\"')
         l = f'{labels},mountpoint="{mount}",{_REAL_FS}'

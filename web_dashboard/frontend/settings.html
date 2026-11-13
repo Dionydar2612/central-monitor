@@ -86,6 +86,14 @@
 </div>
 </div>
 <div class="agent-only" hidden>
+<div class="fsec"><div class="fsec-h">วิธีรับข้อมูล</div>
+<div class="st-grid">
+<div class="st-f" data-f="agent.mode"><label for="a_mode">ใครเป็นฝ่ายส่ง</label><select id="a_mode">
+<option value="push">Windows ส่งมาเอง (agent · มี log + metrics) — แนะนำ</option>
+<option value="pull">central ดึงจาก Windows (pull · เฉพาะ metrics)</option></select>
+<small id="a_mode_hint">Windows ต้องต่อไปหา central ได้ (HTTPS พอร์ตของ agent gateway)</small><div class="st-err"></div></div>
+<div class="st-f pull-only" data-f="agent.exporter" hidden><label for="a_exporter">windows_exporter (IP:พอร์ต ที่ central ใช้ต่อเข้าเครื่องนี้)</label><input id="a_exporter" autocomplete="off" placeholder="เช่น 192.168.181.101:9182 (ว่าง = Host:9182)"><small>central ต้องต่อเข้าพอร์ตนี้ได้ · สคริปต์เปิด Windows Firewall ให้เฉพาะ IP ของ central</small><div class="st-err"></div></div>
+</div></div>
 <div class="fsec">
 <div class="st-h3">ติดตั้ง agent บนเครื่อง Windows</div>
 <div class="st-box">
@@ -96,7 +104,8 @@
 <li>เปิด <b>PowerShell</b> แบบ <b>Run as Administrator</b> (user เดียวกับที่ดาวน์โหลด) แล้ววางคำสั่งนี้ (แตก zip ล่าสุดใน Downloads ให้เอง):
 <textarea class="st-code" id="agCmd" readonly rows="3"></textarea>
 <div style="margin-top:6px"><button class="st-btn sm" id="agCopy" type="button">Copy command</button> <span id="agCopyMsg" style="color:var(--mut);font-size:12px"></span></div></li>
-<li>ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · ทดสอบ: <code>eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"</code></li>
+<li class="push-only">ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · ทดสอบ: <code>eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"</code></li>
+<li class="pull-only" hidden>โหมด pull: สคริปต์ติดตั้งเฉพาะ windows_exporter (service <code>cm-exporter</code> ฟัง 0.0.0.0:9182) + เปิด Windows Firewall ให้เฉพาะ IP ของ central · ไม่ต้องใช้ token · ภายใน ~1 นาที เครื่องจะขึ้น OK · ทดสอบจาก central: <code>curl -s http://&lt;IP เครื่องนี้&gt;:9182/metrics | head</code></li>
 </ol>
 <div class="rtnote">คำสั่งมี token ของ central (เหมือนรหัสผ่าน) อย่าแชร์ในที่สาธารณะ · เครื่อง Windows ต้องต่อออกไปที่ central พอร์ต <span id="agPort">4318</span> ได้</div>
 </div>
@@ -115,7 +124,8 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
 </div></div>
 <!-- Windows (agent): เครื่องส่งข้อมูลเองผ่าน Fluent Bit -> central-agent-gw :4318 -->
-<div class="agent-only" hidden><div class="fsec"><div class="fsec-h">Log ที่จะส่งจากเครื่อง Windows</div>
+<div class="agent-only pull-only" hidden><div class="fsec"><div class="empty" style="text-align:left">โหมด pull (central ดึงจาก Windows) ไม่มี log: ได้เฉพาะ CPU / Memory / Disk / Network / Service / Process / Software · ถ้าต้องการ log ให้เปิดทางจาก Windows ไปหา central แล้วเปลี่ยนเป็นโหมด push</div></div></div>
+<div class="agent-only push-only" hidden><div class="fsec"><div class="fsec-h">Log ที่จะส่งจากเครื่อง Windows</div>
 <div class="st-mut" style="font-size:13px">ส่งเฉพาะ ERROR / WARN (Event Log: Critical / Error / Warning) · IIS (path มี inetpub) ส่งเฉพาะ HTTP 5xx</div>
 <div class="st-grid">
 <div class="st-f" data-f="agent.channels"><label for="a_channels">Event Log channels (คั่นด้วย ,)</label><input id="a_channels" autocomplete="off" value="System, Application" placeholder="System, Application"><small>เช่น Microsoft-Windows-Sysmon/Operational</small><div class="st-err"></div></div>

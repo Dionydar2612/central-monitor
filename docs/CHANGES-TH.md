@@ -335,3 +335,13 @@
 - sensor ที่ปิด = สถานะ **Paused** ข้อความ "ปิด sensor นี้ไว้ ..." ไม่แจ้งเตือน (Teams / ป๊อปอัป) ไม่นับเป็นปัญหาของเครื่อง
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
+
+## Windows โหมด pull (central ดึงจาก Windows)
+- สำหรับเครื่อง Windows ที่ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าเครื่องได้ — ได้ metrics / service / process / software แต่**ไม่มี log**
+- puller.yaml: `targets[].agent: {mode: pull, exporter: "192.168.181.101:9182"}` (ไม่ใส่ exporter = host:9182) · ปริยาย `mode: push` (แบบเดิมทุกอย่าง)
+- Prometheus ดึงผ่าน `web-nodes.json` job `cm-agent-pull` พร้อม label `cm_web=<เครื่อง>` -> query ของ Windows เดิมใช้ได้ทันที (puller `prometheus_targets.py` + backend `targets_service.pull_target`)
+- สถานะ "ยังทำงาน" ของ agent ดูได้ทั้ง `fluentbit_uptime` (push) หรือ `up == 1` (pull): sensor Availability, Last seen, ตาราง WEB status, กราฟ Availability
+- `install-fluentbit.ps1 -Pull -Central <IP central> -Name <ชื่อ>`: ไม่ต้องใช้ token / ไม่ติดตั้ง Fluent Bit · windows_exporter ฟัง 0.0.0.0:9182 + กฎ Windows Firewall เปิดรับเฉพาะ IP ของ central · หยุด cm-agent (push) ถ้ามี · วิธีติดตั้งแบบเดิม (ไม่ใส่ -Pull) ไม่เปลี่ยน แค่เพิ่มข้อความแนะนำ -Pull เมื่อขั้น 1/7 ต่อ central ไม่ได้
+- `uninstall-fluentbit.ps1` ลบกฎ firewall ของโหมด pull
+- Settings > เครื่อง (Windows) > แท็บ การเชื่อมต่อ: "วิธีรับข้อมูล" push / pull + ช่อง windows_exporter · Make command สร้างคำสั่งตามโหมด · แท็บ Log บอกว่าโหมด pull ไม่มี log
+- แก้ `targets_service.regenerate_prometheus_targets` ให้ใส่ `__scheme__` / `__metrics_path__` เหมือน puller (เดิมเขียน web-nodes.json จากหน้า Settings แล้วค่า https หายจนกว่า puller จะสร้างใหม่)

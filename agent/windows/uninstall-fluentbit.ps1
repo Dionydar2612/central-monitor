@@ -16,6 +16,8 @@ if (Get-ScheduledTask -TaskName "CentralMonitorInventory" -ErrorAction SilentlyC
     Unregister-ScheduledTask -TaskName "CentralMonitorInventory" -Confirm:$false
     Write-Host "ลบ scheduled task CentralMonitorInventory แล้ว"
 }
+# firewall ของโหมด pull (เปิดรับ 9182 จาก central)
+Get-NetFirewallRule -DisplayName "Central Monitor Exporter (pull)" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 # windows_exporter ที่ติดตั้งโดยสคริปต์นี้ (service cm-exporter) ถูกลบพร้อม agent เสมอ
 if (Get-Service -Name "cm-exporter" -ErrorAction SilentlyContinue) {
     Stop-Service "cm-exporter" -Force -ErrorAction SilentlyContinue

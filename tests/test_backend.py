@@ -409,6 +409,33 @@ class Backend(unittest.TestCase):
         self.assertEqual(self.login("admin", "rootpass"), 200)
         c.delete("/api/targets/ping-x")
 
+    def test_windows_pull_mode(self):
+        """Windows โหมด pull: central (Prometheus) ดึง windows_exporter เอง label cm_web = ชื่อเครื่อง"""
+        import json as _j, agent_service, targets_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        bad = c.post("/api/targets", json={"name": "win-pull", "type": "agent", "agent": {"mode": "pull"}}).json
+        self.assertIn("agent.exporter", bad["fields"])                                  # ไม่มี host / exporter
+        r = c.post("/api/targets", json={"name": "win-pull", "type": "agent", "host": "192.168.181.101",
+                                         "agent": {"mode": "pull", "logs": [], "channels": ["System"]}})
+        self.assertEqual(r.status_code, 201, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-pull"][0]
+        self.assertEqual((t["agent"]["mode"], t["agent"]["exporter"]), ("pull", "192.168.181.101:9182"))
+        nodes = _j.load(open(os.path.join(self.tmp, "web-nodes.json")))
+        item = [n for n in nodes if n["labels"].get("cm_web") == "win-pull"][0]
+        self.assertEqual(item["targets"], ["192.168.181.101:9182"])
+        self.assertEqual(item["labels"]["job"], "cm-agent-pull")
+        info = agent_service.setup_info(agent_service.agent_target("win-pull"), "172.27.2.22")
+        self.assertIn("-Pull -Central 172.27.2.22 -Name win-pull", info["command"])
+        self.assertNotIn("-Token", info["command"])
+        # เปลี่ยนกลับเป็น push -> ไม่อยู่ในรายการให้ Prometheus ดึง
+        r = c.put("/api/targets/win-pull", json={"type": "agent", "host": "192.168.181.101",
+                                                 "agent": {"mode": "push", "logs": [], "channels": ["System"]}})
+        self.assertEqual(r.status_code, 200, r.json)
+        nodes = _j.load(open(os.path.join(self.tmp, "web-nodes.json")))
+        self.assertFalse([n for n in nodes if n["labels"].get("cm_web") == "win-pull"])
+        c.delete("/api/targets/win-pull")
+
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

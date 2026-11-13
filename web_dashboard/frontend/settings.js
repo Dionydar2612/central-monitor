@@ -63,12 +63,12 @@ function renderTable() {
             const n = (t.agent.logs || []).length;
             tb.append(el("tr", {},
                 el("td", {}, el("b", {}, t.name)),
-                el("td", {}, "Windows (agent)"),
+                el("td", {}, t.agent.mode === "pull" ? "Windows (pull)" : "Windows (agent)"),
                 el("td", {}, t.group || "-"),
                 el("td", {}, t.host || "-"),
                 el("td", {}, "-"),
-                el("td", {}, `${(t.agent.channels || []).length} event log · ${n} file`),
-                el("td", {}, "Fluent Bit"),
+                el("td", {}, t.agent.mode === "pull" ? "- (pull ไม่มี log)" : `${(t.agent.channels || []).length} event log · ${n} file`),
+                el("td", {}, t.agent.mode === "pull" ? `central ดึง ${t.agent.exporter || ""}` : "Fluent Bit"),
                 el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
                 el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("agCentral").focus(); }, "Install command")))));
             return;
@@ -180,6 +180,18 @@ function setType(type) {
     if ($("fa_min")) formDefaults();
 }
 
+/* Windows: push (agent ส่งมาเอง) / pull (central ดึง windows_exporter)  แสดงช่องตามโหมด */
+function setMode(mode) {
+    $("a_mode").value = mode === "pull" ? "pull" : "push";
+    const pull = $("a_mode").value === "pull", agent = $("f_type").value === "agent";
+    document.querySelectorAll("#formCard .pull-only").forEach(n => { n.hidden = !agent || !pull; });
+    document.querySelectorAll("#formCard .push-only").forEach(n => { n.hidden = !agent || pull; });
+    $("a_mode_hint").textContent = pull
+        ? "ใช้เมื่อ Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้า Windows พอร์ต 9182 ได้ · ไม่มี log"
+        : "Windows ต้องต่อไปหา central ได้ (HTTPS พอร์ตของ agent gateway)";
+    $("agCentral").placeholder = pull ? "IP ของ central ที่ Windows เห็น (เปิด firewall ให้เฉพาะ IP นี้)" : "IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก";
+}
+
 function agentCentralGuess() {
     try { const v = localStorage.getItem("cm.agentCentral"); if (v) return v; } catch (e) { /* ignore */ }
     return location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "" : location.hostname;
@@ -278,6 +290,8 @@ function openForm(t) {
     $("agCentral").value = agentCentralGuess();
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
     $("a_logs").value = t && t.agent ? (t.agent.logs || []).join("\n") : "";
+    $("a_exporter").value = t && t.agent ? (t.agent.exporter || "") : "";
+    setMode(t && t.agent ? t.agent.mode : "push");
     $("a_crit").value = t && Array.isArray(t.critical_services) ? (t.critical_services.length ? t.critical_services.join(", ") : "-") : "";
     if (t && t.type === "agent") {
         $("formTitle").textContent = `Edit target: ${t.name}`;
@@ -358,6 +372,8 @@ function readForm() {
             agent: {
                 logs: $("a_logs").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean),
                 channels: $("a_channels").value.split(",").map(s => s.trim()).filter(Boolean),
+                mode: $("a_mode").value,
+                exporter: $("a_exporter").value.trim(),
             },
         };
     }
@@ -861,7 +877,11 @@ document.addEventListener("DOMContentLoaded", () => {
         catch (e) { say("n_msg", "ส่งไม่ได้: " + e.message, "bad"); }
     };
     $("n_clear").onclick = () => { if (confirm("ลบ webhook URL? (หยุดส่งแจ้งเตือนไป Teams)")) saveNotify({ webhook_url: "-", enabled: false }); };
-    $("f_type").addEventListener("change", e => setType(e.target.value));
+    $("f_type").addEventListener("change", e => { setType(e.target.value); setMode($("a_mode").value); });
+    $("a_mode").addEventListener("change", e => {
+        setMode(e.target.value);
+        if (S.editing) $("agStatus").textContent = "เปลี่ยนวิธีรับข้อมูลแล้ว กด Save ก่อน แล้วกด Make command ใหม่";
+    });
     document.querySelectorAll("#formCard .ftabs button").forEach(b => { b.onclick = () => formTab(b.dataset.t); });
     $("agMake").onclick = makeAgentCommand;
     $("agCopy").onclick = async () => {

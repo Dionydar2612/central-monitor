@@ -63,7 +63,14 @@ def generate_targets():
         if web.get("name") and host and not web.get("paused"):
             pings.append({"targets": [host], "labels": {"cm_target": web["name"], "environment": environment}})
         if str(web.get("type") or "ssh") == "agent":
-            continue          # agent ส่ง metrics เข้ามาเอง (remote write)
+            # push: agent ส่ง metrics เข้ามาเอง (remote write) / pull: Prometheus ดึง windows_exporter ของเครื่อง Windows
+            #   label cm_web = ชื่อเครื่อง (เหมือนข้อมูลจาก agent) ต้องตรงกับ targets_service.pull_target
+            agent = web.get("agent") or {}
+            if agent.get("mode") == "pull" and agent.get("exporter") and web.get("name") and not web.get("paused"):
+                targets.append({"targets": [str(agent["exporter"])],
+                                "labels": {"job": "cm-agent-pull", "web": web["name"], "cm_web": web["name"],
+                                           "environment": environment}})
+            continue
         name = web.get("name")
         prometheus = web.get("prometheus", {})
 

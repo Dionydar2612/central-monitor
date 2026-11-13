@@ -301,6 +301,21 @@ def validate_agent_target(data, existing_names, editing=None):
             errors["agent.channels"] = f"ชื่อ channel ไม่ถูกต้อง: {c[:60]}"
         channels.append(c)
 
+    # วิธีรับข้อมูล: push = Windows ส่งมาเอง (Fluent Bit + token) / pull = central (Prometheus) ดึง windows_exporter เอง
+    #   pull ใช้เมื่อเครื่อง Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าไปได้ — ได้ metrics แต่ไม่มี log
+    mode = str(agent.get("mode") or "push").strip().lower()
+    exporter = str(agent.get("exporter") or "").strip()
+    if mode not in ("push", "pull"):
+        errors["agent.mode"] = "เลือก push หรือ pull"
+        mode = "push"
+    if mode == "pull":
+        if not exporter and host:
+            exporter = f"{host}:9182"
+        if not exporter:
+            errors["agent.exporter"] = "โหมด pull ต้องใส่ IP:พอร์ต ของ windows_exporter (เช่น 192.168.181.101:9182) หรือใส่ Host"
+        elif not INSTANCE_RE.match(exporter) or int(exporter.rsplit(":", 1)[1]) > 65535:
+            errors["agent.exporter"] = "รูปแบบ IP:พอร์ต เช่น 192.168.181.101:9182"
+
     group = clean_group(data.get("group"), errors)
     paused = bool(data.get("paused", False))
     thresholds = clean_thresholds(data.get("thresholds"), errors)
@@ -310,7 +325,8 @@ def validate_agent_target(data, existing_names, editing=None):
     if errors:
         raise ValidationError(errors)
     return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "paused": paused,
-            "thresholds": thresholds, "alert": alert, "critical_services": crit, "agent": {"logs": logs, "channels": channels}}
+            "thresholds": thresholds, "alert": alert, "critical_services": crit,
+            "agent": {"logs": logs, "channels": channels, "mode": mode, **({"exporter": exporter} if mode == "pull" else {})}}
 
 
 def is_agent(t):
@@ -469,6 +485,9 @@ def _agent_node(t):
     ch = CommentedSeq(t["agent"]["channels"])
     ch.fa.set_flow_style()
     a["channels"] = ch
+    if t["agent"].get("mode") == "pull":
+        a["mode"] = "pull"
+        a["exporter"] = t["agent"]["exporter"]
     return a
 
 
@@ -599,18 +618,35 @@ def _plain(node):
 # Prometheus file_sd + สั่ง puller ดึงทันที
 # ------------------------------------------------------------------
 
+def pull_target(web, environment="production"):
+    """เครื่อง Windows โหมด pull -> รายการให้ Prometheus ดึง (file_sd) ไม่ใช่ pull / paused -> None
+    ต้องตรงกับ start_push_log/puller/prometheus_targets.py"""
+    agent = web.get("agent") or {}
+    if not web.get("name") or web.get("paused") or agent.get("mode") != "pull" or not agent.get("exporter"):
+        return None
+    return {"targets": [str(agent["exporter"])],
+            "labels": {"job": "cm-agent-pull", "web": web["name"], "cm_web": web["name"], "environment": environment}}
+
+
 def regenerate_prometheus_targets(doc):
     environment = (doc.get("site") or {}).get("environment", "production")
     out = []
     for web in doc.get("targets") or []:
         prom = web.get("prometheus") or {}
         if is_agent(web):
-            continue                    # agent ส่ง metrics เข้ามาเอง (remote write) ไม่ต้องให้ Prometheus ไปดึง
+            # agent แบบ push ส่ง metrics เข้ามาเอง (remote write) / แบบ pull -> Prometheus ดึง windows_exporter
+            #   label cm_web = ชื่อเครื่อง เหมือนข้อมูลที่ agent ส่งมา -> query ของ Windows ใช้ได้ทั้ง 2 แบบ
+            item = pull_target(web, environment)
+            if item:
+                out.append(item)
+            continue
         if web.get("name") and prom.get("job") and prom.get("instance"):
-            out.append({
-                "targets": [prom["instance"]],
-                "labels": {"job": prom["job"], "web": web["name"], "environment": environment},
-            })
+            labels = {"job": prom["job"], "web": web["name"], "environment": environment}
+            if str(prom.get("scheme") or "http").lower() == "https":
+                labels["__scheme__"] = "https"
+            if (prom.get("metrics_path") or "/metrics") != "/metrics":
+                labels["__metrics_path__"] = prom["metrics_path"]
+            out.append({"targets": [prom["instance"]], "labels": labels})
     path = settings.PROMETHEUS_TARGET_FILE
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -729,7 +765,8 @@ def _view(t):
         return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
                 "group": t.get("group") or "", "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
                 "alert": t.get("alert") or {},
-                "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"]},
+                "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"],
+                          "mode": "pull" if agent.get("mode") == "pull" else "push", "exporter": agent.get("exporter") or ""},
                 "critical_services": t.get("critical_services"),
                 "watch_services": t.get("watch_services") or []}
     ssh = t.get("ssh") or {}

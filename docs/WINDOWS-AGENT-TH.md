@@ -99,6 +99,35 @@ Settings > **+ Add target**
   -> ตาราง Logs (Machine = win-app-01) ขึ้น `[ERROR] [Application] CentralMonitorTest (Event 999): test error`
 - หน้า Settings > Install command: บอกว่าได้ข้อมูลล่าสุดเมื่อไหร่
 
+## โหมด pull: เครื่อง Windows ต่อไปหา central ไม่ได้
+
+ใช้เมื่อ firewall ระหว่างวงปิดทิศ **Windows → central** (agent ส่งไม่ออก) แต่ทิศ **central → Windows** ใช้ได้
+
+```
+central (Prometheus) ──ดึงทุก 15 วินาที──▶ Windows: windows_exporter (service cm-exporter, 0.0.0.0:9182)
+```
+
+| | push (ปกติ) | pull |
+|---|---|---|
+| ใครเริ่มเชื่อมต่อ | Windows → central (HTTPS + token) | central → Windows พอร์ต 9182 |
+| CPU / Memory / Disk / Network / Service / Process | ✅ | ✅ |
+| Software (โปรแกรมที่ติดตั้ง / พอร์ต / เว็บ localhost / Docker) | ✅ | ✅ (textfile ของ windows_exporter) |
+| **Log** (Event Log / ไฟล์ log) | ✅ | ❌ ไม่มี |
+| firewall ที่ต้องเปิด | TCP พอร์ต agent gateway จาก Windows ไป central | TCP 9182 จาก central ไป Windows |
+
+ขั้นตอน
+1. Settings > เครื่อง > แท็บ **การเชื่อมต่อ** > วิธีรับข้อมูล = **central ดึงจาก Windows (pull)** ใส่ช่อง windows_exporter = `<IP เครื่อง Windows>:9182` (ว่าง = Host:9182) แล้ว **Save**
+2. Download installer (zip) ใส่ IP ของ central **ตามที่เครื่อง Windows เห็น** (สคริปต์เปิด Windows Firewall ให้เฉพาะ IP นี้) แล้วกด Make command
+3. วางคำสั่งใน PowerShell แบบ Admin — คำสั่งเป็น `install-fluentbit.ps1 -Pull -Central <IP central> -Name <ชื่อ>` (ไม่มี token) สคริปต์จะ
+   - ติดตั้ง windows_exporter เป็น service `cm-exporter` ฟัง `0.0.0.0:9182` + scheduled task รายการโปรแกรม / Docker / เว็บ
+   - สร้างกฎ Windows Firewall "Central Monitor Exporter (pull)" เปิดรับ TCP 9182 **เฉพาะจาก IP ของ central**
+   - ถ้ามี service `cm-agent` (push) ค้างอยู่ จะหยุดและปิดไว้
+4. ทดสอบจาก central: `curl -s http://<IP เครื่อง Windows>:9182/metrics | head` · ภายใน ~1 นาที เครื่องขึ้น OK
+   - ขึ้น Down ข้อความ "central cannot read windows_exporter ..." = central ต่อพอร์ต 9182 ไม่ได้ (เครื่องดับ / service หยุด / firewall ระหว่างวง)
+- เปลี่ยนกลับเป็น push: เปลี่ยนวิธีรับข้อมูลเป็น push แล้ว Save แล้วรันคำสั่งติดตั้งแบบปกติ (มี token) ใหม่
+- ถอนการติดตั้ง: `uninstall-fluentbit.ps1` ลบกฎ firewall ของโหมด pull ด้วย
+- ข้อควรรู้: windows_exporter ไม่มีการเข้ารหัส / ไม่มีรหัสผ่าน ใครที่ firewall ปล่อยให้ต่อพอร์ต 9182 ได้จะอ่าน metrics ได้ (สคริปต์จำกัดไว้เฉพาะ IP ของ central)
+
 ## เครื่องเยอะ
 
 วางโฟลเดอร์ที่แตกแล้วบน share (เช่น `\\fileserver\cm-agent\`) แล้วสั่งรันด้วย GPO / Intune / SCCM

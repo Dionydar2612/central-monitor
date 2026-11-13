@@ -189,6 +189,31 @@ class DisabledSensors(unittest.TestCase):
         self.assertTrue(out[0]["disabled"])
 
 
+class WindowsPullTargets(unittest.TestCase):
+    """prometheus_targets: เครื่อง Windows โหมด pull อยู่ใน web-nodes.json (label cm_web) / push ไม่อยู่"""
+
+    def test_generate(self):
+        import importlib, tempfile as _tf, yaml as _y
+        d = _tf.mkdtemp()
+        cfg = os.path.join(d, "puller.yaml")
+        _y.safe_dump({"targets": [
+            {"name": "win-pull", "type": "agent", "os": "windows", "host": "192.168.181.101",
+             "agent": {"mode": "pull", "exporter": "192.168.181.101:9182"}},
+            {"name": "win-push", "type": "agent", "os": "windows", "agent": {"logs": []}},
+            {"name": "win-off", "type": "agent", "paused": True, "agent": {"mode": "pull", "exporter": "10.0.0.9:9182"}}]},
+            open(cfg, "w"))
+        import prometheus_targets as pt
+        old = (pt.CONFIG_FILE, pt.TARGET_FILE, pt.PING_FILE)
+        pt.CONFIG_FILE, pt.TARGET_FILE, pt.PING_FILE = cfg, os.path.join(d, "web-nodes.json"), os.path.join(d, "ping.json")
+        try:
+            pt.generate_targets()
+            nodes = json.load(open(pt.TARGET_FILE))
+        finally:
+            pt.CONFIG_FILE, pt.TARGET_FILE, pt.PING_FILE = old
+        self.assertEqual(nodes, [{"targets": ["192.168.181.101:9182"],
+                                  "labels": {"job": "cm-agent-pull", "web": "win-pull", "cm_web": "win-pull", "environment": "production"}}])
+
+
 class LogFilter(unittest.TestCase):
     DATA = (b"2026-11-04T10:00:00+07:00 INFO started ok\n"
             b"2026-11-04T10:00:01+07:00 ERROR boom\n"
