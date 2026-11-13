@@ -139,6 +139,12 @@ $ExpCollectorSets = @(
     "cpu,os,memory,logical_disk,net,system,service,process,textfile",
     "cpu,os,memory,logical_disk,net,system,service"
 )
+# collector update ถาม Windows Update: service wuauserv ถูกปิด -> windows_exporter เริ่มไม่ได้ทั้งตัว (ERROR แล้วออก)
+#   ตอนทดลองไม่ได้ใส่ update (ถามนาน) จึงไม่เห็นปัญหา -> ตัดออกตั้งแต่แรกถ้า wuauserv ปิดอยู่
+$wu = Get-Service wuauserv -ErrorAction SilentlyContinue
+if (-not $wu -or $wu.StartType -eq 'Disabled') {
+    $ExpCollectorSets = @($ExpCollectorSets | ForEach-Object { (($_ -split ",") | Where-Object { $_ -ne "update" }) -join "," })
+}
 # textfile: โปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ (cm-inventory.ps1 เขียนทุก 15 นาที)
 $TextDir = Join-Path $DataDir "textfile"
 $InvScript = Join-Path $InstallDir "cm-inventory.ps1"
@@ -407,8 +413,27 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
         }
         sc.exe failure $ExpService reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
         if (Test-Path $ExpLog) { Move-Item $ExpLog "$ExpLog.old" -Force -ErrorAction SilentlyContinue }
-        Start-Service $ExpService
-        if (-not (Test-Exporter 40)) { Show-ExporterDiag; throw "service $ExpService ไม่ตอบที่ $ExporterUrl" }
+        Start-Service $ExpService -ErrorAction SilentlyContinue
+        if (-not (Test-Exporter 40)) {
+            # เริ่มไม่ได้ (เช่น collector update / gpu ใช้ไม่ได้บนเครื่องนี้) -> ลองใหม่โดยตัด update, gpu ออก
+            $lite = @($chosen | ForEach-Object {
+                if ($_ -like "--collectors.enabled=*") {
+                    "--collectors.enabled=" + ((($_ -replace '^--collectors.enabled=', '') -split "," | Where-Object { $_ -notin "update", "gpu" }) -join ",")
+                } else { $_ } })
+            if (($lite -join " ") -ne ($chosen -join " ")) {
+                Warn "service $ExpService เริ่มไม่ได้ -> ลองใหม่โดยไม่ใช้ collector update / gpu"
+                Stop-Service $ExpService -Force -ErrorAction SilentlyContinue
+                $chosen = $lite
+                $svcArgs = @("--web.listen-address=${ListenAddr}:$ExporterPort") + $chosen +
+                           @("--log.file=`"$ExpLog`"", "--log.rotation.max-size=10", "--log.rotation.max-backups=2")
+                $bin = "`"$ExpExe`" " + ($svcArgs -join " ")
+                sc.exe config $ExpService binPath= $bin start= auto | Out-Null
+                if (Test-Path $ExpLog) { Move-Item $ExpLog "$ExpLog.old" -Force -ErrorAction SilentlyContinue }
+                Start-Service $ExpService -ErrorAction SilentlyContinue
+            }
+            if (-not (Test-Exporter 40)) { Show-ExporterDiag; throw "service $ExpService ไม่ตอบที่ $ExporterUrl" }
+            Write-Host "   collectors: $(($chosen[0]) -replace '--collectors.enabled=', '')"
+        }
         $UseExporter = $true
         try {
             $act = New-ScheduledTaskAction -Execute "powershell.exe" `

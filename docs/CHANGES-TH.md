@@ -349,3 +349,4 @@
 - `install-pull.bat` เรียก `install-fluentbit.ps1 -Pull` ให้เองถ้าเครื่องรัน PowerShell ได้ (ได้แท็บ Software + ทดสอบ exporter จริง) · PowerShell ถูกบล็อก / ไม่มี -> ติดตั้งด้วย cmd ล้วนเหมือนเดิม · อาร์กิวเมนต์ `install-pull.bat <IP central> [ชื่อ] [nops]`
 - `install-fluentbit.ps1`: ไม่ใส่ -Name แล้วชื่อ Windows มีอักษรที่ใช้ไม่ได้ (เช่น `ALBEN_2016`) -> แปลงเป็น `alben-2016` ให้เอง (เดิมหยุดด้วย error)
 - `install-pull.bat`: ถาม "IP of central" (ไม่มีตัวอย่าง IP ในคำถามแล้ว) แล้วถามชื่อเครื่องแยก · พิมพ์ "IP ชื่อ" ในบรรทัดเดียวก็แยกให้ · ตรวจว่าเป็น IP จริงก่อนติดตั้ง
+- `install-fluentbit.ps1`: เครื่องที่ปิด Windows Update (service wuauserv = Disabled) ไม่ใช้ collector `update` (เดิม windows_exporter เริ่มไม่ได้ทั้งตัว "windows updates service is disabled") · ถ้า service cm-exporter เริ่มไม่ได้ ลองใหม่อัตโนมัติโดยตัด collector update / gpu ก่อนแจ้ง error (ใช้ทั้งโหมด push และ pull)
