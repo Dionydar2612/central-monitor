@@ -52,6 +52,14 @@ $Here        = Split-Path -Parent $MyInvocation.MyCommand.Path
 function Say($msg)  { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 
+# แก้คำสั่งของ service ที่มีอยู่แล้ว: เขียน ImagePath ใน registry ตรง ๆ
+#   (sc.exe config binPath= "<ที่มีเครื่องหมาย "...">" ผ่าน PowerShell 5.1 ส่งอาร์กิวเมนต์เพี้ยน -> sc ไม่เปลี่ยนอะไรแต่ไม่ฟ้อง
+#    ทำให้ติดตั้งซ้ำแล้ว service ยังใช้คำสั่งเดิม)
+function Set-ServiceBin([string] $svcName, [string] $binPath) {
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$svcName" -Name ImagePath -Value $binPath
+    Set-Service -Name $svcName -StartupType Automatic
+}
+
 # ---------------------------------------------------------------- 0) ตรวจเบื้องต้น
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
           [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -142,7 +150,8 @@ $ExpCollectorSets = @(
 # collector update ถาม Windows Update: service wuauserv ถูกปิด -> windows_exporter เริ่มไม่ได้ทั้งตัว (ERROR แล้วออก)
 #   ตอนทดลองไม่ได้ใส่ update (ถามนาน) จึงไม่เห็นปัญหา -> ตัดออกตั้งแต่แรกถ้า wuauserv ปิดอยู่
 $wu = Get-Service wuauserv -ErrorAction SilentlyContinue
-if (-not $wu -or $wu.StartType -eq 'Disabled') {
+$wuStart = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv" -Name Start -ErrorAction SilentlyContinue).Start
+if (-not $wu -or $wuStart -eq 4 -or "$($wu.StartType)" -eq 'Disabled') {        # Start = 4 = Disabled
     $ExpCollectorSets = @($ExpCollectorSets | ForEach-Object { (($_ -split ",") | Where-Object { $_ -ne "update" }) -join "," })
 }
 # textfile: โปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ (cm-inventory.ps1 เขียนทุก 15 นาที)
@@ -405,7 +414,7 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
                    @("--log.file=`"$ExpLog`"", "--log.rotation.max-size=10", "--log.rotation.max-backups=2")
         $bin = "`"$ExpExe`" " + ($svcArgs -join " ")
         if (Get-Service $ExpService -ErrorAction SilentlyContinue) {
-            sc.exe config $ExpService binPath= $bin start= auto | Out-Null
+            Set-ServiceBin $ExpService $bin
         } else {
             New-Service -Name $ExpService -BinaryPathName $bin -DisplayName "Central Monitor Exporter (windows_exporter)" `
                 -Description "เก็บ metrics ของเครื่อง ($ListenAddr`:$ExporterPort) ให้ Central Monitor" `
@@ -427,7 +436,7 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
                 $svcArgs = @("--web.listen-address=${ListenAddr}:$ExporterPort") + $chosen +
                            @("--log.file=`"$ExpLog`"", "--log.rotation.max-size=10", "--log.rotation.max-backups=2")
                 $bin = "`"$ExpExe`" " + ($svcArgs -join " ")
-                sc.exe config $ExpService binPath= $bin start= auto | Out-Null
+                Set-ServiceBin $ExpService $bin
                 if (Test-Path $ExpLog) { Move-Item $ExpLog "$ExpLog.old" -Force -ErrorAction SilentlyContinue }
                 Start-Service $ExpService -ErrorAction SilentlyContinue
             }
@@ -755,7 +764,7 @@ if ($LASTEXITCODE -ne 0) {
 Say "6/7 ติดตั้ง Windows service '$ServiceName'"
 $bin = "`"$FluentExe`" -c `"$ConfFile`""
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    sc.exe config $ServiceName binPath= $bin start= auto | Out-Null
+    Set-ServiceBin $ServiceName $bin
 } else {
     New-Service -Name $ServiceName -BinaryPathName $bin -DisplayName "Central Monitor Agent (Fluent Bit)" `
         -Description "ส่ง ERROR/WARN log และสถานะเครื่องไปที่ Central Monitor" -StartupType Automatic | Out-Null
