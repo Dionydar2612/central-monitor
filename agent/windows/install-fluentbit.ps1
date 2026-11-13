@@ -481,9 +481,21 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
 if ($Pull) {
     Say "3/3 Windows Firewall: เปิดรับ TCP $ExporterPort เฉพาะจาก $($CentralIps -join ', ')"
     $RuleName = "Central Monitor Exporter (pull)"
-    Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Protocol TCP -LocalPort $ExporterPort `
-        -RemoteAddress $CentralIps -Action Allow -Profile Any | Out-Null
+    # service Windows Firewall (MpsSvc) ปิดอยู่ -> สร้างกฎไม่ได้ (error 1753) แต่ firewall ก็ไม่ได้กั้นอะไร -> เตือนแล้วไปต่อ
+    $fw = Get-Service MpsSvc -ErrorAction SilentlyContinue
+    try {
+        Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+        New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Protocol TCP -LocalPort $ExporterPort `
+            -RemoteAddress $CentralIps -Action Allow -Profile Any -ErrorAction Stop | Out-Null
+        Write-Host "   กฎ '$RuleName' แล้ว"
+    } catch {
+        if (-not $fw -or $fw.Status -ne "Running") {
+            Warn "service Windows Firewall (MpsSvc) ไม่ได้ทำงาน -> สร้างกฎไม่ได้ แต่พอร์ต $ExporterPort ไม่ถูก Windows Firewall กั้นอยู่แล้ว"
+            Warn "   ทุกเครื่องที่ network ปล่อยให้ถึงพอร์ต $ExporterPort จะอ่าน metrics ได้ (ถ้าเปิด Windows Firewall ทีหลัง ให้รันสคริปต์นี้ซ้ำ)"
+        } else {
+            Warn "สร้างกฎ Windows Firewall ไม่ได้: $($_.Exception.Message) -> เปิดรับ TCP $ExporterPort จาก $($CentralIps -join ', ') เอง"
+        }
+    }
     # agent แบบ push ที่อาจติดตั้งไว้ก่อน (ส่งไม่ออกอยู่แล้ว) -> หยุดไว้ ไม่ให้พักข้อมูลค้าง
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
         Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
