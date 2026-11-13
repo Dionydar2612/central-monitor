@@ -508,8 +508,9 @@ if ($Pull) {
     Write-Host "เสร็จแล้ว (โหมด pull) - service $ExpService ฟังที่ ${ListenAddr}:$ExporterPort" -ForegroundColor Green
     Write-Host "IP ของเครื่องนี้: $($ips -join ', ')"
     Write-Host "ที่ central: Settings > เครื่อง '$Name' > วิธีรับข้อมูล = central ดึงจาก Windows (pull)"
-    Write-Host "            ช่อง windows_exporter = <IP ของเครื่องนี้>:$ExporterPort  (central ต้องต่อเข้ามาที่พอร์ตนี้ได้)"
-    Write-Host "ทดสอบจาก central:  curl -s http://<IP ของเครื่องนี้>:$ExporterPort/metrics | head"
+    $ip1 = if ($ips) { $ips[0] } else { "<IP ของเครื่องนี้>" }
+    Write-Host "            ช่อง windows_exporter = ${ip1}:$ExporterPort  (central ต้องต่อเข้ามาที่พอร์ตนี้ได้)"
+    Write-Host "ทดสอบจาก central:  curl -s http://${ip1}:$ExporterPort/metrics | head"
     Write-Host "หมายเหตุ: โหมด pull ได้ CPU / Memory / Disk / Network / Service / Process / Software แต่ไม่มี log (Event Log / ไฟล์ log)"
     exit 0
 }
