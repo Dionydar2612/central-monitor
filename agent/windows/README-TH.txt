@@ -42,7 +42,9 @@
   powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge] [-KeepExporter]
 
 
-โหมด pull (เครื่องนี้ต่อไปหา central ไม่ได้ แต่ central ต่อเข้ามาได้) - ได้เฉพาะ metrics ไม่มี log
+โหมด pull (เครื่องนี้ต่อไปหา central ไม่ได้ แต่ central ต่อเข้ามาได้) - metrics + log (ERROR / WARN)
+  log: scheduled task CentralMonitorLogs (cm-logs.ps1) ทุก 1 นาที เก็บไว้บนเครื่อง ~3 ชม. central ดึงไปทาง :9182 ทุกรอบ log
+       เลือก log ได้เหมือน push: -Channels "System,Application" -Logs "C:\app\logs\*.log"
   ที่ central: Settings > เครื่อง > การเชื่อมต่อ > วิธีรับข้อมูล = central ดึงจาก Windows (pull) > Save
   แบบ PowerShell:  powershell -ExecutionPolicy Bypass -File .\install-fluentbit.ps1 -Pull -Central <IP central> -Name <ชื่อ>
   แบบไฟล์ .bat: แตก zip แล้วคลิกขวา install-pull.bat > Run as administrator ใส่ IP ของ central เมื่อถาม (ต้องเป็น IP)

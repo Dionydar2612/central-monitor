@@ -336,14 +336,23 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## log ของ Windows โหมด pull
+- เดิมโหมด pull ไม่มี log เพราะเครื่อง Windows ส่งออกไปหา central ไม่ได้ -> ใช้ช่องทางเดียวกับ metrics (central ต่อเข้า :9182) แทน
+- `agent/windows/cm-logs.ps1` (scheduled task `CentralMonitorLogs` ทุก 1 นาที, SYSTEM): อ่าน Event Log (Critical / Error / Warning ต่อจาก RecordId ครั้งก่อน) + ไฟล์ log (ส่วนที่เพิ่ม เฉพาะบรรทัด error / warn) -> textfile `cm_logs.prom` ของ windows_exporter: `cm_log_entry{seq,type,body}` เก็บย้อนหลัง ~3 ชม. / 1000 รายการ · ตั้งค่าใน `%ProgramData%\central-monitor-agent\cm-logs.json`
+- `install-fluentbit.ps1 -Pull` คัดลอก cm-logs.ps1 + ตั้ง task (ใช้ -Channels / -Logs เหมือนโหมด push) · Make command โหมด pull ใส่ -Channels / -Logs ให้ · ถอน: uninstall-fluentbit.ps1 / uninstall-pull.bat ลบ task ด้วย · .bat แบบ cmd ล้วน (PowerShell ถูกบล็อก) ไม่มี log
+- puller `agent_logs.py`: ทุกรอบ log (scheduler.log_interval) อ่าน `http://<exporter>/metrics` เอาเฉพาะ seq ใหม่ -> `data/buffer/<site>__<เครื่อง>__eventlog|application__...log` (checkpoint `<เครื่อง>::agent-pull::<exporter>`, seq บนเครื่องเริ่มใหม่ = เก็บใหม่ทั้งหมด) · ไม่เก็บ INFO ตาม store_info_logs · ยุบซ้ำตาม collapse_repeats
+- otel: receiver ใหม่ `filelog/eventlog` (`*__eventlog__*.log` -> log.source = eventlog เหมือนโหมด push) · filelog/other ไม่อ่านไฟล์ eventlog ซ้ำ
+- Prometheus job `web-nodes`: `metric_relabel_configs` ทิ้ง `cm_log_entry` (ไม่เก็บ log เป็น metric)
+- เครื่องที่ติดตั้งโหมด pull ไปแล้ว: รัน `install-pull.bat` / `install-fluentbit.ps1 -Pull` ซ้ำ 1 ครั้ง (zip ชุดใหม่)
+
 ## Windows โหมด pull (central ดึงจาก Windows)
-- สำหรับเครื่อง Windows ที่ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าเครื่องได้ — ได้ metrics / service / process / software แต่**ไม่มี log**
+- สำหรับเครื่อง Windows ที่ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าเครื่องได้ — ได้ metrics / service / process / software + log (ดูหัวข้อ "log ของโหมด pull" ด้านล่าง)
 - puller.yaml: `targets[].agent: {mode: pull, exporter: "192.168.181.101:9182"}` (ไม่ใส่ exporter = host:9182) · ปริยาย `mode: push` (แบบเดิมทุกอย่าง)
 - Prometheus ดึงผ่าน `web-nodes.json` job `cm-agent-pull` พร้อม label `cm_web=<เครื่อง>` -> query ของ Windows เดิมใช้ได้ทันที (puller `prometheus_targets.py` + backend `targets_service.pull_target`)
 - สถานะ "ยังทำงาน" ของ agent ดูได้ทั้ง `fluentbit_uptime` (push) หรือ `up == 1` (pull): sensor Availability, Last seen, ตาราง WEB status, กราฟ Availability
 - `install-fluentbit.ps1 -Pull -Central <IP central> -Name <ชื่อ>`: ไม่ต้องใช้ token / ไม่ติดตั้ง Fluent Bit · windows_exporter ฟัง 0.0.0.0:9182 + กฎ Windows Firewall เปิดรับเฉพาะ IP ของ central · หยุด cm-agent (push) ถ้ามี · วิธีติดตั้งแบบเดิม (ไม่ใส่ -Pull) ไม่เปลี่ยน แค่เพิ่มข้อความแนะนำ -Pull เมื่อขั้น 1/7 ต่อ central ไม่ได้
 - `uninstall-fluentbit.ps1` ลบกฎ firewall ของโหมด pull
-- Settings > เครื่อง (Windows) > แท็บ การเชื่อมต่อ: "วิธีรับข้อมูล" push / pull + ช่อง windows_exporter · Make command สร้างคำสั่งตามโหมด · แท็บ Log บอกว่าโหมด pull ไม่มี log
+- Settings > เครื่อง (Windows) > แท็บ การเชื่อมต่อ: "วิธีรับข้อมูล" push / pull + ช่อง windows_exporter · Make command สร้างคำสั่งตามโหมด · แท็บ Log ใช้ได้ทั้ง 2 โหมด
 - แก้ `targets_service.regenerate_prometheus_targets` ให้ใส่ `__scheme__` / `__metrics_path__` เหมือน puller (เดิมเขียน web-nodes.json จากหน้า Settings แล้วค่า https หายจนกว่า puller จะสร้างใหม่)
 - เพิ่ม `agent/windows/install-pull.bat` / `uninstall-pull.bat` สำหรับเครื่องที่เปิด PowerShell ไม่ได้: ติดตั้งโหมด pull ด้วย cmd ล้วน (sc / netsh / copy) ถาม IP ของ central ตอนรัน · อยู่ใน zip ชุดติดตั้งอัตโนมัติ · ไม่มีแท็บ Software
 - `install-pull.bat` เรียก `install-fluentbit.ps1 -Pull` ให้เองถ้าเครื่องรัน PowerShell ได้ (ได้แท็บ Software + ทดสอบ exporter จริง) · PowerShell ถูกบล็อก / ไม่มี -> ติดตั้งด้วย cmd ล้วนเหมือนเดิม · อาร์กิวเมนต์ `install-pull.bat <IP central> [ชื่อ] [nops]`

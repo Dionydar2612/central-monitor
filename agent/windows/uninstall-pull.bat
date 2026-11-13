@@ -1,7 +1,7 @@
 @echo off
 REM ======================================================================
 REM  uninstall-pull.bat - remove Central Monitor pull mode (no PowerShell)
-REM    service cm-exporter + firewall rule "Central Monitor Exporter (pull)"
+REM    service cm-exporter + scheduled tasks + firewall rule "Central Monitor Exporter (pull)"
 REM    add "purge" to also delete C:\ProgramData\central-monitor-agent
 REM  Use: right-click > Run as administrator
 REM ======================================================================
@@ -18,6 +18,9 @@ if not errorlevel 1 (
     timeout /t 3 /nobreak >nul
     sc delete cm-exporter >nul
     echo removed service cm-exporter
+)
+for %%T in (CentralMonitorLogs CentralMonitorProbe CentralMonitorInventory) do (
+    schtasks /query /tn "%%T" >nul 2>&1 && schtasks /delete /tn "%%T" /f >nul && echo removed scheduled task %%T
 )
 netsh advfirewall firewall delete rule name="Central Monitor Exporter (pull)" >nul 2>&1 && echo removed firewall rule
 if /i "%~1"=="purge" (

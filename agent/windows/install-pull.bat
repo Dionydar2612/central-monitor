@@ -85,7 +85,7 @@ if not "%errorlevel%"=="7" (
     goto :cmdonly
 )
 echo.
-echo PowerShell is available - running install-fluentbit.ps1 -Pull ^(includes the Software tab^)
+echo PowerShell is available - running install-fluentbit.ps1 -Pull ^(includes the Software tab and logs^)
 echo.
 set "PSNAME="
 if not "%NAME%"=="" set "PSNAME=-Name %NAME%"
@@ -104,7 +104,7 @@ exit /b 0
 
 :cmdonly
 echo.
-echo --- plain cmd install ^(no Software tab^) ---
+echo --- plain cmd install ^(no Software tab, no logs^) ---
 REM ---------------------------------------------------------------- 1) windows_exporter file
 echo.
 echo [1/4] windows_exporter %VER%
@@ -205,7 +205,7 @@ echo.
 echo  On central: Settings ^> this machine ^> Connection ^> mode = pull,
 echo              windows_exporter = ^<IP of this machine^>:%PORT%  then Save.
 echo  Test from central:  curl -s http://^<IP of this machine^>:%PORT%/metrics ^| head
-echo  The machine shows OK in about 1 minute. Pull mode has metrics only, no logs.
+echo  The machine shows OK in about 1 minute. This plain cmd install has metrics only - no logs (the PowerShell install adds logs).
 echo ==================================================================
 echo.
 pause

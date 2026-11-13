@@ -168,6 +168,46 @@ receivers:
 
 
   # ------------------------------------------------------------
+  # eventlog : Event Log ของเครื่อง Windows โหมด pull (puller/agent_logs.py อ่านจาก windows_exporter ของเครื่อง)
+  #   โหมด push ไม่ผ่านตรงนี้ (เข้า central-agent-gw ตรง) แต่ log.source เป็น eventlog เหมือนกัน
+  # ------------------------------------------------------------
+  filelog/eventlog:
+    include:
+      - /data/buffer/*__eventlog__*.log
+
+    start_at: beginning
+    include_file_name: true
+    include_file_path: true
+    storage: file_storage
+
+    operators:
+      - type: regex_parser
+        id: eventlog_find_time
+        parse_from: body
+        parse_to: attributes
+        regex: '^(?P<log_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))'
+        on_error: send_quiet
+
+      - type: time_parser
+        id: eventlog_set_time
+        if: 'attributes.log_timestamp != nil'
+        parse_from: attributes.log_timestamp
+        layout_type: gotime
+        layout: '2006-01-02T15:04:05.999999999Z07:00'
+        on_error: send_quiet
+
+      - type: remove
+        id: eventlog_drop_time_attr
+        if: 'attributes.log_timestamp != nil'
+        field: attributes.log_timestamp
+
+      - type: add
+        id: add_eventlog_source
+        field: resource["log.source"]
+        value: eventlog
+
+
+  # ------------------------------------------------------------
   # other : ไฟล์ที่ชื่อ source ไม่ตรงกับ 3 กลุ่มด้านบน (เช่น logs[].name = nginx)
   # ก่อนหน้านี้ไฟล์พวกนี้ไม่มี receiver อ่าน -> ถูก buffer-cleaner ลบทิ้งโดยไม่เข้า OpenSearch
   # ------------------------------------------------------------
@@ -182,6 +222,7 @@ receivers:
       - /data/buffer/*__system__*.log
       - /data/buffer/*__kernel__*.log
       - /data/buffer/*__journal__*.log
+      - /data/buffer/*__eventlog__*.log
 
     start_at: beginning
     include_file_name: true
@@ -261,6 +302,7 @@ service:
         - filelog/logapp
         - filelog/loginuser
         - filelog/application
+        - filelog/eventlog
         - filelog/other
 
       processors:

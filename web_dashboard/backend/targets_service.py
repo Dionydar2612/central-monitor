@@ -302,7 +302,7 @@ def validate_agent_target(data, existing_names, editing=None):
         channels.append(c)
 
     # วิธีรับข้อมูล: push = Windows ส่งมาเอง (Fluent Bit + token) / pull = central (Prometheus) ดึง windows_exporter เอง
-    #   pull ใช้เมื่อเครื่อง Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าไปได้ — ได้ metrics แต่ไม่มี log
+    #   pull ใช้เมื่อเครื่อง Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าไปได้ — metrics + log (cm-logs.ps1 -> textfile -> puller/agent_logs.py)
     mode = str(agent.get("mode") or "push").strip().lower()
     exporter = str(agent.get("exporter") or "").strip()
     if mode not in ("push", "pull"):

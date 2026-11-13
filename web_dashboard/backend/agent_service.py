@@ -93,8 +93,10 @@ def setup_info(target, central):
              "$d=\"$env:TEMP\\cm-agent\"; Expand-Archive $z.FullName $d -Force; ")
     if agent.get("mode") == "pull":
         # โหมด pull: ไม่ใช้ token / Fluent Bit · central = IP ที่ central ใช้ต่อเข้าเครื่องนี้ (firewall เปิดรับเฉพาะ IP นี้)
+        # log: cm-logs.ps1 บนเครื่องเก็บ ERROR / WARN ไว้ให้ puller อ่านจาก windows_exporter (agent_logs.py)
         cmd = (unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\install-fluentbit.ps1\" -Pull "
-               f"-Central {central or '<IP-ของ-central>'} -Name {target.get('name')}")
+               f"-Central {central or '<IP-ของ-central>'} -Name {target.get('name')}"
+               + (f' -Logs "{logs}"' if logs else "") + f' -Channels "{channels}"')
         return {"name": target.get("name"), "command": cmd, "mode": "pull", "exporter": agent.get("exporter"),
                 "token_set": True, "port": 9182, "ca_available": True,
                 "package_available": os.path.isfile(os.path.join(AGENT_DIR, "windows", "install-fluentbit.ps1"))}

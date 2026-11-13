@@ -427,6 +427,7 @@ class Backend(unittest.TestCase):
         self.assertEqual(item["labels"]["job"], "cm-agent-pull")
         info = agent_service.setup_info(agent_service.agent_target("win-pull"), "172.27.2.22")
         self.assertIn("-Pull -Central 172.27.2.22 -Name win-pull", info["command"])
+        self.assertIn("-Channels", info["command"])
         self.assertNotIn("-Token", info["command"])
         # เปลี่ยนกลับเป็น push -> ไม่อยู่ในรายการให้ Prometheus ดึง
         r = c.put("/api/targets/win-pull", json={"type": "agent", "host": "192.168.181.101",

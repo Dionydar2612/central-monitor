@@ -105,6 +105,7 @@ Settings > **+ Add target**
 
 ```
 central (Prometheus) ──ดึงทุก 15 วินาที──▶ Windows: windows_exporter (service cm-exporter, 0.0.0.0:9182)
+central (puller)     ──ดึง log ทุกรอบ log──▶ เดียวกัน: cm_log_entry ใน textfile ที่ cm-logs.ps1 เขียนทุก 1 นาที
 ```
 
 | | push (ปกติ) | pull |
@@ -112,7 +113,7 @@ central (Prometheus) ──ดึงทุก 15 วินาที──▶ Win
 | ใครเริ่มเชื่อมต่อ | Windows → central (HTTPS + token) | central → Windows พอร์ต 9182 |
 | CPU / Memory / Disk / Network / Service / Process | ✅ | ✅ |
 | Software (โปรแกรมที่ติดตั้ง / พอร์ต / เว็บ localhost / Docker) | ✅ | ✅ (textfile ของ windows_exporter) |
-| **Log** (Event Log / ไฟล์ log) | ✅ | ❌ ไม่มี |
+| **Log** (Event Log / ไฟล์ log) ERROR / WARN | ✅ ส่งทันที | ✅ central ดึงทุกรอบ log ของ puller (ปริยาย 2 นาที) |
 | firewall ที่ต้องเปิด | TCP พอร์ต agent gateway จาก Windows ไป central | TCP 9182 จาก central ไป Windows |
 
 ขั้นตอน
@@ -120,6 +121,7 @@ central (Prometheus) ──ดึงทุก 15 วินาที──▶ Win
 2. Download installer (zip) ใส่ IP ของ central **ตามที่เครื่อง Windows เห็น** (สคริปต์เปิด Windows Firewall ให้เฉพาะ IP นี้) แล้วกด Make command
 3. วางคำสั่งใน PowerShell แบบ Admin — คำสั่งเป็น `install-fluentbit.ps1 -Pull -Central <IP central> -Name <ชื่อ>` (ไม่มี token) สคริปต์จะ
    - ติดตั้ง windows_exporter เป็น service `cm-exporter` ฟัง `0.0.0.0:9182` + scheduled task รายการโปรแกรม / Docker / เว็บ
+   - log: scheduled task `CentralMonitorLogs` (`cm-logs.ps1`) ทุก 1 นาที อ่าน Event Log (`-Channels`) + ไฟล์ log (`-Logs`) เฉพาะ ERROR / WARN เก็บไว้บนเครื่อง ~3 ชม. (central ปิดไปนานกว่านั้น log ช่วงนั้นหาย) · ตั้งค่าอยู่ที่ `C:\ProgramData\central-monitor-agent\cm-logs.json`
    - สร้างกฎ Windows Firewall "Central Monitor Exporter (pull)" เปิดรับ TCP 9182 **เฉพาะจาก IP ของ central**
    - ถ้ามี service `cm-agent` (push) ค้างอยู่ จะหยุดและปิดไว้
 4. ทดสอบจาก central: `curl -s http://<IP เครื่อง Windows>:9182/metrics | head` · ภายใน ~1 นาที เครื่องขึ้น OK
@@ -129,10 +131,11 @@ central (Prometheus) ──ดึงทุก 15 วินาที──▶ Win
   - PowerShell ถูกบล็อก / ไม่มี → ติดตั้งด้วย `sc` / `netsh` / `copy` ล้วน (บังคับแบบนี้: `install-pull.bat <IP> - nops`)
   - ทำเหมือนกัน: windows_exporter เป็น service `cm-exporter` (ไฟล์อยู่ `C:\ProgramData\central-monitor-agent\`) ฟัง 0.0.0.0:9182 · กฎ firewall เปิดเฉพาะ IP ของ central · หยุด cm-agent ถ้ามี · ลองชุด collector เล็กลงเองถ้าเริ่มไม่ได้
   - ไม่มีอินเทอร์เน็ต: วาง `windows_exporter-0.32.1-amd64.exe` ไว้ข้างไฟล์ .bat (ไม่งั้นดาวน์โหลดด้วย curl.exe / bitsadmin)
-  - ต่างจากแบบ PowerShell: ไม่ติดตั้ง scheduled task รายการโปรแกรม / Docker / เว็บ localhost -> แท็บ Software ว่าง
+  - ต่างจากแบบ PowerShell: ไม่ติดตั้ง scheduled task รายการโปรแกรม / Docker / เว็บ localhost / log -> แท็บ Software ว่าง และไม่มี log
   - ถอน: `uninstall-pull.bat` (ใส่ `purge` เพื่อลบโฟลเดอร์ด้วย)
 - เปลี่ยนกลับเป็น push: เปลี่ยนวิธีรับข้อมูลเป็น push แล้ว Save แล้วรันคำสั่งติดตั้งแบบปกติ (มี token) ใหม่
-- ถอนการติดตั้ง: `uninstall-fluentbit.ps1` ลบกฎ firewall ของโหมด pull ด้วย
+- ถอนการติดตั้ง: `uninstall-fluentbit.ps1` ลบกฎ firewall + task CentralMonitorLogs ของโหมด pull ด้วย
+- ทดสอบ log: `eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"` แล้วดู `curl -s http://<IP>:9182/metrics | grep cm_log_entry` · เข้าหน้า Logs ภายใน ~1 นาที + รอบ log ของ puller
 - ข้อควรรู้: windows_exporter ไม่มีการเข้ารหัส / ไม่มีรหัสผ่าน ใครที่ firewall ปล่อยให้ต่อพอร์ต 9182 ได้จะอ่าน metrics ได้ (สคริปต์จำกัดไว้เฉพาะ IP ของ central)
 
 ## เครื่องเยอะ

@@ -105,8 +105,8 @@
 <textarea class="st-code" id="agCmd" readonly rows="3"></textarea>
 <div style="margin-top:6px"><button class="st-btn sm" id="agCopy" type="button">Copy command</button> <span id="agCopyMsg" style="color:var(--mut);font-size:12px"></span></div></li>
 <li class="push-only">ภายใน ~1 นาที เครื่องจะขึ้น OK ในหน้า Dashboard · ทดสอบ: <code>eventcreate /T ERROR /ID 999 /L APPLICATION /SO CentralMonitorTest /D "test"</code></li>
-<li class="pull-only" hidden>โหมด pull: สคริปต์ติดตั้งเฉพาะ windows_exporter (service <code>cm-exporter</code> ฟัง 0.0.0.0:9182) + เปิด Windows Firewall ให้เฉพาะ IP ของ central · ไม่ต้องใช้ token · ภายใน ~1 นาที เครื่องจะขึ้น OK · ทดสอบจาก central: <code>curl -s http://&lt;IP เครื่องนี้&gt;:9182/metrics | head</code></li>
-<li class="pull-only" hidden><b>หรือใช้ไฟล์ .bat:</b> แตก zip (คลิกขวา &gt; Extract All) แล้วคลิกขวา <code>install-pull.bat</code> &gt; <b>Run as administrator</b> ใส่ IP ของ central เมื่อถาม · ถ้าเครื่องรัน PowerShell ได้ ไฟล์จะเรียกสคริปต์ PowerShell ให้เอง (ได้แท็บ Software) · ถูกบล็อก = ติดตั้งแบบ cmd แทน (ไม่มีแท็บ Software) · ไม่มีอินเทอร์เน็ต: วาง <code>windows_exporter-0.32.1-amd64.exe</code> ไว้ข้างไฟล์ · ถอน: <code>uninstall-pull.bat</code></li>
+<li class="pull-only" hidden>โหมด pull: สคริปต์ติดตั้ง windows_exporter (service <code>cm-exporter</code> ฟัง 0.0.0.0:9182) + scheduled task <code>CentralMonitorLogs</code> (ERROR / WARN ล่าสุด ให้ central ดึงไปพร้อม metrics) + เปิด Windows Firewall ให้เฉพาะ IP ของ central · ไม่ต้องใช้ token · แก้ channel / ไฟล์ log = Make command แล้วรันใหม่ · ภายใน ~1 นาที เครื่องจะขึ้น OK · ทดสอบจาก central: <code>curl -s http://&lt;IP เครื่องนี้&gt;:9182/metrics | head</code></li>
+<li class="pull-only" hidden><b>หรือใช้ไฟล์ .bat:</b> แตก zip (คลิกขวา &gt; Extract All) แล้วคลิกขวา <code>install-pull.bat</code> &gt; <b>Run as administrator</b> ใส่ IP ของ central เมื่อถาม · ถ้าเครื่องรัน PowerShell ได้ ไฟล์จะเรียกสคริปต์ PowerShell ให้เอง (ได้แท็บ Software + log) · ถูกบล็อก = ติดตั้งแบบ cmd แทน (ไม่มีแท็บ Software / log) · ไม่มีอินเทอร์เน็ต: วาง <code>windows_exporter-0.32.1-amd64.exe</code> ไว้ข้างไฟล์ · ถอน: <code>uninstall-pull.bat</code></li>
 </ol>
 <div class="rtnote">คำสั่งมี token ของ central (เหมือนรหัสผ่าน) อย่าแชร์ในที่สาธารณะ · เครื่อง Windows ต้องต่อออกไปที่ central พอร์ต <span id="agPort">4318</span> ได้</div>
 </div>
@@ -125,8 +125,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
 </div></div>
 <!-- Windows (agent): เครื่องส่งข้อมูลเองผ่าน Fluent Bit -> central-agent-gw :4318 -->
-<div class="agent-only pull-only" hidden><div class="fsec"><div class="empty" style="text-align:left">โหมด pull (central ดึงจาก Windows) ไม่มี log: ได้เฉพาะ CPU / Memory / Disk / Network / Service / Process / Software · ถ้าต้องการ log ให้เปิดทางจาก Windows ไปหา central แล้วเปลี่ยนเป็นโหมด push</div></div></div>
-<div class="agent-only push-only" hidden><div class="fsec"><div class="fsec-h">Log ที่จะส่งจากเครื่อง Windows</div>
+<div class="agent-only" hidden><div class="fsec"><div class="fsec-h">Log ของเครื่อง Windows</div>
 <div class="st-mut" style="font-size:13px">ส่งเฉพาะ ERROR / WARN (Event Log: Critical / Error / Warning) · IIS (path มี inetpub) ส่งเฉพาะ HTTP 5xx</div>
 <div class="st-grid">
 <div class="st-f" data-f="agent.channels"><label for="a_channels">Event Log channels (คั่นด้วย ,)</label><input id="a_channels" autocomplete="off" value="System, Application" placeholder="System, Application"><small>เช่น Microsoft-Windows-Sysmon/Operational</small><div class="st-err"></div></div>

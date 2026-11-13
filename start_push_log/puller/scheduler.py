@@ -28,6 +28,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from agent_logs import is_pull_agent, pull_agent_logs
 from checkpoint import load_state, prune_state
 from config import BUFFER_DIR, load_config, parse_interval
 from log_puller import pull_target
@@ -100,6 +101,13 @@ def _work(config, target, state, with_snapshot):
             print(f"[SYSTEM ERROR] {name} {e}")
 
 
+def _work_agent(config, target, state):
+    try:
+        pull_agent_logs(config, target, state)
+    except Exception as e:
+        print(f"[AGENT-PULL ERROR] {target.get('name')} {e}")
+
+
 def run_once(config, state, only=None, snapshot=True):
     """1 รอบ: ดึง log ทุกเครื่อง (+ สถานะเครื่องถ้า snapshot=True)
 
@@ -118,11 +126,14 @@ def run_once(config, state, only=None, snapshot=True):
         snapshot = True
 
     paused = [t["name"] for t in targets if t.get("paused")]
+    # Windows โหมด pull: เครื่องส่งเองไม่ได้ -> อ่าน log จาก windows_exporter ของเครื่อง (agent_logs.py)
+    pull_agents = [t for t in targets if is_pull_agent(t)]
     # type: agent (เครื่อง Windows) ส่งข้อมูลเข้ามาเองผ่าน central-agent-gw -> ไม่ต้อง SSH
     targets = [t for t in targets if not t.get("paused") and str(t.get("type") or "ssh") != "agent"]
 
     label = "logs + status" if snapshot else "logs"
     print(f"\n[CYCLE] {label} targets={len(targets)} parallel={opts['parallel']}"
+          + (f" windows-pull={len(pull_agents)}" if pull_agents else "")
           + (f" paused={','.join(paused)}" if paused else "")
           + (f" on-demand={','.join(only)}" if only else ""))
 
@@ -130,6 +141,8 @@ def run_once(config, state, only=None, snapshot=True):
     with ThreadPoolExecutor(max_workers=opts["parallel"]) as pool:
         for t in targets:
             pool.submit(_work, config, t, state, snapshot)
+        for t in pull_agents:
+            pool.submit(_work_agent, config, t, state)
 
     pull_cycle_timestamp.set(time.time())
     print(f"[CYCLE] done in {time.time() - started:.1f}s")

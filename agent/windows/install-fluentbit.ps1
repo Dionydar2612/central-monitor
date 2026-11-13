@@ -481,6 +481,7 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
 if ($Pull) {
     Say "3/3 Windows Firewall: เปิดรับ TCP $ExporterPort เฉพาะจาก $($CentralIps -join ', ')"
     $RuleName = "Central Monitor Exporter (pull)"
+    $HasLogs = $false
     # service Windows Firewall (MpsSvc) ปิดอยู่ -> สร้างกฎไม่ได้ (error 1753) แต่ firewall ก็ไม่ได้กั้นอะไร -> เตือนแล้วไปต่อ
     $fw = Get-Service MpsSvc -ErrorAction SilentlyContinue
     try {
@@ -496,6 +497,30 @@ if ($Pull) {
             Warn "สร้างกฎ Windows Firewall ไม่ได้: $($_.Exception.Message) -> เปิดรับ TCP $ExporterPort จาก $($CentralIps -join ', ') เอง"
         }
     }
+    # log: cm-logs.ps1 ทุก 1 นาที เขียน ERROR / WARN ล่าสุดลง textfile -> central (puller) อ่านไปจาก :$ExporterPort/metrics
+    Say "log: Event Log ($channelList)$(if ($logPaths) { ' + ไฟล์ ' + ($logPaths -join ', ') })"
+    $LogsTask = "CentralMonitorLogs"
+    $LogsSrc = Join-Path $PSScriptRoot "cm-logs.ps1"
+    $LogsScript = Join-Path $InstallDir "cm-logs.ps1"
+    if (Test-Path $LogsSrc) {
+        try {
+            New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir | Out-Null
+            Copy-Item $LogsSrc $LogsScript -Force
+            $lc = [ordered]@{ channels = @($channelList -split ','); logs = @($logPaths) }
+            [IO.File]::WriteAllText((Join-Path $DataDir "cm-logs.json"), ($lc | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsScript
+            $act3 = New-ScheduledTaskAction -Execute "powershell.exe" `
+                -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$LogsScript`""
+            $trg3 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) `
+                -RepetitionDuration (New-TimeSpan -Days 3650)
+            $pr3 = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+            $set3 = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName $LogsTask -Action $act3 -Trigger $trg3 -Principal $pr3 -Settings $set3 -Force | Out-Null
+            Write-Host "   scheduled task '$LogsTask' ทุก 1 นาที (central ดึงไปทุกรอบ log ของ puller)"
+            $HasLogs = $true
+        } catch { Warn "ตั้ง log โหมด pull ไม่ได้: $($_.Exception.Message) (ยังได้ metrics ตามปกติ)" }
+    } else { Warn "ไม่พบ cm-logs.ps1 ข้างสคริปต์นี้ -> ไม่มี log (แตก zip ชุดติดตั้งใหม่ทั้งชุด)" }
+
     # agent แบบ push ที่อาจติดตั้งไว้ก่อน (ส่งไม่ออกอยู่แล้ว) -> หยุดไว้ ไม่ให้พักข้อมูลค้าง
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
         Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
@@ -511,7 +536,8 @@ if ($Pull) {
     $ip1 = if ($ips) { $ips[0] } else { "<IP ของเครื่องนี้>" }
     Write-Host "            ช่อง windows_exporter = ${ip1}:$ExporterPort  (central ต้องต่อเข้ามาที่พอร์ตนี้ได้)"
     Write-Host "ทดสอบจาก central:  curl -s http://${ip1}:$ExporterPort/metrics | head"
-    Write-Host "หมายเหตุ: โหมด pull ได้ CPU / Memory / Disk / Network / Service / Process / Software แต่ไม่มี log (Event Log / ไฟล์ log)"
+    if ($HasLogs) { Write-Host "log: ERROR / WARN จาก Event Log ($channelList)$(if ($logPaths) { ' + ไฟล์ log' }) -> central ดึงไปพร้อม metrics" }
+    else { Warn "โหมด pull ครั้งนี้ไม่มี log (ได้เฉพาะ CPU / Memory / Disk / Network / Service / Process / Software)" }
     exit 0
 }
 

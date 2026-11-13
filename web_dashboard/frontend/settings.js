@@ -67,7 +67,7 @@ function renderTable() {
                 el("td", {}, t.group || "-"),
                 el("td", {}, t.host || "-"),
                 el("td", {}, "-"),
-                el("td", {}, t.agent.mode === "pull" ? "- (pull ไม่มี log)" : `${(t.agent.channels || []).length} event log · ${n} file`),
+                el("td", {}, `${(t.agent.channels || []).length} event log · ${n} file`),
                 el("td", {}, t.agent.mode === "pull" ? `central ดึง ${t.agent.exporter || ""}` : "Fluent Bit"),
                 el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
                 el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("agCentral").focus(); }, "Install command")))));
@@ -187,7 +187,7 @@ function setMode(mode) {
     document.querySelectorAll("#formCard .pull-only").forEach(n => { n.hidden = !agent || !pull; });
     document.querySelectorAll("#formCard .push-only").forEach(n => { n.hidden = !agent || pull; });
     $("a_mode_hint").textContent = pull
-        ? "ใช้เมื่อ Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้า Windows พอร์ต 9182 ได้ · ไม่มี log"
+        ? "ใช้เมื่อ Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้า Windows พอร์ต 9182 ได้"
         : "Windows ต้องต่อไปหา central ได้ (HTTPS พอร์ตของ agent gateway)";
     $("agCentral").placeholder = pull ? "IP ของ central ที่ Windows เห็น (เปิด firewall ให้เฉพาะ IP นี้)" : "IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก";
 }

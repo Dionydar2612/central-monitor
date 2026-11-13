@@ -304,6 +304,66 @@ class Scheduler(unittest.TestCase):
 
 
 
+class AgentPullLogs(unittest.TestCase):
+    """log ของ Windows โหมด pull: cm_log_entry จาก windows_exporter -> data/buffer"""
+    METRICS = (
+        '# HELP cm_log_entry x\n# TYPE cm_log_entry gauge\n'
+        'cm_log_entry{seq="1",type="eventlog",body="2026-11-13T02:00:00Z [ERROR] [System] Disk (Event 7): bad \\\\ \\"blk\\""} 1763000000\n'
+        'cm_log_entry{seq="2",type="application",body="2026-11-13T02:01:00Z [WARN] [app.log] slow"} 1763000060\n'
+        'cm_log_seq 2\nwindows_cpu_time_total{core="0"} 5\n')
+    TARGET = {"name": "win-p", "type": "agent", "agent": {"mode": "pull", "exporter": "10.0.0.5:9182"}}
+
+    def setUp(self):
+        import agent_logs
+        self.al = agent_logs
+        self.written = []
+        agent_logs.save_state = lambda st: None
+        self.kw = {"fetch": lambda x: self.METRICS,
+                   "write": lambda c, n, src, sid, a, b, d: self.written.append((n, src, a, b, d)) or ("f", "id"),
+                   "collapse": lambda c, d, n, s: (d, 0)}
+
+    def test_parse(self):
+        e = self.al.parse_entries(self.METRICS)
+        self.assertEqual([x["seq"] for x in e], [1, 2])
+        self.assertEqual(e[0]["type"], "eventlog")
+        self.assertIn('bad \\ "blk"', e[0]["body"])
+
+    def test_is_pull_agent(self):
+        self.assertTrue(self.al.is_pull_agent(self.TARGET))
+        self.assertFalse(self.al.is_pull_agent({"name": "x", "type": "agent", "agent": {"mode": "push"}}))
+        self.assertFalse(self.al.is_pull_agent(dict(self.TARGET, paused=True)))
+        self.assertFalse(self.al.is_pull_agent({"name": "l", "host": "h"}))
+
+    def test_only_new_seq(self):
+        cfg = {"site": {"name": "s"}}
+        state = {}
+        self.assertEqual(self.al.pull_agent_logs(cfg, self.TARGET, state, **self.kw), 2)
+        self.assertEqual(sorted(w[1] for w in self.written), ["application", "eventlog"])
+        self.assertEqual(state["win-p::agent-pull::10.0.0.5:9182"]["seq"], 2)
+        # รอบถัดไป: ไม่มี seq ใหม่ -> ไม่เขียนซ้ำ
+        self.written.clear()
+        self.assertEqual(self.al.pull_agent_logs(cfg, self.TARGET, state, **self.kw), 0)
+        self.assertEqual(self.written, [])
+
+    def test_seq_reset(self):
+        fresh, top = self.al.new_entries([{"seq": 1}, {"seq": 2}], 40)
+        self.assertEqual((len(fresh), top), (2, 2))          # เครื่องเริ่มนับใหม่ -> เก็บทั้งหมด
+        fresh, top = self.al.new_entries([{"seq": 39}, {"seq": 41}], 40)
+        self.assertEqual(([x["seq"] for x in fresh], top), ([41], 41))
+
+    @unittest.skipUnless(__import__("importlib").util.find_spec("prometheus_client"), "ต้องมี prometheus_client")
+    def test_scheduler_runs_pull_agents(self):
+        import scheduler as s
+        got = []
+        s.pull_target = lambda c, t, st: got.append(("ssh", t["name"]))
+        s.pull_agent_logs = lambda c, t, st: got.append(("pull", t["name"]))
+        s.collect_web_system_info = lambda c, t: None
+        cfg = {"targets": [{"name": "lin", "host": "h"}, self.TARGET,
+                           {"name": "win-push", "type": "agent", "agent": {"mode": "push"}}]}
+        s.run_once(cfg, {}, snapshot=False)
+        self.assertEqual(sorted(got), [("pull", "win-p"), ("ssh", "lin")])
+
+
 class CustomRules(unittest.TestCase):
     import custom_rules as cr
 

@@ -35,6 +35,11 @@ scrape_configs:
     file_sd_configs:
       - files:
           - /etc/prometheus/targets/web-nodes.json
+    # cm_log_entry = log ของ Windows โหมด pull (puller อ่านเก็บเข้า OpenSearch เอง) ไม่เก็บเป็น metric
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: cm_log_entry
+        action: drop
 
   # -------------------------------------------------------------------
   # Ping (ICMP) ทุกเครื่องที่มี host -> latency / packet loss
