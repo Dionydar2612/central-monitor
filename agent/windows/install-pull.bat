@@ -33,7 +33,7 @@ set "RULE=Central Monitor Exporter (pull)"
 set "URL=https://github.com/prometheus-community/windows_exporter/releases/download/v%VER%/windows_exporter-%VER%-amd64.exe"
 
 echo.
-echo === Central Monitor - Windows pull mode (no PowerShell) ===
+echo === Central Monitor - Windows pull mode ===
 
 REM ---------------------------------------------------------------- admin
 net session >nul 2>&1
@@ -44,14 +44,29 @@ if errorlevel 1 (
 
 REM ---------------------------------------------------------------- central IP
 set "CENTRAL=%~1"
-if "%CENTRAL%"=="" set /p "CENTRAL=IP of central as seen from this machine (e.g. 172.27.2.22): "
+set "NAME=%~2"
+if "%NAME%"=="-" set "NAME="
+if not "%CENTRAL%"=="" goto :havecentral
+set "INPUT="
+set /p "INPUT=IP of central: "
+REM typed "IP name" on one line -> split into IP and name
+for /f "tokens=1,2" %%a in ("%INPUT%") do (
+    set "CENTRAL=%%a"
+    if not "%%b"=="" set "NAME=%%b"
+)
 if "%CENTRAL%"=="" (
     echo [ERROR] central IP is required.
     goto :fail
 )
-echo central: %CENTRAL%   ^(only this IP may read port %PORT%^)
-set "NAME=%~2"
-if "%NAME%"=="-" set "NAME="
+if "%NAME%"=="" set /p "NAME=Name of this machine in central (Enter = from computer name): "
+:havecentral
+echo %CENTRAL%| findstr /r "^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$" >nul
+if errorlevel 1 (
+    echo [ERROR] "%CENTRAL%" is not an IP address. Enter only the IP of central, for example 10.0.0.5
+    goto :fail
+)
+echo central IP : %CENTRAL%   ^(only this IP may read port %PORT%^)
+if not "%NAME%"=="" echo name       : %NAME%
 
 REM ---------------------------------------------------------------- PowerShell first (better install)
 if /i "%~3"=="nops" goto :cmdonly
@@ -78,7 +93,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-fluentbit.
 if errorlevel 1 (
     echo.
     echo [ERROR] install-fluentbit.ps1 -Pull failed ^(see the messages above^).
-    echo         To try the plain cmd install instead:  install-pull.bat %CENTRAL% - nops
+    set "N2=%NAME%"
+    if "!N2!"=="" set "N2=-"
+    echo         To try the plain cmd install instead:  install-pull.bat %CENTRAL% !N2! nops
     goto :fail
 )
 echo.
