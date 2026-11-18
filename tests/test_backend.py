@@ -308,6 +308,21 @@ class Backend(unittest.TestCase):
         self.assertEqual(c.get("/api/netsec/nope").status_code, 404)
         self.assertEqual(c.post("/api/netsec/ns-a/refresh").status_code, 200)
 
+    def test_move_machine_and_group(self):
+        """ลากย้าย: เครื่องเข้ากลุ่มอื่น / กลุ่มไปอยู่ใต้กลุ่มอื่น (เครื่อง + กลุ่มย่อย + กฎแจ้งเตือนตามไปด้วย)"""
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        for n, g in (("mv-a", "A"), ("mv-b", "A/sub"), ("mv-c", "B")):
+            c.post("/api/targets", json={"name": n, "host": "10.1.1.1", "ssh": {"user": "cp"}, "group": g, "logs": []})
+        self.assertEqual(c.post("/api/targets/mv-c/group", json={"group": "A/sub"}).status_code, 200)
+        r = c.post("/api/groups/move", json={"from": "A", "parent": "B"}).json
+        self.assertEqual((r["to"], r["machines"]), ("B/A", 3))
+        g = {t["name"]: t["group"] for t in c.get("/api/targets").json["targets"]}
+        self.assertEqual((g["mv-a"], g["mv-b"], g["mv-c"]), ("B/A", "B/A/sub", "B/A/sub"))
+        self.assertEqual(c.post("/api/groups/move", json={"from": "B", "parent": "B/A"}).status_code, 400)   # เข้าไปในตัวเอง
+        self.assertEqual(c.post("/api/groups/move", json={"from": "B/A", "parent": ""}).json["to"], "A")     # กลับชั้นบนสุด
+        self.assertEqual(c.post("/api/targets/nope/group", json={"group": "x"}).status_code, 404)
+
     def test_ui_order(self):
         """ลำดับเครื่อง / กลุ่มที่ลากจัด: viewer อ่านได้ แก้ไม่ได้ · operator แก้ได้ · ค่าซ้ำ / ว่างถูกตัด"""
         c = self.c

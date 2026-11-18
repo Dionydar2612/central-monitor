@@ -1156,21 +1156,78 @@ function moveIn(arr, item, target, after) {
     out.splice(after ? i + 1 : i, 0, item);
     return out;
 }
-function dropMachine(src, dst, after) {
-    if (!src || !dst || src === dst) return;
-    const all = byOrder((S.webs || []).slice()).map(w => w.web);
-    S.order = { ...(S.order || {}), machines: moveIn(all, src, dst, after) };
-    saveOrder(); renderMachines();
+const parentOf = p => String(p || "").split("/").slice(0, -1).join("/");
+function regroupPath(path, old, nw) {
+    path = String(path || "");
+    if (path === old) return nw;
+    if (old && path.startsWith(old + "/")) { const rest = path.slice(old.length + 1); return nw ? `${nw}/${rest}` : rest; }
+    return path;
 }
-function dropGroup(src, dst, after) {
+async function postJson(url, body) {
+    const r = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || Object.values(j.fields || {}).join(" · ") || `HTTP ${r.status}`);
+    return j;
+}
+function needAdmin() {
+    if (S.role === "admin") return false;
+    alert("ย้ายเครื่อง / กลุ่มข้ามกลุ่มต้องเป็น admin (operator จัดลำดับในกลุ่มเดียวกันได้)");
+    return true;
+}
+async function refreshOverview() {
+    try { renderMachines(await apiGet("/api/overview")); } catch (e) { renderMachines(); }
+}
+/* เครื่อง -> วางบนเครื่อง (ก่อน / หลัง) ถ้าอยู่คนละกลุ่ม = ย้ายเข้ากลุ่มของเครื่องปลายทางด้วย */
+async function dropMachine(src, dst, after) {
     if (!src || !dst || src === dst) return;
-    const parent = p => p.split("/").slice(0, -1).join("/");
-    if (parent(src) !== parent(dst)) return;                          /* ย้ายได้เฉพาะในชั้นเดียวกัน */
-    const paths = new Set();
-    (S.webs || []).forEach(w => String(w.group || "").split("/").filter(Boolean).forEach((_, i, a) => paths.add(a.slice(0, i + 1).join("/"))));
-    const sorted = [...paths].sort(pathCmp);
-    S.order = { ...(S.order || {}), groups: moveIn(sorted, src, dst, after) };
-    saveOrder(); renderMachines();
+    const ws = S.webs || [], a = ws.find(w => w.web === src), b = ws.find(w => w.web === dst);
+    if (!a || !b) return;
+    if ((a.group || "") !== (b.group || "")) {
+        if (needAdmin()) return;
+        try { await postJson(`/api/targets/${encodeURIComponent(src)}/group`, { group: b.group || "" }); a.group = b.group || ""; }
+        catch (e) { alert("ย้ายเข้ากลุ่มไม่สำเร็จ: " + e.message); return; }
+    }
+    const all = byOrder(ws.slice()).map(w => w.web);
+    S.order = { ...(S.order || {}), machines: moveIn(all, src, dst, after) };
+    await saveOrder(); refreshOverview();
+}
+/* เครื่อง -> วางบนหัวกลุ่ม = ย้ายเข้ากลุ่มนั้น (ต่อท้าย) · "" = ไม่มีกลุ่ม */
+async function dropMachineInto(src, group) {
+    const a = (S.webs || []).find(w => w.web === src);
+    if (!a || (a.group || "") === group) return;
+    if (needAdmin()) return;
+    try { await postJson(`/api/targets/${encodeURIComponent(src)}/group`, { group }); a.group = group; }
+    catch (e) { alert("ย้ายเข้ากลุ่มไม่สำเร็จ: " + e.message); return; }
+    const all = byOrder((S.webs || []).slice()).map(w => w.web).filter(x => x !== src);
+    const last = byOrder((S.webs || []).filter(w => (w.group || "") === group && w.web !== src)).map(w => w.web).pop();
+    const i = last ? all.indexOf(last) + 1 : all.length;
+    all.splice(i, 0, src);
+    S.order = { ...(S.order || {}), machines: all };
+    await saveOrder(); refreshOverview();
+}
+/* กลุ่ม -> วางบนหัวกลุ่ม: mode "in" = เข้าไปเป็นกลุ่มย่อย · "before" / "after" = อยู่ชั้นเดียวกับปลายทาง (ย้ายชั้นได้) */
+async function dropGroup(src, dst, mode) {
+    if (src == null || dst == null || src === dst || !src) return;
+    const parent = mode === "in" ? dst : parentOf(dst);
+    if (parent === src || parent.startsWith(src + "/")) { alert("ย้ายกลุ่มเข้าไปในตัวเอง / กลุ่มย่อยของตัวเองไม่ได้"); return; }
+    const leaf = src.split("/").pop(), nw = parent ? `${parent}/${leaf}` : leaf;
+    let groups = ((S.order && S.order.groups) || []).slice();
+    if (nw !== src) {
+        if (needAdmin()) return;
+        try { await postJson("/api/groups/move", { from: src, parent }); }
+        catch (e) { alert("ย้ายกลุ่มไม่สำเร็จ: " + e.message); return; }
+        (S.webs || []).forEach(w => { w.group = regroupPath(w.group, src, nw); });
+        groups = groups.map(g => regroupPath(g, src, nw));
+        [...S.closed].forEach(g => { const n = regroupPath(g, src, nw); if (n !== g) { S.closed.delete(g); S.closed.add(n); } });
+    }
+    if (mode !== "in" && dst) {
+        const paths = new Set(groups);
+        (S.webs || []).forEach(w => String(w.group || "").split("/").filter(Boolean).forEach((_, i, a) => paths.add(a.slice(0, i + 1).join("/"))));
+        S.order = { ...(S.order || {}), groups: moveIn([...paths].sort(pathCmp), nw, dst, mode === "after") };
+    } else {
+        S.order = { ...(S.order || {}), groups };
+    }
+    await saveOrder(); refreshOverview();
 }
 
 /* ---------- สไลด์ (จอ NOC): ทีละกลุ่ม (ภาพรวมของกลุ่ม) หรือ ทีละเครื่อง
@@ -1511,7 +1568,10 @@ function renderMachines(ov) {
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
         : (tops.length || loose) ? loose + tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
-    if (S.arrange) q("#mach").querySelectorAll("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]").forEach(n => { n.draggable = true; });
+    if (S.arrange) {
+        q("#mach").insertAdjacentHTML("afterbegin", `<div class="ghead droproot" data-group="" role="button">⤒ ระดับบนสุด / ไม่มีกลุ่ม <small>ลากเครื่อง / กลุ่มมาวางที่นี่ · ลากกลุ่มไปกลางหัวกลุ่มอื่น = เป็นกลุ่มย่อย</small></div>`);
+        q("#mach").querySelectorAll("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]:not(.droproot)").forEach(n => { n.draggable = true; });
+    }
 }
 
 async function togglePause(btn) {
@@ -2693,12 +2753,22 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#mach").addEventListener("keydown", e => {
         if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-web],[data-group],[data-wm]")) { e.preventDefault(); e.target.click(); }
     });
-    /* ลากวางจัดลำดับ: เครื่องวางบนเครื่อง / กลุ่มวางบนกลุ่มชั้นเดียวกัน (ครึ่งบน = ก่อน, ครึ่งล่าง = หลัง) */
+    /* ลากวางอิสระ (โหมดจัดลำดับ):
+         เครื่อง -> เครื่อง = ก่อน / หลัง (คนละกลุ่ม = ย้ายเข้ากลุ่มนั้น) · เครื่อง -> หัวกลุ่ม / "ระดับบนสุด" = ย้ายเข้ากลุ่ม
+         กลุ่ม -> หัวกลุ่ม: ขอบบน = ก่อน, ขอบล่าง = หลัง (ย้ายชั้นได้), กลาง = เข้าไปเป็นกลุ่มย่อย · กลุ่ม -> "ระดับบนสุด" = ชั้นบนสุด */
     const dragEl = e => e.target.closest && e.target.closest("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]");
-    const clearDrop = () => q("#mach").querySelectorAll(".dropb, .dropa").forEach(n => n.classList.remove("dropb", "dropa"));
-    const after = (e, el) => { const r = el.getBoundingClientRect(); return el.matches(".mtile, .mcard") ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2; };
+    const clearDrop = () => q("#mach").querySelectorAll(".dropb, .dropa, .dropin").forEach(n => n.classList.remove("dropb", "dropa", "dropin"));
+    const zone = (e, el) => {
+        const r = el.getBoundingClientRect();
+        if (el.hasAttribute("data-group")) {
+            if (!S.dragging || S.dragging.kind === "web" || el.dataset.group === "") return "in";
+            const f = (e.clientY - r.top) / r.height;
+            return f < 0.3 ? "before" : f > 0.7 ? "after" : "in";
+        }
+        return (el.matches(".mtile, .mcard") ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2) ? "after" : "before";
+    };
     q("#mach").addEventListener("dragstart", e => {
-        const el = S.arrange && dragEl(e); if (!el) return;
+        const el = S.arrange && dragEl(e); if (!el || (el.hasAttribute("data-group") && !el.dataset.group)) return;
         S.dragging = el.dataset.web ? { kind: "web", id: el.dataset.web } : { kind: "group", id: el.dataset.group };
         e.dataTransfer.effectAllowed = "move";
         try { e.dataTransfer.setData("text/plain", S.dragging.id); } catch (err) { /* ignore */ }
@@ -2706,16 +2776,19 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     q("#mach").addEventListener("dragover", e => {
         const el = S.dragging && dragEl(e); if (!el) return;
-        if ((S.dragging.kind === "web") !== !!el.dataset.web) return;
-        e.preventDefault(); clearDrop(); el.classList.add(after(e, el) ? "dropa" : "dropb");
+        if (S.dragging.kind === "group" && el.dataset.web) return;                 /* กลุ่มวางบนหัวกลุ่มเท่านั้น */
+        e.preventDefault(); clearDrop();
+        const z = zone(e, el);
+        el.classList.add(z === "in" ? "dropin" : z === "after" ? "dropa" : "dropb");
     });
     q("#mach").addEventListener("drop", e => {
         const el = S.dragging && dragEl(e), d = S.dragging; if (!el) return;
         e.preventDefault(); clearDrop();
-        const aft = after(e, el);
+        const z = zone(e, el);
         S.dragging = null;
-        if (d.kind === "web" && el.dataset.web) dropMachine(d.id, el.dataset.web, aft);
-        else if (d.kind === "group" && el.dataset.group) dropGroup(d.id, el.dataset.group, aft);
+        if (d.kind === "web" && el.dataset.web) dropMachine(d.id, el.dataset.web, z === "after");
+        else if (d.kind === "web") dropMachineInto(d.id, el.dataset.group || "");
+        else if (el.hasAttribute("data-group")) dropGroup(d.id, el.dataset.group, el.dataset.group === "" ? "in" : z);
     });
     q("#mach").addEventListener("dragend", () => {
         clearDrop(); q("#mach").querySelectorAll(".dragsrc").forEach(n => n.classList.remove("dragsrc"));
@@ -2765,6 +2838,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const sbg = e.target.closest("[data-sbg]");
         if (sbg) { S.sbRoot = sbg.dataset.sbg; try { sessionStorage.setItem("cm.sbRoot", S.sbRoot); } catch (err) { /* ignore */ } renderMachines(); return; }
         const gh = e.target.closest("[data-group]");
+        if (gh && gh.classList.contains("droproot")) return;
         if (gh) {
             const path = gh.dataset.group;
             S.closed.has(path) ? S.closed.delete(path) : S.closed.add(path);

@@ -993,6 +993,78 @@ def update_monitoring(name, payload):
     return update_target(name, body)
 
 
+# ------------------------------------------------------------------
+# ย้ายเครื่อง / กลุ่ม (ลากวางในหน้า Dashboard โหมดจัดลำดับ)  admin
+# ------------------------------------------------------------------
+
+def regroup_path(path, old, new):
+    """path ของกลุ่ม old (และกลุ่มย่อย) -> ย้ายไปเป็น new  ไม่เกี่ยว = คืนค่าเดิม"""
+    path = str(path or "")
+    if path == old:
+        return new
+    if old and path.startswith(old + "/"):
+        rest = path[len(old) + 1:]
+        return f"{new}/{rest}" if new else rest
+    return path
+
+
+def set_target_group(name, group):
+    """ย้ายเครื่องเข้ากลุ่ม (ว่าง = ไม่มีกลุ่ม)  ไม่มีเครื่อง -> None"""
+    errors = {}
+    group = clean_group(group, errors)
+    if errors:
+        raise ValidationError(errors)
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        node = _find_target(doc, name)
+        if node is None:
+            return None
+        _set_or_drop(node, "group", group or None)
+        _write_doc(y, doc)
+    return {"name": name, "group": group}
+
+
+def move_group(src, parent):
+    """ย้ายกลุ่ม src (พร้อมกลุ่มย่อยและเครื่องทั้งหมด) ไปไว้ใต้ parent (ว่าง = ชั้นบนสุด)
+    แก้ targets[].group และ alert_rules[].groups ที่อ้างถึงกลุ่มนี้ให้ตามไปด้วย  คืน {from, to, machines}"""
+    errors = {}
+    src = clean_group(src, errors, "from")
+    parent = clean_group(parent, errors, "parent")
+    if not src:
+        errors["from"] = "ต้องระบุกลุ่ม"
+    if errors:
+        raise ValidationError(errors)
+    if parent == src or parent.startswith(src + "/"):
+        raise ValidationError({"parent": "ย้ายกลุ่มเข้าไปในตัวเอง / กลุ่มย่อยของตัวเองไม่ได้"})
+    leaf = src.split("/")[-1]
+    dst = f"{parent}/{leaf}" if parent else leaf
+    if dst == src:
+        return {"from": src, "to": dst, "machines": 0}
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        nodes = [n for n in (doc.get("targets") or []) if isinstance(n, dict)]
+        moved = 0
+        for n in nodes:
+            g = str(n.get("group") or "")
+            ng = regroup_path(g, src, dst)
+            if ng != g:
+                if not GROUP_RE.match(ng):
+                    raise ValidationError({"parent": f"กลุ่มลึกเกิน 10 ชั้น / ชื่อไม่ถูกต้อง: {ng[:80]}"})
+                n["group"] = ng
+                moved += 1
+        for r in doc.get("alert_rules") or []:
+            if isinstance(r, dict) and r.get("groups"):
+                gs = [regroup_path(str(x).strip("/"), src, dst) for x in r["groups"]]
+                if gs != [str(x).strip("/") for x in r["groups"]]:
+                    seq = CommentedSeq(gs)
+                    seq.fa.set_flow_style()
+                    r["groups"] = seq
+        _write_doc(y, doc)
+    return {"from": src, "to": dst, "machines": moved}
+
+
 def set_paused(name, paused):
     """Pause / Resume เครื่อง (puller ข้ามเครื่องที่ pause: ไม่ดึง log ไม่เก็บสถานะ) ไม่มีเครื่อง -> None"""
     y = _yaml()

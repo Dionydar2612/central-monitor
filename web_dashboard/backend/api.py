@@ -190,6 +190,8 @@ def _required_role(method, path):
         return "operator"                          # operator แก้ได้เฉพาะการแจ้งเตือน + log (targets_update ตรวจอีกชั้น)
     if path == "/api/alert-settings" and method == "GET":
         return "operator"                          # ค่าเริ่มต้นสำหรับแสดงในช่องว่าง
+    if path == "/api/groups/move":
+        return "admin"                             # ย้ายกลุ่ม (แก้ puller.yaml)
     if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
         return "admin"
     if path.startswith(("/api/checks", "/api/apps")):
@@ -221,6 +223,8 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
     ("PUT", re.compile(r"^/api/ui-order$"), "ui.order", ()),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/group$"), "target.group", ("group",)),
+    ("POST", re.compile(r"^/api/groups/move$"), "group.move", ("from", "parent")),
     ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
     ("POST", re.compile(r"^/api/sensors/unack$"), "sensor.unack", ("id",)),
     ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note")),
@@ -540,6 +544,43 @@ def ui_order_put():
     if body is None:
         return jsonify({"error": "json_required"}), 415
     return jsonify(ui_order_service.set_order(body))
+
+
+def _drop_overview_cache():
+    import overview_service
+    overview_service._CACHE["data"] = None
+
+
+@app.post("/api/targets/<name>/group")
+def targets_set_group(name):
+    """ย้ายเครื่องเข้ากลุ่ม (ลากวางในหน้า Dashboard)  body: {"group": "TQ/IT"}  ว่าง = ไม่มีกลุ่ม (admin)"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        out = targets_service.set_target_group(name, body.get("group"))
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    _drop_overview_cache()
+    return (jsonify(out), 200) if out else (jsonify({"error": "not found"}), 404)
+
+
+@app.post("/api/groups/move")
+def groups_move():
+    """ย้ายกลุ่มทั้งกลุ่ม (กลุ่มย่อย + เครื่อง) ไปไว้ใต้กลุ่มอื่น  body: {"from": "A/B", "parent": "C"}  parent ว่าง = ชั้นบนสุด (admin)"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        out = targets_service.move_group(body.get("from"), body.get("parent"))
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    _drop_overview_cache()
+    return jsonify(out)
 
 
 @app.get("/network")

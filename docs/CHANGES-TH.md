@@ -336,6 +336,13 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## ลากย้ายได้อิสระ (โหมดจัดลำดับ)
+- เครื่อง -> เครื่องในกลุ่มอื่น = ย้ายเข้ากลุ่มนั้น + วางก่อน / หลัง · เครื่อง -> หัวกลุ่ม = ย้ายเข้ากลุ่ม (ต่อท้าย) · เครื่อง -> แถบ "ระดับบนสุด / ไม่มีกลุ่ม" = เอาออกจากกลุ่ม
+- กลุ่ม -> หัวกลุ่มอื่น: ขอบบน = ไปอยู่ก่อน, ขอบล่าง = ไปอยู่หลัง (ย้ายข้ามชั้นได้), กลางหัว = เข้าไปเป็นกลุ่มย่อย · กลุ่ม -> "ระดับบนสุด" = ขึ้นชั้นบนสุด
+- ย้ายกลุ่ม = เปลี่ยน path ของเครื่องทั้งหมดในกลุ่ม + กลุ่มย่อย + `alert_rules[].groups` ที่อ้างถึง (กฎแจ้งเตือนตามไปด้วย) · กันย้ายเข้าไปในตัวเอง / เกิน 10 ชั้น
+- ย้ายข้ามกลุ่ม (แก้ puller.yaml) = admin · operator จัดลำดับในกลุ่มเดียวกันได้
+- API: `POST /api/targets/<เครื่อง>/group` {group} · `POST /api/groups/move` {from, parent} (Activity log `target.group`, `group.move`)
+
 ## จัดลำดับเครื่อง / กลุ่มเอง + สไลด์ภาพรวมกลุ่ม
 - WEB status (ตาราง / ไทล์ / การ์ด): ปุ่ม "↕ จัดลำดับ" (operator ขึ้นไป) -> ลากเครื่องวางบนเครื่อง / ลากหัวกลุ่มวางบนกลุ่มชั้นเดียวกัน (ครึ่งบน = ก่อน, ครึ่งล่าง = หลัง) · "รีเซ็ตลำดับ" = กลับเป็นปกติ
   · ลำดับใช้ร่วมกันทุกคน เก็บที่ data/state/ui_order.json (`GET / PUT /api/ui-order`, Activity log `ui.order`) ไม่แตะ puller.yaml
