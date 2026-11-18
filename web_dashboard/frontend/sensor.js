@@ -69,7 +69,10 @@ function renderHead() {
         + cell("Interval", `${esc(d.interval)} s`)
         + cell("Limits", s.warning != null || s.error != null ? `warning ${esc(fmt(s.warning, s.unit))} · error ${esc(fmt(s.error, s.unit))}${s.low_is_bad ? " (ต่ำกว่า = แจ้ง)" : ""}` : "-")
         + cell("ID", `<code>${esc(s.id)}</code>`)
-        + `</div>` + availHtml(d.availability);
+        + cell("Priority", prioStars(s.priority) + (s.sensor_priority ? "" : ` <span class="st-mut">(ของเครื่อง)</span>`))
+        + cell("แจ้งเมื่อเป็นต่อเนื่อง", esc(fmtDur((s.confirm || d.confirm_checks || 2) * (d.interval || 30))) + (s.sensor_minutes ? "" : ` <span class="st-mut">(ของเครื่อง)</span>`))
+        + `</div>` + availHtml(d.availability) + (canOp ? setHtml(s) : "");
+    if (canOp) $("snSetSave").onclick = saveSettings;
     [...$("snTabs").children].forEach(b => b.classList.toggle("on", b.dataset.t === N.tab));
     const noGraph = !d.has_graph;
     [...$("snTabs").children].forEach(b => { if (["live", "2d", "30d", "365d"].includes(b.dataset.t)) b.disabled = noGraph; });
@@ -167,6 +170,30 @@ ${rows.map(i => { const [, l, c] = ST[i.worst] || ST.unknown; return `<tr><td>${
 }
 
 /* ปิด / เปิด sensor นี้ (เช่น ping ไปไม่ถึงเครื่อง) -> targets[].alert.disabled_sensors  มีผลรอบตรวจถัดไป */
+/* Priority / เวลาแจ้งเฉพาะ sensor นี้ (targets[].alert.sensors) - operator ขึ้นไป */
+function prioStars(n) { n = Math.max(1, Math.min(5, Number(n) || 3)); return `<span class="prio">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>`; }
+function sensorKey(s) { return String(s.id).split(":").slice(1).join(":"); }
+function setHtml(s) {
+    const opts = [["", "ของเครื่อง"], ["5", "★★★★★ 5 สำคัญสุด"], ["4", "★★★★ 4"], ["3", "★★★ 3"], ["2", "★★ 2"], ["1", "★ 1"]];
+    return `<div class="snset"><b>ตั้งค่า sensor นี้</b>
+<label>Priority <select id="snSetPrio">${opts.map(([v, l]) => `<option value="${v}"${String(s.sensor_priority || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+<label>แจ้งเมื่อเป็นต่อเนื่อง <input id="snSetMin" type="number" min="0.5" max="1440" step="0.5" value="${esc(s.sensor_minutes ?? "")}" placeholder="ของเครื่อง"> นาที</label>
+<button type="button" class="sntog dark" id="snSetSave">บันทึก</button><span class="st-mut" id="snSetMsg">ยังไม่ครบเวลา = บันทึกใน System log แต่ไม่แจ้ง · Priority สูงแจ้งก่อนเสมอ</span></div>`;
+}
+async function saveSettings() {
+    const s = N.d.sensor, b = $("snSetSave"); b.disabled = true;
+    try {
+        const r = await fetch(`/api/targets/${encodeURIComponent(s.web)}/sensor-settings`, { method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sensor: sensorKey(s), priority: $("snSetPrio").value, minutes: $("snSetMin").value.trim() }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || Object.values(j.fields || {}).join(" · ") || `HTTP ${r.status}`);
+        $("snSetMsg").textContent = "บันทึกแล้ว · มีผลใน ~30 วินาที";
+        setTimeout(render, 35000);
+    } catch (e) { $("snSetMsg").textContent = "ไม่สำเร็จ: " + e.message; }
+    b.disabled = false;
+}
+
 async function toggleSensor() {
     const s = N.d.sensor, sid = String(s.id).split(":").slice(1).join(":"), off = !s.disabled;
     if (off && !confirm(`ปิด sensor "${s.name}" ของ ${s.web}?\nจะแสดงเป็น Paused ไม่แจ้งเตือน และไม่นับเป็นปัญหา จนกว่าจะกดเปิด`)) return;

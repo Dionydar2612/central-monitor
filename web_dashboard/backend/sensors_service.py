@@ -232,7 +232,8 @@ def get_sensors(statuses=None, web=None, history=False, limit=500):
                 continue
         rows.append(s)
     order = {s: i for i, s in enumerate(STATUSES)}
-    rows.sort(key=lambda s: (order.get(s.get("status"), 9), s.get("group") or "", s.get("web") or "", s.get("name") or ""))
+    # สถานะแย่ก่อน -> Priority สูงก่อน (sensor / เครื่อง) -> กลุ่ม / เครื่อง / ชื่อ
+    rows.sort(key=lambda s: (order.get(s.get("status"), 9), -(s.get("priority") or 3), s.get("group") or "", s.get("web") or "", s.get("name") or ""))
     rows = rows[:limit]
 
     if history:
@@ -288,7 +289,7 @@ def get_detail(sensor_id, days=30):
     for i in history:
         i["duration"] = (i.get("end") or now) - (i.get("start") or now)
         i.setdefault("state", "recovered")
-    return {"sensor": sensor, "updated_at": data.get("updated_at"), "interval": (data.get("options") or {}).get("interval", 30),
+    return {"sensor": sensor, "updated_at": data.get("updated_at"), "interval": (data.get("options") or {}).get("interval", 30), "confirm_checks": (data.get("options") or {}).get("confirm_checks", 2),
             "days": days, "downtime_pct": round(down / (days * 86400) * 100, 4), "uptime_pct": round(100 - down / (days * 86400) * 100, 4),
             "last_up": last_up, "last_down": last_down, "incidents": history,
             "availability": availability_stats(_avail_rows([i for i in rows if i.get("state") != "ongoing"], sensor, now), sensor, now)

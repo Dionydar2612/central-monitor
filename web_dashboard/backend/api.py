@@ -166,7 +166,7 @@ def require_authentication():
 
 
 _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$"
-                         r"|^/api/targets/[^/]+/sensor-toggle$")
+                         r"|^/api/targets/[^/]+/sensor-(toggle|settings)$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 _TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
 
@@ -205,6 +205,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/targets$"), "target.add", ("name", "host", "group", "paused")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/pause$"), "target.pause", ("paused",)),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-toggle$"), "target.sensor_toggle", ("sensor", "disabled")),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-settings$"), "target.sensor_settings", ("sensor", "priority", "minutes")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
     ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
@@ -1262,6 +1263,22 @@ def targets_sensor_toggle(name):
         return jsonify({"error": "json_required"}), 415
     try:
         out = targets_service.set_sensor_disabled(name, body.get("sensor"), bool(body.get("disabled")))
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return (jsonify(out), 200) if out else (jsonify({"error": "not found"}), 404)
+
+
+@app.post("/api/targets/<name>/sensor-settings")
+def targets_sensor_settings(name):
+    """Priority (1-5) / นานกี่นาทีก่อนแจ้ง ของ sensor เดียว  body: {"sensor": "cpu", "priority": 5, "minutes": 10}
+    ว่าง = ใช้ค่าของเครื่อง · ยังไม่ครบเวลา = บันทึก System log แต่ไม่แจ้ง · priority สูง = แจ้งก่อน (operator ขึ้นไป)"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        out = targets_service.set_sensor_settings(name, body.get("sensor"), body.get("priority"), body.get("minutes"))
     except ValidationError as e:
         return _bad_request(e)
     except (OSError, YAMLError) as e:

@@ -336,6 +336,13 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## Priority / เวลาแจ้งเฉพาะ sensor
+- ตั้งได้ 2 ที่: หน้า sensor (กล่อง "ตั้งค่า sensor นี้", operator ขึ้นไป) และ Settings > เครื่อง > การแจ้งเตือน > "Priority / เวลาแจ้งเฉพาะ sensor"
+- puller.yaml `targets[].alert.sensors: {"<sensor>": {priority: 1-5, minutes: N}}` ชื่อ sensor แบบเดียวกับ disabled_sensors (`cpu`, `disk:C:`, `service:Spooler`, ชนิด หรือ `xxx*`) · ไม่ตั้ง priority = Priority ของเครื่อง · ไม่ตั้ง minutes = ค่าของเครื่อง / ทั้งระบบ
+- ยังไม่ครบเวลาที่ตั้ง: บันทึกลง System log ("ยังไม่แจ้ง: รอให้เป็นต่อเนื่อง ...", `notify: false`, `pending: true`) แต่ไม่ส่ง Teams / ป๊อปอัป · กลับปกติก่อนครบเวลา = บันทึก "กลับเป็น OK ก่อนครบเวลา (ไม่ได้แจ้ง)" · บันทึกครั้งเดียวต่อช่วง ไม่ซ้ำทุก 30 วินาที
+- เกิดพร้อมกันหลายเรื่อง: เรียง Priority สูงก่อน (แล้วค่อยความรุนแรง) ทั้งลำดับส่ง Teams, System log และป๊อปอัป (Priority สูงอยู่บนสุดและไม่ถูกตัดเมื่อเกินจำนวนที่แสดง) · รายการ sensor ในหน้า Status เรียงสถานะ -> Priority
+- API `POST /api/targets/<เครื่อง>/sensor-settings` {sensor, priority, minutes} (ว่างทั้งคู่ = ลบ, Activity log `target.sensor_settings`)
+
 ## มุมมองสไลด์ (ทีละเครื่อง) + Priority
 - WEB status > ▶ สไลด์: 1 เครื่องต่อหน้า เลื่อนเองทุก 10 / 15 / 30 / 60 วินาที (จำค่าไว้) · ◀ ▶ / ปุ่มลูกศรบนคีย์บอร์ด / จุดด้านล่าง (สีตามสถานะ) · ชี้เมาส์ค้างหรือเปิดหน้าต่าง log = หยุดชั่วคราว
 - ในสไลด์: สถานะ, Priority, กลุ่ม / IP, เกจ CPU / Memory / Disk, Availability 24h (คลิก -> หน้า sensor), Up/Down มานานเท่าไหร่, Down 24h, Network, Ping, Last pull, sensor ที่มีปัญหา, log 5 รายการล่าสุด (ERROR ขึ้นก่อนเสมอ แล้วค่อย WARN · คลิก = หน้าต่างรายละเอียด log) · คลิกชื่อเครื่อง = เปิดรายละเอียดเครื่อง

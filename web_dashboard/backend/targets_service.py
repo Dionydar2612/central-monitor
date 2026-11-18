@@ -194,6 +194,58 @@ def clean_alert(value, errors, prefix="alert"):
                 clean.append(x)
         if clean:
             out["disabled_sensors"] = clean[:100]
+    # ค่าเฉพาะ sensor: {"<sensor>": {"priority": 1-5, "minutes": นานกี่นาทีก่อนแจ้ง}}
+    #   ชื่อ sensor แบบเดียวกับ disabled_sensors · ระหว่างยังไม่ครบเวลา = บันทึกใน System log แต่ไม่แจ้ง
+    #   priority สูง = แจ้งก่อนเสมอเมื่อเกิดพร้อมกัน (ไม่ใส่ = Priority ของเครื่อง)
+    out_s = clean_sensor_settings(value.get("sensors"), errors, f"{prefix}.sensors")
+    if out_s:
+        out["sensors"] = out_s
+    return out
+
+
+def clean_sensor_one(v, errors, field):
+    """{"priority", "minutes"} ของ sensor เดียว  ช่องว่าง = ไม่ตั้ง  คืน dict (อาจว่าง)"""
+    o = {}
+    if not isinstance(v, dict):
+        return o
+    p = v.get("priority")
+    if p not in (None, ""):
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            p = 0
+        if 1 <= p <= 5:
+            o["priority"] = p
+        else:
+            errors[f"{field}.priority"] = "เลือก 1-5"
+    m = v.get("minutes")
+    if m not in (None, ""):
+        try:
+            m = float(m)
+        except (TypeError, ValueError):
+            m = -1
+        if 0.5 <= m <= 1440:
+            o["minutes"] = int(m) if m.is_integer() else m
+        else:
+            errors[f"{field}.minutes"] = "ต้องอยู่ระหว่าง 0.5-1440 นาที"
+    return o
+
+
+def clean_sensor_settings(value, errors, field="alert.sensors"):
+    out = {}
+    if not isinstance(value, dict):
+        return out
+    for k, v in list(value.items())[:200]:
+        k = str(k or "").strip()
+        if not SENSOR_KEY_RE.match(k):
+            errors[field] = f"ชื่อ sensor ไม่ถูกต้อง: {k[:60]}"
+            continue
+        sub = {}
+        o = clean_sensor_one(v, sub, k)
+        if sub:
+            errors[field] = f"{k}: " + " · ".join(sub.values())
+        if o:
+            out[k] = o
     return out
 
 
@@ -224,6 +276,37 @@ def set_sensor_disabled(name, sensor, disabled):
         _set_or_drop(node, "alert", _flow(alert) if alert else None)
         _write_doc(y, doc)
     return {"name": name, "disabled_sensors": cur}
+
+
+def set_sensor_settings(name, sensor, priority=None, minutes=None):
+    """Priority / นานกี่นาทีก่อนแจ้ง ของ sensor เดียว (targets[].alert.sensors)  ว่างทั้งคู่ = ลบ  ไม่มีเครื่อง -> None"""
+    sensor = str(sensor or "").strip()
+    errors = {}
+    if not SENSOR_KEY_RE.match(sensor):
+        errors["sensor"] = "ชื่อ sensor ไม่ถูกต้อง"
+    one = clean_sensor_one({"priority": priority, "minutes": minutes}, errors, "sensor")
+    if errors:
+        raise ValidationError({k.replace("sensor.", ""): v for k, v in errors.items()})
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        node = _find_target(doc, name)
+        if node is None:
+            return None
+        alert = _plain(node.get("alert") or {})
+        alert = dict(alert) if isinstance(alert, dict) else {}
+        cur = dict(alert.get("sensors") or {})
+        if one:
+            cur[sensor] = one
+        else:
+            cur.pop(sensor, None)
+        if cur:
+            alert["sensors"] = cur
+        else:
+            alert.pop("sensors", None)
+        _set_or_drop(node, "alert", _flow(alert) if alert else None)
+        _write_doc(y, doc)
+    return {"name": name, "sensor": sensor, "settings": one, "sensors": cur}
 
 
 def clean_services(value, errors, field="critical_services"):

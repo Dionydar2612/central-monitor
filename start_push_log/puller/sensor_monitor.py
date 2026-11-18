@@ -462,6 +462,53 @@ def sensor_disabled(rules, sensor):
     return False
 
 
+def sensor_setting(rules, sensor):
+    """ค่าเฉพาะ sensor (targets[].alert.sensors: {"<sensor>": {priority, minutes}})
+    หาแบบเดียวกับ disabled_sensors: ส่วนหลัง "<เครื่อง>:" ตรงตัว -> ชนิด (kind) -> ขึ้นต้น (ลงท้าย *)  ไม่มี -> {}"""
+    if not isinstance(rules, dict) or not rules:
+        return {}
+    sid = str(sensor.get("id") or "").split(":", 1)[-1]
+    kind = str(sensor.get("kind") or "")
+    for key in (sid, kind):
+        if isinstance(rules.get(key), dict):
+            return rules[key]
+    for r, v in rules.items():
+        r = str(r)
+        if r.endswith("*") and sid.startswith(r[:-1]) and isinstance(v, dict):
+            return v
+    return {}
+
+
+def _target_priority(t):
+    try:
+        p = int(t.get("priority") or 3)
+    except (TypeError, ValueError):
+        p = 3
+    return p if 1 <= p <= 5 else 3
+
+
+def _apply_sensor_settings(t, out):
+    """Priority + นานกี่นาทีก่อนแจ้ง ต่อ sensor
+    priority: ค่าของ sensor (ถ้าตั้ง) ไม่งั้นใช้ Priority ของเครื่อง · minutes: แทนค่าของเครื่อง / กฎ"""
+    a = t.get("alert") if isinstance(t.get("alert"), dict) else {}
+    rules = a.get("sensors") if isinstance(a.get("sensors"), dict) else {}
+    tp = _target_priority(t)
+    for s in out:
+        r = sensor_setting(rules, s)
+        try:
+            p = int(r.get("priority")) if r.get("priority") not in (None, "") else None
+        except (TypeError, ValueError):
+            p = None
+        s["priority"] = p if p and 1 <= p <= 5 else tp
+        s["sensor_priority"] = p if p and 1 <= p <= 5 else None
+        try:
+            if r.get("minutes") not in (None, ""):
+                s["confirm"] = max(1, min(int(math.ceil(float(r["minutes"]) * 60 / INTERVAL)), 2880))
+                s["sensor_minutes"] = float(r["minutes"])
+        except (TypeError, ValueError):
+            pass
+
+
 def _apply_disabled(t, out):
     """sensor ที่ผู้ใช้ปิด (เช่น ping ไปไม่ถึงเครื่อง) -> สถานะ Paused ไม่แจ้งเตือน / ไม่นับเป็นปัญหา"""
     a = t.get("alert") if isinstance(t.get("alert"), dict) else {}
@@ -484,6 +531,7 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, opts):
         for s in out:
             if not s.get("confirm"):                 # กฎที่สร้างเองตั้งระยะเวลาเองไว้แล้ว -> ใช้ของกฎ
                 s["confirm"] = o["target_confirm"]
+    _apply_sensor_settings(t, out)                   # ค่าเฉพาะ sensor ชนะค่าของเครื่อง / กฎ
     return out
 
 
@@ -753,6 +801,26 @@ def _save_incidents(new_items, retention, now):
 # 1 รอบ: อ่านค่า -> ยืนยัน N รอบ -> incident -> เขียนไฟล์ + System log
 # ------------------------------------------------------------------
 
+EVENT_RANK = {"down": 5, "error": 4, "warning": 3, "unknown": 2, "recovered": 1}
+
+
+def _event(s, new, confirmed, notify=None, pending=False, message=None):
+    """1 รายการใน System log (+ ข้อมูลทำการ์ด Teams ใน notify.py)"""
+    e = {"source": "sensor", "level": new, "web": s["web"], "group": s["group"],
+         "sensor": s["name"], "from": confirmed, "to": new,
+         "sid": s["id"], "kind": s.get("kind"), "value": s.get("value"), "unit": s.get("unit"),
+         "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error"),
+         "low": s.get("low_is_bad"), "notify": s.get("notify", True) if notify is None else notify,
+         "template": s.get("template"),
+         "rule": (s.get("details") or {}).get("rule") if s.get("kind") == "custom" else None,
+         "host": s.get("host"), "priority": s.get("priority") or 3}
+    if pending:
+        e["pending"] = True
+    if message:
+        e["message"] = message
+    return e
+
+
 def run_once(previous):
     config = load_config()
     th = _thresholds(config)
@@ -770,7 +838,7 @@ def run_once(previous):
             for s in group]
 
     now = time.time()
-    events, closed = [], []
+    events, closed, pending_events = [], [], []
 
     for s in sensors:
         old = previous.get(s["id"]) or {}
@@ -800,6 +868,18 @@ def run_once(previous):
                 new = confirmed
                 s["pending"] = {"status": raw, "count": count, "need": need, "first": first_seen}
                 s["message"] += f" · {STATUS_TEXT.get(raw, raw)} seen {count}/{need} checks"
+                if not same or not pend:
+                    # ยังไม่ครบเวลาที่ตั้ง -> บันทึก System log ไว้ดูย้อนหลัง แต่ไม่แจ้ง (Teams / ป๊อปอัป)
+                    pending_events.append(_event(s, raw, confirmed, notify=False, pending=True, message=(
+                        f"{s['web']} · {s['name']}: {STATUS_TEXT.get(confirmed, confirmed)} → {STATUS_TEXT.get(raw, raw)}"
+                        f" (ยังไม่แจ้ง: รอให้เป็นต่อเนื่อง {_fmt_duration(need * INTERVAL)}) · {s['message']}")))
+        if old.get("pending") and not s.get("pending") and new == confirmed and confirmed is not None:
+            # กลับมาก่อนครบเวลา -> ไม่เคยแจ้ง บันทึกไว้ว่าจบแล้ว
+            op = old["pending"]
+            pending_events.append(_event(s, "ok" if _group(new) == "ok" else new, op.get("status"), notify=False, pending=True,
+                                         message=(f"{s['web']} · {s['name']}: กลับเป็น {STATUS_TEXT.get(new, new)} ก่อนครบเวลา"
+                                                  f" ({STATUS_TEXT.get(op.get('status'), op.get('status'))} {_fmt_duration(now - (op.get('first') or now))}"
+                                                  f" · ไม่ได้แจ้ง) · {s['message']}")))
         s["status"] = new
         s["since"] = old.get("since", now) if new == confirmed else first_seen
 
@@ -828,14 +908,7 @@ def run_once(previous):
             continue
         if confirmed is None and new == "ok":
             continue                          # sensor ใหม่ที่ปกติ ไม่ต้องบันทึก
-        fields = {"source": "sensor", "level": new, "web": s["web"], "group": s["group"],
-                  "sensor": s["name"], "from": confirmed, "to": new,
-                  # ใช้ทำข้อความสั้นในการ์ด Teams (notify.py)
-                  "sid": s["id"], "kind": s.get("kind"), "value": s.get("value"), "unit": s.get("unit"),
-                  "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error"),
-                  "low": s.get("low_is_bad"), "notify": s.get("notify", True), "template": s.get("template"),
-                  "rule": (s.get("details") or {}).get("rule") if s.get("kind") == "custom" else None,
-                  "host": s.get("host")}
+        fields = _event(s, new, confirmed)
         if new == "ok" and closed and closed[-1]["id"] == s["id"]:
             c = closed[-1]
             pk = f" · peak {c['peak']:.1f}{'%' if c.get('unit') == '%' else ''}" if c.get("peak") is not None else ""
@@ -847,6 +920,9 @@ def run_once(previous):
                                  f"{STATUS_TEXT.get(new, new)} · {s['message']}")
         events.append(fields)
 
+    # Priority สูงแจ้งก่อนเสมอ (Teams ส่งตามลำดับ / System log / ป๊อปอัป) แล้วค่อยความรุนแรง
+    events.sort(key=lambda e: (-(e.get("priority") or 3), -EVENT_RANK.get(e.get("level"), 0)))
+    events = pending_events + events
     per_target = {t["name"]: _merge_thresholds(th[1] if _is_windows_target(t) else th[0], t.get("thresholds"))
                   for t in targets}
     _write(SENSORS_FILE, {"updated_at": now, "thresholds": th[0], "thresholds_windows": th[1], "targets": per_target,

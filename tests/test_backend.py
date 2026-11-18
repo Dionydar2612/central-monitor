@@ -63,6 +63,18 @@ class Backend(unittest.TestCase):
         self.assertIn("priority: 5", open(os.path.join(self.tmp, "puller.yaml")).read())
         bad = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "logs": [], "priority": 9}).json
         self.assertIn("priority", bad["fields"])
+        # Priority / เวลาแจ้งเฉพาะ sensor (หน้า sensor) + Save ฟอร์มแล้วไม่หาย
+        r = c.post("/api/targets/web-01/sensor-settings", json={"sensor": "cpu", "priority": 5, "minutes": 10})
+        self.assertEqual(r.status_code, 200, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "web-01"][0]
+        self.assertEqual(t["alert"]["sensors"], {"cpu": {"priority": 5, "minutes": 10}})
+        self.assertEqual(c.post("/api/targets/web-01/sensor-settings", json={"sensor": "cpu", "priority": 7}).status_code, 400)
+        r = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "group": "TQ/IT", "logs": [], "priority": 5,
+                                               "alert": {"minutes": 10, "sensors": t["alert"]["sensors"]}})
+        self.assertLess(r.status_code, 300, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "web-01"][0]
+        self.assertEqual(t["alert"]["sensors"]["cpu"]["priority"], 5)
+        self.assertEqual(c.post("/api/targets/web-01/sensor-settings", json={"sensor": "cpu", "priority": "", "minutes": ""}).json["sensors"], {})
         self.assertEqual(c.post("/api/users", json={"username": "v1", "password": "password1", "role": "viewer"}).status_code, 201)
         self.assertEqual(self.login("v1", "password1"), 200)
         self.assertEqual(c.put("/api/targets/web-01/pause", json={"paused": True}).status_code, 403)

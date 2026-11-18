@@ -1580,3 +1580,9 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .sldots button{all:unset;cursor:pointer;width:10px;height:10px;border-radius:50%;background:#a8cf38;opacity:.45}
 .sldots button.wr{background:#f5b400}.sldots button.cr{background:#e5484d}.sldots button.ps{background:var(--blue,#1f7bff)}.sldots button.on{opacity:1;transform:scale(1.35)}
 @media (max-width:900px){.slbody{grid-template-columns:1fr}.sllog{grid-template-columns:56px 1fr;}.sllog time,.sllog em{display:none}}
+
+/* หน้า sensor: ตั้งค่า Priority / เวลาแจ้ง */
+.snset{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:14px;padding:10px 12px;border:1px dashed var(--line,#d7dce4);border-radius:10px;font-size:13px}
+.snset select,.snset input{font:inherit;padding:4px 6px;border:1px solid var(--line,#d7dce4);border-radius:6px;background:var(--card,#fff);color:inherit}
+.snset input{width:80px}.sntog.dark{background:var(--blue,#1f7bff);color:#fff;border-color:transparent}
+.senstbl input,.senstbl select{width:100%}

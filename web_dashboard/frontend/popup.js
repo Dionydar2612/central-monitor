@@ -89,7 +89,9 @@
         last = Math.max(...all.map(e => e.time));
         set(K_LAST, last);
         if (cfg.enabled === false) return;
-        const rows = all.filter(wanted).reverse();                    // เก่าก่อน
+        /* เก่าก่อน แล้ว Priority ต่ำก่อน -> Priority สูงสุดขึ้นบนสุดเสมอ (และไม่ถูกตัดเมื่อมีเกิน MAX_TOASTS) */
+        const rows = all.filter(wanted).reverse().map((e, i) => [e, i])
+            .sort((a, b) => (Number(a[0].priority) || 3) - (Number(b[0].priority) || 3) || a[1] - b[1]).map(x => x[0]);
         rows.slice(-MAX_TOASTS).forEach(toast);
         if (rows.length > MAX_TOASTS) toast({ level: "warning", sensor: `อีก ${rows.length - MAX_TOASTS} รายการ`, time: Date.now() / 1000,
                                                message: "เปิด Status & Logs > System log เพื่อดูทั้งหมด" });

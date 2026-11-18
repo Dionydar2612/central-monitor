@@ -189,6 +189,74 @@ class DisabledSensors(unittest.TestCase):
         self.assertTrue(out[0]["disabled"])
 
 
+class SensorPriority(unittest.TestCase):
+    """Priority / เวลาแจ้งเฉพาะ sensor: ยังไม่ครบเวลา = System log ไม่แจ้ง · Priority สูงแจ้งก่อน"""
+
+    def test_setting_match(self):
+        f = sensor_monitor.sensor_setting
+        rules = {"cpu": {"priority": 5}, "disk:C:": {"minutes": 10}, "service:*": {"priority": 4}}
+        self.assertEqual(f(rules, {"id": "w:cpu", "kind": "cpu"}), {"priority": 5})
+        self.assertEqual(f(rules, {"id": "w:disk:C:", "kind": "disk"}), {"minutes": 10})
+        self.assertEqual(f(rules, {"id": "w:disk:D:", "kind": "disk"}), {})
+        self.assertEqual(f(rules, {"id": "w:service:Spooler", "kind": "service"}), {"priority": 4})
+        out = [{"id": "w:cpu", "kind": "cpu"}, {"id": "w:disk:C:", "kind": "disk"}, {"id": "w:memory", "kind": "memory"}]
+        sensor_monitor._apply_sensor_settings({"priority": 2, "alert": {"sensors": rules}}, out)
+        self.assertEqual([x["priority"] for x in out], [5, 2, 2])           # ไม่ตั้ง = Priority ของเครื่อง
+        self.assertEqual(out[1]["confirm"], 20)                             # 10 นาที / 30 วินาที
+
+    def _run(self, raws, previous):
+        sm = sensor_monitor
+        got = {}
+        saved = {k: getattr(sm, k) for k in ("load_config", "_target_sensors", "_write", "append_events", "_save_incidents",
+                                             "_app_metrics", "_software")}
+        saved_n = (sm.notify.sensor_events, sm.notify.maybe_summary)
+        try:
+            sm.load_config = lambda: {"targets": [{"name": "w"}]}
+            sm._target_sensors = lambda t, th, i, c, p, o: [dict(x) for x in raws]
+            sm._write = lambda path, data: None
+            sm.append_events = lambda ev: got.setdefault("log", []).extend(ev)
+            sm._save_incidents = lambda *a: None
+            sm._app_metrics = lambda s: None
+            sm._software = lambda t, c: None
+            sm.notify.sensor_events = lambda ev, c: got.setdefault("notify", []).extend(e for e in ev if e.get("notify") is not False)
+            sm.notify.maybe_summary = lambda *a, **k: None
+            state = sm.run_once(previous)
+        finally:
+            for k, v in saved.items():
+                setattr(sm, k, v)
+            sm.notify.sensor_events, sm.notify.maybe_summary = saved_n
+        return state, got
+
+    def test_pending_logged_not_notified_and_priority_order(self):
+        base = {"web": "w", "group": "", "host": "h", "unit": "%", "message": "x"}
+        ok = {"status": "ok", "since": 0, "incident": None}
+        prev = {"w:cpu": dict(base, id="w:cpu", **ok), "w:memory": dict(base, id="w:memory", **ok)}
+        raws = [dict(base, id="w:cpu", kind="cpu", name="CPU", status="warning", confirm=20, priority=2),
+                dict(base, id="w:memory", kind="memory", name="Memory", status="error", confirm=1, priority=5)]
+        state, got = self._run(raws, prev)
+        self.assertEqual(state["w:cpu"]["status"], "ok")                    # ยังไม่ครบ 10 นาที
+        pend = [e for e in got["log"] if e.get("pending")]
+        self.assertEqual(len(pend), 1)
+        self.assertIs(pend[0]["notify"], False)
+        self.assertIn("ยังไม่แจ้ง", pend[0]["message"])
+        self.assertEqual([e["sid"] for e in got["notify"]], ["w:memory"])   # แจ้งเฉพาะที่ครบเวลา
+        # รอบถัดไป: ยัง pending เหมือนเดิม -> ไม่บันทึกซ้ำ
+        state2, got2 = self._run(raws, state)
+        self.assertFalse([e for e in got2.get("log", []) if e.get("pending")])
+        # กลับเป็น OK ก่อนครบเวลา -> บันทึกว่าไม่ได้แจ้ง
+        raws_ok = [dict(raws[0], status="ok"), raws[1]]
+        state3, got3 = self._run(raws_ok, state2)
+        back = [e for e in got3.get("log", []) if e.get("pending")]
+        self.assertEqual(len(back), 1)
+        self.assertIn("ก่อนครบเวลา", back[0]["message"])
+        # เกิดพร้อมกัน: Priority สูงแจ้งก่อน แม้ความรุนแรงต่ำกว่า
+        raws4 = [dict(base, id="w:a", kind="cpu", name="A", status="down", confirm=1, priority=2),
+                 dict(base, id="w:b", kind="cpu", name="B", status="warning", confirm=1, priority=5)]
+        prev4 = {"w:a": dict(base, id="w:a", **ok), "w:b": dict(base, id="w:b", **ok)}
+        _, got4 = self._run(raws4, prev4)
+        self.assertEqual([e["sid"] for e in got4["notify"]], ["w:b", "w:a"])
+
+
 class WindowsPullTargets(unittest.TestCase):
     """prometheus_targets: เครื่อง Windows โหมด pull อยู่ใน web-nodes.json (label cm_web) / push ไม่อยู่"""
 

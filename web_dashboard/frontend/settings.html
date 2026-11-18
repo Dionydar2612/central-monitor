@@ -141,6 +141,12 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-f" data-f="alert.hysteresis"><label for="fa_hyst">Hysteresis</label><input id="fa_hyst" type="number" min="0" max="20" step="0.5" inputmode="decimal"><small>ต้องลดต่ำกว่าเกณฑ์ − ค่านี้ก่อนกลับเป็น OK (กันเด้งไปมา)</small><div class="st-err"></div></div>
 <div class="st-f" data-f="alert.bottleneck"><label for="fa_bn">ตรวจ Bottleneck</label><select id="fa_bn"><option value="">ค่าเริ่มต้น</option><option value="1">ตรวจ</option><option value="0">ไม่ตรวจ</option></select><small>CPU / Memory / Disk / Network ติดคอขวด</small><div class="st-err"></div></div>
 </div></div>
+<div class="fsec"><div class="fsec-h">Priority / เวลาแจ้งเฉพาะ sensor</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:8px">Priority สูง = แจ้งก่อนเสมอเมื่อเกิดพร้อมกัน (ว่าง = Priority ของเครื่อง) · ยังไม่ครบนาทีที่ตั้ง = บันทึกใน System log แต่ไม่แจ้ง · ตั้งจากหน้า sensor ได้ด้วย</div>
+<div class="st-f" data-f="alert.sensors"><table class="st-tbl senstbl"><thead><tr><th>sensor</th><th>Priority</th><th>แจ้งเมื่อเป็นต่อเนื่อง (นาที)</th><th></th></tr></thead><tbody id="fa_sens"></tbody></table>
+<datalist id="sensKeys"><option value="availability"><option value="cpu"><option value="memory"><option value="disk"><option value="mem_available"><option value="net_latency"><option value="packet_loss"><option value="disk_latency"><option value="log_pull"><option value="service"><option value="bottleneck:*"><option value="custom"></datalist>
+<button type="button" class="st-btn sm" id="fa_sens_add" style="margin-top:8px">+ เพิ่ม sensor</button><div class="st-err"></div></div>
+</div>
 <div class="fsec"><div class="fsec-h">ปิด sensor</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:8px">sensor ที่ปิด = สถานะ Paused ไม่แจ้งเตือน ไม่นับเป็นปัญหา (เช่น central ping เครื่องนี้ไม่ได้เพราะ firewall)</div>
 <div class="st-f" data-f="alert.disabled_sensors"><div class="dslist" id="fa_ds">

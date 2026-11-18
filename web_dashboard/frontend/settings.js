@@ -256,8 +256,40 @@ function formDefaults() {
     $("a_crit").placeholder = (d.critical_services || []).join(", ") || "ค่าเริ่มต้น";
 }
 
+/* ตาราง Priority / เวลาแจ้งเฉพาะ sensor: targets[].alert.sensors {"<sensor>": {priority, minutes}} */
+const PRIO_OPTS = [["", "ของเครื่อง"], ["5", "★★★★★ 5"], ["4", "★★★★ 4"], ["3", "★★★ 3"], ["2", "★★ 2"], ["1", "★ 1"]];
+function sensRow(key, v) {
+    v = v || {};
+    const tr = el("tr", {});
+    tr.innerHTML = `<td><input data-k="key" list="sensKeys" autocomplete="off" placeholder="เช่น cpu, disk:C:, service:Spooler"></td>`
+        + `<td><select data-k="priority">${PRIO_OPTS.map(([x, l]) => `<option value="${x}">${l}</option>`).join("")}</select></td>`
+        + `<td><input data-k="minutes" type="number" min="0.5" max="1440" step="0.5" inputmode="decimal" placeholder="ของเครื่อง"></td>`
+        + `<td><button type="button" class="st-btn sm" data-del title="ลบ">×</button></td>`;
+    tr.querySelector('[data-k="key"]').value = key || "";
+    tr.querySelector('[data-k="priority"]').value = v.priority ? String(v.priority) : "";
+    tr.querySelector('[data-k="minutes"]').value = v.minutes ?? "";
+    tr.querySelector("[data-del]").onclick = () => tr.remove();
+    return tr;
+}
+function sensRows(map) {
+    const tb = $("fa_sens"); if (!tb) return;
+    tb.innerHTML = "";
+    Object.entries(map || {}).forEach(([k, v]) => tb.append(sensRow(k, v)));
+}
+function readSensRows() {
+    const out = {};
+    document.querySelectorAll("#fa_sens tr").forEach(tr => {
+        const k = tr.querySelector('[data-k="key"]').value.trim();
+        if (!k) return;
+        const p = tr.querySelector('[data-k="priority"]').value, m = tr.querySelector('[data-k="minutes"]').value.trim();
+        if (p || m) out[k] = { ...(p ? { priority: Number(p) } : {}), ...(m ? { minutes: m } : {}) };
+    });
+    return out;
+}
+
 function fillAlertFields(t) {
     const a = (t && t.alert) || {};
+    sensRows(a.sensors || {});                 /* Priority / เวลาเฉพาะ sensor (ตั้งที่หน้า sensor ได้ด้วย) */
     $("fa_min").value = a.minutes ?? ""; $("fa_hyst").value = a.hysteresis ?? "";
     $("fa_bn").value = a.bottleneck === true ? "1" : a.bottleneck === false ? "0" : "";
     /* sensor ที่ปิดไว้: ติ๊กกล่องที่ครบทุกชื่อ ที่เหลือไปช่อง "อื่น ๆ" */
@@ -276,7 +308,7 @@ function readAlertFields() {
     document.querySelectorAll("#fa_ds [data-ds]:checked").forEach(cb => ds.push(...cb.dataset.ds.split(",")));
     $("fa_ds_more").value.split(",").map(x => x.trim()).filter(Boolean).forEach(x => ds.push(x));
     return { minutes: $("fa_min").value.trim(), hysteresis: $("fa_hyst").value.trim(), bottleneck: b === "" ? null : b === "1",
-             disabled_sensors: [...new Set(ds)] };
+             disabled_sensors: [...new Set(ds)], sensors: readSensRows() };
 }
 
 function openForm(t) {
@@ -841,6 +873,7 @@ async function logout() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    $("fa_sens_add")?.addEventListener("click", () => { const tr = sensRow("", {}); $("fa_sens").append(tr); tr.querySelector("input").focus(); });
     const dl = el("datalist", { id: "logNames" });
     ["application", "logapp", "loginuser", "journal"].forEach(v => dl.append(el("option", { value: v })));
     document.body.append(dl);
