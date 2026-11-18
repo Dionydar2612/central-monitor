@@ -48,6 +48,7 @@
 <div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH)</option><option value="agent">Windows (agent / Fluent Bit)</option></select><small id="f_type_hint">central เข้าไปดึง log ทาง SSH</small><div class="st-err"></div></div>
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
+<div class="st-f" data-f="priority"><label for="f_prio">Priority (ความสำคัญ)</label><select id="f_prio"><option value="5">★★★★★ สำคัญสุด</option><option value="4">★★★★☆ สูง</option><option value="3" selected>★★★☆☆ ปกติ</option><option value="2">★★☆☆☆ ต่ำ</option><option value="1">★☆☆☆☆ ต่ำสุด</option></select><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
 </div></div>
 <div class="fsec"><div class="fsec-h">กลุ่ม</div>

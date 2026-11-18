@@ -1079,7 +1079,7 @@ function checkTables(list) {
 /* ---------- มุมมองของ WEB status: table / tiles / cards / problems (จำใน browser) ---------- */
 /* function declaration (hoisted): S ถูกสร้างก่อนบรรทัดนี้ ห้ามอ้าง const ที่ประกาศทีหลัง (เคยทำให้กลับเป็นตารางทุกครั้งที่ reload) */
 function loadView() {
-    try { const v = localStorage.getItem("cm.view"); return ["table", "tiles", "cards", "problems", "sunburst"].includes(v) ? v : "table"; }
+    try { const v = localStorage.getItem("cm.view"); return ["table", "tiles", "cards", "problems", "sunburst", "slide"].includes(v) ? v : "table"; }
     catch (e) { return "table"; }
 }
 function saveView(v) { try { localStorage.setItem("cm.view", v); } catch (e) { /* ignore */ } }
@@ -1114,6 +1114,80 @@ ${w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` 
 ${why}<div class="mfoot"><span>${av ? `<a class="mav ${av.cls}" href="${av.href}" title="${escapeHtml(av.tip)}">${av.pct}${av.state ? ` · ${escapeHtml(av.state)}` : ""}</a>` : "-"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
     }).join("")}</div>`;
 }
+/* ---------- สไลด์: ทีละเครื่อง (จอ NOC) เรียงตาม Priority (Settings > เครื่อง > ทั่วไป) -> ความรุนแรง -> ชื่อ
+   1 สไลด์ = สถานะ + CPU / Memory / Disk + Availability + Network + ปัญหา + log 5 รายการล่าสุด (ERROR ขึ้นก่อนเสมอ)
+   เลื่อนเองทุก SL.sec วินาที · ชี้เมาส์ค้าง / เปิดหน้าต่าง log = หยุดชั่วคราว · ← → เลื่อนเอง ---------- */
+const SL = { web: null, play: true, sec: 15, at: Date.now(), hover: false, logs: {}, timer: null };
+try { const v = JSON.parse(localStorage.getItem("cm.slide") || "{}"); if (v.sec) SL.sec = v.sec; if (v.play === false) SL.play = false; } catch (e) { /* ignore */ }
+function slSave() { try { localStorage.setItem("cm.slide", JSON.stringify({ sec: SL.sec, play: SL.play })); } catch (e) { /* ignore */ } }
+function stars(n) { n = Math.max(1, Math.min(5, Number(n) || 3)); return `<span class="prio" title="Priority ${n}/5">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>`; }
+function slideList() {
+    const f = (S.ovq || "").trim().toLowerCase();
+    return (S.webs || []).filter(w => matchesFilter(w, f)).sort((a, b) =>
+        (Number(b.priority) || 3) - (Number(a.priority) || 3) || (SEVERITY[a.state] ?? 3) - (SEVERITY[b.state] ?? 3) || a.web.localeCompare(b.web));
+}
+async function slideLogs(web) {
+    const c = SL.logs[web];
+    if (c && (c.busy || Date.now() - c.at < 30000)) return;
+    SL.logs[web] = { ...(c || {}), busy: true, at: Date.now() };
+    const one = lv => apiGet(`/api/problems?web=${encodeURIComponent(web)}&level=${lv}&size=5`).catch(() => []);
+    const [err, warn] = await Promise.all([one("ERROR"), one("WARN")]);
+    const by = (a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || ""));
+    /* ERROR ขึ้นก่อนเสมอ (ใหม่ -> เก่า) แล้วค่อยเติม WARN ให้ครบ 5 */
+    const rows = [...(Array.isArray(err) ? err : []).sort(by), ...(Array.isArray(warn) ? warn : []).sort(by)].slice(0, 5);
+    SL.logs[web] = { rows, at: Date.now(), busy: false };
+    if (S.mview === "slide" && SL.web === web) renderMachines();
+}
+function slideGauge(w, key, name) {
+    const v = w[key], t = (w.thresholds || {})[key] || {}, lv = level(key, v);
+    const g = { value: hasValue(v) ? Number(v) : null, unit: "%", warning: t.warning ?? TH[key].warn, error: t.error ?? TH[key].crit,
+                status: !hasValue(v) ? "unknown" : lv === "cr" ? "error" : lv === "wr" ? "warning" : "ok" };
+    return `<div class="slg">${window.CMGauge ? CMGauge.svg(g, { size: "lg" }) : ""}<b class="${lv || (hasValue(v) ? "ok" : "")}">${hasValue(v) ? Number(v).toFixed(1) + "%" : "-"}</b><small>${name}</small></div>`;
+}
+function slideHtml(list) {
+    if (!list.length) return `<div class="empty">ไม่มีเครื่องตามตัวกรอง</div>`;
+    let i = list.findIndex(w => w.web === SL.web);
+    if (i < 0) { i = 0; SL.web = list[0].web; SL.at = Date.now(); }
+    const w = list[i], [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
+    const av = availInfo(w), lg = SL.logs[w.web];
+    slideLogs(w.web);
+    const fact = (k, v, c) => `<div class="slf"><small>${k}</small><b class="${c || ""}">${v}</b></div>`;
+    const net = hasValue(w.net) ? `${formatNumber(w.net)} MB/s` : "-";
+    const ping = [hasValue(w.ping_ms) ? `${Math.round(w.ping_ms)} ms` : "", hasValue(w.packet_loss) ? `${Number(w.packet_loss).toFixed(0)}% loss` : ""].filter(Boolean).join(" · ");
+    const probs = (w.problems || []).slice(0, 6);
+    const logs = !lg || !lg.rows ? `<div class="sllog-empty">กำลังโหลด log...</div>`
+        : !lg.rows.length ? `<div class="sllog-empty ok">✓ ไม่มี ERROR / WARN</div>`
+        : lg.rows.map((r, k) => `<button type="button" class="sllog ${r.level === "ERROR" ? "cr" : "wr"}" data-sll="${k}"><span class="lv">${escapeHtml(r.level)}</span><time>${escapeHtml(formatTimestamp(r.timestamp))}</time><em>${escapeHtml(r.type || "")}</em><span class="msg">${escapeHtml(String(r.message || "").slice(0, 300))}</span></button>`).join("");
+    const dots = list.length <= 40 ? `<div class="sldots">${list.map((x, k) => `<button type="button" class="${k === i ? "on " : ""}${(STATE_LABEL[x.state] || [])[1] || ""}" data-sli="${k}" title="${escapeHtml(x.web)}"></button>`).join("")}</div>` : "";
+    return `<div class="slw">
+<div class="slbar"><button type="button" class="svbtn" data-slgo="-1" title="ก่อนหน้า (←)">◀</button><button type="button" class="svbtn" data-slplay title="${SL.play ? "หยุด" : "เล่น"}">${SL.play ? "❚❚" : "▶"}</button><button type="button" class="svbtn" data-slgo="1" title="ถัดไป (→)">▶</button>
+<span class="slpos"><b>${i + 1}</b> / ${list.length}</span><select id="slSec" aria-label="เลื่อนทุก">${[10, 15, 30, 60].map(n => `<option value="${n}"${n === SL.sec ? " selected" : ""}>ทุก ${n} วินาที</option>`).join("")}</select>
+<span class="slprog"><i id="slProg"></i></span></div>
+<div class="slide ${cls}">
+<div class="slhead"><div><button type="button" class="slname" data-web="${escapeHtml(w.web)}">${escapeHtml(w.web)}</button>${osTag(w)} ${stars(w.priority)}<div class="slsub">${escapeHtml([w.group || "", w.host || w.instance || ""].filter(Boolean).join(" · "))}</div></div><span class="ovst ${cls} big">${escapeHtml(label)}</span></div>
+<div class="slbody">
+<div class="slgs">${w.paused ? `<div class="empty">ไม่ได้ตรวจ (Paused)</div>` : slideGauge(w, "cpu", "CPU avg 5m") + slideGauge(w, "memory", "Memory") + slideGauge(w, "disk", "Disk")}</div>
+<div class="slfs">${fact("Availability 24h", av ? `<a href="${av.href}">${av.pct}</a>` : "-", av ? av.cls : "")}${fact(av && av.down ? "Down มาแล้ว" : "Up มาแล้ว", av && av.state ? escapeHtml(av.state.replace(/^(Up|Down) /, "")) : "-", av && av.down ? "cr" : "")}${fact("Down 24h", av ? `${av.outs} ครั้ง` : "-", av && av.outs ? "wr" : "")}${fact("Network", net)}${fact("Ping", ping || "-")}${fact("Last pull", w.paused ? "-" : pullHtml(w.last_pull))}</div>
+</div>
+${probs.length ? `<div class="slprobs">${probs.map(p => `<span>${escapeHtml(p)}</span>`).join("")}</div>` : ""}
+<div class="sllogs"><div class="slh">Log ล่าสุด <small>ERROR ก่อนเสมอ</small></div>${logs}</div>
+</div>${dots}</div>`;
+}
+function slideGo(d) {
+    const list = slideList(); if (!list.length) return;
+    const i = Math.max(0, list.findIndex(w => w.web === SL.web));
+    SL.web = list[(i + d + list.length) % list.length].web; SL.at = Date.now();
+    renderMachines();
+}
+function slideTick() {
+    if (S.mview !== "slide") return;
+    const modal = $("problemModal"), busy = SL.hover || (modal && modal.style.display !== "none" && modal.offsetParent !== null) || document.hidden;
+    if (!SL.play || busy) SL.at += 500;                         /* หยุดนับระหว่างหยุด / ชี้เมาส์ / เปิดหน้าต่าง log */
+    const pct = Math.min(100, (Date.now() - SL.at) / (SL.sec * 1000) * 100);
+    const bar = $("slProg"); if (bar) bar.style.width = (SL.play ? pct : 0) + "%";
+    if (SL.play && !busy && pct >= 100) slideGo(1);
+}
+
 /* ---------- Sunburst: วงใน = กลุ่ม (ทีละชั้น) → เครื่อง → วงนอก = sensor ของเครื่อง  สีตามสถานะแย่สุด ---------- */
 const SB_COLOR = { ok: "#a8cf38", warning: "#f5b400", error: "#e5484d", down: "#d12f35", paused: "#4c8ff0", unknown: "#b9c0cb" };
 const SB_RANK = { down: 5, error: 4, warning: 3, unknown: 2, ok: 1, paused: 0 };
@@ -1293,13 +1367,18 @@ function renderMachines(ov) {
     const loose = (tree.servers.length ? `<div class="gloose">${serversHtml(tree.servers, cur)}</div>` : "") +
         (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "");
     document.querySelectorAll("#ovView button").forEach(b => b.classList.toggle("on", b.dataset.view === S.mview));
-    q("#ovExpand").hidden = q("#ovCollapse").hidden = S.mview === "problems" || S.mview === "sunburst";
+    q("#ovExpand").hidden = q("#ovCollapse").hidden = ["problems", "sunburst", "slide"].includes(S.mview);
     q("#mach").classList.remove("sbmode");
     if (S.mview === "sunburst" && webs.length) {
         const list = webs.filter(w => matchesFilter(w, f));
         q("#mach").classList.add("sbmode");
         q("#mach").innerHTML = list.length ? sunburstHtml(list, cur) : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
         if (!S.sb || Date.now() - S.sb.at > 30000) sbSensors().then(() => { if (S.mview === "sunburst") renderMachines(); });
+        return;
+    }
+    if (S.mview === "slide") {
+        q("#mach").innerHTML = webs.length ? slideHtml(slideList()) : `<div class="empty">No WEB configured - open Settings and add a target</div>`;
+        if (!SL.timer) SL.timer = setInterval(slideTick, 500);
         return;
     }
     if (S.mview === "problems" && webs.length) {             /* ปัญหาก่อน: ไม่แบ่งกลุ่ม เรียงตามความรุนแรง */
@@ -2494,6 +2573,15 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#mach").addEventListener("keydown", e => {
         if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-web],[data-group],[data-wm]")) { e.preventDefault(); e.target.click(); }
     });
+    q("#mach").addEventListener("change", e => {
+        if (e.target.id === "slSec") { SL.sec = Number(e.target.value) || 15; SL.at = Date.now(); slSave(); }
+    });
+    q("#mach").addEventListener("pointerover", e => { SL.hover = !!e.target.closest(".slide"); });
+    q("#mach").addEventListener("pointerleave", () => { SL.hover = false; });
+    document.addEventListener("keydown", e => {
+        if (S.mview !== "slide" || e.target.closest("input,select,textarea") || e.altKey || e.ctrlKey || e.metaKey) return;
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); slideGo(e.key === "ArrowRight" ? 1 : -1); }
+    });
     q("#mach").addEventListener("click", e => {
         if (e.target.closest("a")) return;
         const wr = e.target.closest("tr[data-wm]");
@@ -2509,6 +2597,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const pb = e.target.closest("button[data-pause]");
         if (pb) { e.stopPropagation(); togglePause(pb); return; }
+        const sg = e.target.closest("[data-slgo]");                 /* สไลด์ */
+        if (sg) { slideGo(Number(sg.dataset.slgo)); return; }
+        if (e.target.closest("[data-slplay]")) { SL.play = !SL.play; SL.at = Date.now(); slSave(); renderMachines(); return; }
+        const sd = e.target.closest("[data-sli]");
+        if (sd) { const l = slideList()[Number(sd.dataset.sli)]; if (l) { SL.web = l.web; SL.at = Date.now(); renderMachines(); } return; }
+        const sl = e.target.closest("[data-sll]");
+        if (sl) { const r = ((SL.logs[SL.web] || {}).rows || [])[Number(sl.dataset.sll)]; if (r) openLogDetail(r); return; }
         const sbs = e.target.closest("[data-sbs]");                 /* Sunburst: วงนอก = sensor -> หน้า sensor */
         if (sbs) { location.href = "/sensor?id=" + encodeURIComponent(sbs.dataset.sbs); return; }
         const sbg = e.target.closest("[data-sbg]");

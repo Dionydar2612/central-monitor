@@ -77,6 +77,23 @@ CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,99}$")
 TARGET_TYPES = ("ssh", "agent")
 
 
+PRIORITY_DEFAULT = 3
+
+
+def clean_priority(value, errors):
+    """ความสำคัญของเครื่อง (แบบ PRTG) 1-5 ดาว ปริยาย 3 · 5 = สำคัญสุด (ขึ้นก่อนในมุมมองสไลด์)"""
+    if value in (None, ""):
+        return PRIORITY_DEFAULT
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        v = 0
+    if not 1 <= v <= 5:
+        errors["priority"] = "เลือก 1-5"
+        return PRIORITY_DEFAULT
+    return v
+
+
 def clean_group(value, errors, field="group"):
     """"  TQ / IT " -> "TQ/IT"  ว่าง -> ""  ผิดรูปแบบ -> ใส่ errors"""
     if value in (None, ""):
@@ -317,6 +334,7 @@ def validate_agent_target(data, existing_names, editing=None):
             errors["agent.exporter"] = "รูปแบบ IP:พอร์ต เช่น 192.168.181.101:9182"
 
     group = clean_group(data.get("group"), errors)
+    priority = clean_priority(data.get("priority"), errors)
     paused = bool(data.get("paused", False))
     thresholds = clean_thresholds(data.get("thresholds"), errors)
     alert = clean_alert(data.get("alert"), errors)
@@ -324,7 +342,7 @@ def validate_agent_target(data, existing_names, editing=None):
     crit = clean_services(crit, errors) if crit not in (None, "") else None
     if errors:
         raise ValidationError(errors)
-    return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "paused": paused,
+    return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "priority": priority, "paused": paused,
             "thresholds": thresholds, "alert": alert, "critical_services": crit,
             "agent": {"logs": logs, "channels": channels, "mode": mode, **({"exporter": exporter} if mode == "pull" else {})}}
 
@@ -415,6 +433,7 @@ def validate_target(data, existing_names, editing=None):
         logs.append({"name": l_name, "path": l_path, "type": l_type})
 
     group = clean_group(data.get("group"), errors)
+    priority = clean_priority(data.get("priority"), errors)
     paused = bool(data.get("paused", False))
     thresholds = clean_thresholds(data.get("thresholds"), errors)
     alert = clean_alert(data.get("alert"), errors)
@@ -426,6 +445,7 @@ def validate_target(data, existing_names, editing=None):
         "name": name,
         "host": host,
         "group": group,
+        "priority": priority,
         "paused": paused,
         "thresholds": thresholds,
         "alert": alert,
@@ -501,6 +521,8 @@ def _to_node(t):
             node["host"] = t["host"]
         if t.get("group"):
             node["group"] = t["group"]
+        if t.get("priority") and t["priority"] != PRIORITY_DEFAULT:
+            node["priority"] = t["priority"]
         if t.get("paused"):
             node["paused"] = True
         if t.get("thresholds"):
@@ -516,6 +538,8 @@ def _to_node(t):
     node["host"] = t["host"]
     if t.get("group"):
         node["group"] = t["group"]
+    if t.get("priority") and t["priority"] != PRIORITY_DEFAULT:
+        node["priority"] = t["priority"]
     if t.get("paused"):
         node["paused"] = True
     if t.get("thresholds"):
@@ -536,7 +560,7 @@ def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
     if is_agent(t) or is_agent(node):
         for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent", "critical_services",
-                    "group", "paused", "thresholds", "alert"):
+                    "group", "priority", "paused", "thresholds", "alert"):
             if key in node:
                 del node[key]
         for k, v in _to_node(t).items():
@@ -545,6 +569,7 @@ def _apply(node, t):
         return
     node["host"] = t["host"]
     _set_or_drop(node, "group", t.get("group") or None)
+    _set_or_drop(node, "priority", t["priority"] if t.get("priority") and t["priority"] != PRIORITY_DEFAULT else None)
     _set_or_drop(node, "paused", True if t.get("paused") else None)
     _set_or_drop(node, "thresholds", _thresholds_node(t["thresholds"]) if t.get("thresholds") else None)
     _set_or_drop(node, "alert", _flow(t["alert"]) if t.get("alert") else None)
@@ -758,12 +783,20 @@ def public_key():
 # การทำงานหลัก (ถูกเรียกจาก api.py)
 # ------------------------------------------------------------------
 
+def _prio(t):
+    try:
+        v = int(t.get("priority") or PRIORITY_DEFAULT)
+    except (TypeError, ValueError):
+        v = PRIORITY_DEFAULT
+    return v if 1 <= v <= 5 else PRIORITY_DEFAULT
+
+
 def _view(t):
     t = _plain(t)
     if is_agent(t):
         agent = t.get("agent") or {}
         return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
-                "group": t.get("group") or "", "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
+                "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
                 "alert": t.get("alert") or {},
                 "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"],
                           "mode": "pull" if agent.get("mode") == "pull" else "push", "exporter": agent.get("exporter") or ""},
@@ -776,6 +809,7 @@ def _view(t):
         "name": t.get("name"),
         "host": t.get("host"),
         "group": t.get("group") or "",
+        "priority": _prio(t),
         "paused": bool(t.get("paused")),
         "thresholds": t.get("thresholds") or {},
         "alert": t.get("alert") or {},

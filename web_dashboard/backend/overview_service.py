@@ -97,7 +97,11 @@ def _ping(batch, name):
 
 def _server(target, sensor_states, batch):
     name = target.get("name")
-    base = {"web": name, "host": target.get("host"), "group": target.get("group") or "",
+    try:
+        prio = int(target.get("priority") or 3)
+    except (TypeError, ValueError):
+        prio = 3
+    base = {"web": name, "host": target.get("host"), "group": target.get("group") or "", "priority": prio if 1 <= prio <= 5 else 3,
             "paused": bool(target.get("paused")), "os": "linux", "kind": "ssh"}
 
     if base["paused"]:          # pause = ไม่ถาม Prometheus ไม่นับเป็นปัญหา

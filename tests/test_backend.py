@@ -55,6 +55,14 @@ class Backend(unittest.TestCase):
         self.assertEqual(t["alert"], {"minutes": 10, "bottleneck": False})
         bad = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "logs": [], "alert": {"minutes": 0}}).json
         self.assertIn("alert.minutes", bad["fields"])
+        # Priority (แบบ PRTG) 1-5 ปริยาย 3 · 3 ไม่เขียนลง puller.yaml
+        self.assertEqual(t["priority"], 3)
+        r = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "group": "TQ/IT", "logs": [], "priority": 5})
+        self.assertLess(r.status_code, 300, r.json)
+        self.assertEqual([x for x in c.get("/api/targets").json["targets"] if x["name"] == "web-01"][0]["priority"], 5)
+        self.assertIn("priority: 5", open(os.path.join(self.tmp, "puller.yaml")).read())
+        bad = c.put("/api/targets/web-01", json={"host": "10.0.0.1", "ssh": {"user": "cp"}, "logs": [], "priority": 9}).json
+        self.assertIn("priority", bad["fields"])
         self.assertEqual(c.post("/api/users", json={"username": "v1", "password": "password1", "role": "viewer"}).status_code, 201)
         self.assertEqual(self.login("v1", "password1"), 200)
         self.assertEqual(c.put("/api/targets/web-01/pause", json={"paused": True}).status_code, 403)

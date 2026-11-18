@@ -336,6 +336,12 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## มุมมองสไลด์ (ทีละเครื่อง) + Priority
+- WEB status > ▶ สไลด์: 1 เครื่องต่อหน้า เลื่อนเองทุก 10 / 15 / 30 / 60 วินาที (จำค่าไว้) · ◀ ▶ / ปุ่มลูกศรบนคีย์บอร์ด / จุดด้านล่าง (สีตามสถานะ) · ชี้เมาส์ค้างหรือเปิดหน้าต่าง log = หยุดชั่วคราว
+- ในสไลด์: สถานะ, Priority, กลุ่ม / IP, เกจ CPU / Memory / Disk, Availability 24h (คลิก -> หน้า sensor), Up/Down มานานเท่าไหร่, Down 24h, Network, Ping, Last pull, sensor ที่มีปัญหา, log 5 รายการล่าสุด (ERROR ขึ้นก่อนเสมอ แล้วค่อย WARN · คลิก = หน้าต่างรายละเอียด log) · คลิกชื่อเครื่อง = เปิดรายละเอียดเครื่อง
+- ลำดับสไลด์: Priority มาก -> น้อย, แล้วความรุนแรง, แล้วชื่อ · ใช้ตัวกรองชื่อ / OS / สถานะเดียวกับมุมมองอื่น
+- Settings > เครื่อง > ทั่วไป: Priority ★1-5 (แบบ PRTG) ปริยาย 3 · puller.yaml `targets[].priority` (3 ไม่เขียน) · `/api/overview` servers[].priority
+
 ## คอลัมน์ Availability แทน Alerts (ตาราง WEB status)
 - แสดง Uptime 24 ชม. (%) + Up / Down มานานเท่าไหร่ + จำนวนครั้งที่ down ใน 24 ชม. · สี: ≥ 99.9% เขียว, ≥ 99% เหลือง, ต่ำกว่า / down อยู่ = แดง · เรียงตามคอลัมน์ได้
 - คลิก -> หน้า sensor Availability ของเครื่อง: การ์ด สถานะตอนนี้ (มาแล้วนานเท่าไหร่, down นานสุด 30 วัน) + Uptime 24 ชม. / 7 วัน / 30 วัน (downtime + จำนวนครั้ง) + ประวัติ down

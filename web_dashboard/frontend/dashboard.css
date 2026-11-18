@@ -1548,3 +1548,35 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .mrel-msg{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,Consolas,monospace;font-size:12px}
 .sntog{margin-left:12px;font:12.5px inherit;font-family:inherit;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.7);background:rgba(255,255,255,.15);color:#fff;cursor:pointer}.sntog:hover{background:rgba(255,255,255,.3)}.sntog:disabled{opacity:.8;cursor:default}
 .dslist{display:flex;flex-direction:column;gap:4px}
+
+/* ---------- มุมมองสไลด์ (ทีละเครื่อง) ---------- */
+.prio{color:#f5b400;font-size:13px;letter-spacing:1px;white-space:nowrap}.prio i{font-style:normal;color:var(--line,#d7dce4)}
+.slw{display:flex;flex-direction:column;gap:12px;padding:12px}
+.slbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.slbar .svbtn{min-width:38px}
+.slpos{font-variant-numeric:tabular-nums;color:var(--mut);margin:0 6px}.slpos b{color:var(--text,#1f2937);font-size:16px}
+.slprog{flex:1;min-width:80px;height:4px;border-radius:2px;background:var(--chip,#eef1f5);overflow:hidden}.slprog i{display:block;height:100%;width:0;background:var(--blue,#1f7bff);transition:width .5s linear}
+.slide{border:1px solid var(--line,#e3e7ee);border-left:6px solid #0a9a60;border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:16px;background:var(--card,#fff)}
+.slide.wr{border-left-color:#f5b400}.slide.cr{border-left-color:#e5484d}.slide.ps{border-left-color:var(--blue,#1f7bff)}
+.slhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.slname{all:unset;cursor:pointer;font-size:24px;font-weight:700;margin-right:6px}.slname:hover{text-decoration:underline}
+.slsub{color:var(--mut);font-size:13px;margin-top:2px}.ovst.big{font-size:15px;padding:5px 16px}
+.slbody{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:18px;align-items:center}
+.slgs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.slg{display:flex;flex-direction:column;align-items:center;gap:0}.slg .cmg{width:100%;max-width:170px;height:auto}
+.slg b{font-size:22px;font-variant-numeric:tabular-nums;margin-top:-14px}.slg b.ok{color:#0a9a60}.slg b.wr{color:#c27c00}.slg b.cr{color:#e5484d}.slg small{color:var(--mut)}
+.slfs{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.slf{border:1px solid var(--line,#e3e7ee);border-radius:10px;padding:8px 12px}.slf small{display:block;color:var(--mut);font-size:12px}
+.slf b{font-size:17px;font-variant-numeric:tabular-nums}.slf b a{color:inherit;text-decoration:none}.slf b a:hover{text-decoration:underline}
+.slf b.ok{color:#0a9a60}.slf b.wr{color:#c27c00}.slf b.cr{color:#e5484d}
+.slprobs{display:flex;flex-wrap:wrap;gap:6px}.slprobs span{background:rgba(229,72,77,.12);color:#e5484d;border-radius:999px;padding:3px 10px;font-size:13px;font-weight:600}
+.sllogs{display:flex;flex-direction:column;gap:6px}.slh{font-weight:700}.slh small{font-weight:400;color:var(--mut);margin-left:6px}
+.sllog{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:62px 150px 90px minmax(0,1fr);gap:10px;align-items:baseline;padding:7px 10px;border-radius:8px;border:1px solid var(--line,#e3e7ee);font-size:13px}
+.sllog:hover{background:var(--chip,#f3f5f8)}.sllog .lv{font-weight:700;font-size:12px;text-align:center;border-radius:4px;padding:1px 0}
+.sllog.cr .lv{background:rgba(229,72,77,.14);color:#e5484d}.sllog.wr .lv{background:rgba(245,165,36,.18);color:#c27c00}
+.sllog time{color:var(--mut);font-variant-numeric:tabular-nums}.sllog em{font-style:normal;color:var(--mut)}
+.sllog .msg{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sllog-empty{color:var(--mut);padding:8px 0}.sllog-empty.ok{color:#0a9a60}
+.sldots{display:flex;flex-wrap:wrap;justify-content:center;gap:6px}
+.sldots button{all:unset;cursor:pointer;width:10px;height:10px;border-radius:50%;background:#a8cf38;opacity:.45}
+.sldots button.wr{background:#f5b400}.sldots button.cr{background:#e5484d}.sldots button.ps{background:var(--blue,#1f7bff)}.sldots button.on{opacity:1;transform:scale(1.35)}
+@media (max-width:900px){.slbody{grid-template-columns:1fr}.sllog{grid-template-columns:56px 1fr;}.sllog time,.sllog em{display:none}}

@@ -296,6 +296,7 @@ function openForm(t) {
     if (t && t.type === "agent") {
         $("formTitle").textContent = `Edit target: ${t.name}`;
         $("f_name").value = t.name; $("f_name").disabled = true;
+        $("f_prio").value = String(t.priority || 3);
         $("f_group").value = t.group || ""; $("f_paused").checked = !!t.paused; $("f_host").value = t.host || ""; $("f_group")._gpPaint?.();
         TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => { $(`th_${k}_${lv}`).value = t.thresholds && t.thresholds[k] ? (t.thresholds[k][lv] ?? "") : ""; }));
         clearErrors(); say("formMsg", "");
@@ -309,6 +310,7 @@ function openForm(t) {
     $("f_name").value = t ? t.name : ""; $("f_name").disabled = !!t;
     $("f_group").value = t ? (t.group || "") : ""; $("f_group")._gpPaint?.();
     $("f_paused").checked = !!(t && t.paused);
+    $("f_prio").value = String((t && t.priority) || 3);
     TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => {
         const v = t && t.thresholds && t.thresholds[k] ? t.thresholds[k][lv] : "";
         $(`th_${k}_${lv}`).value = v ?? "";
@@ -363,6 +365,7 @@ function readForm() {
             type: "agent",
             name: $("f_name").value.trim(),
             group: $("f_group").value.trim(),
+            priority: Number($("f_prio").value) || 3,
             paused: $("f_paused").checked,
             host: $("f_host").value.trim(),
             thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
@@ -385,6 +388,7 @@ function readForm() {
     return {
         name: $("f_name").value.trim(),
         group: $("f_group").value.trim(),
+        priority: Number($("f_prio").value) || 3,
         paused: $("f_paused").checked,
         thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
         alert: readAlertFields(),
