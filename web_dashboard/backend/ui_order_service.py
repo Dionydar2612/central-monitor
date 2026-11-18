@@ -31,12 +31,12 @@ def get_order():
             d = json.load(f)
     except (OSError, ValueError):
         d = {}
-    return {"machines": _clean(d.get("machines")), "groups": _clean(d.get("groups"))}
+    return {"machines": _clean(d.get("machines")), "groups": _clean(d.get("groups")), "items": _clean(d.get("items"))}
 
 
 def set_order(payload):
     payload = payload if isinstance(payload, dict) else {}
-    d = {"machines": _clean(payload.get("machines")), "groups": _clean(payload.get("groups"))}
+    d = {"machines": _clean(payload.get("machines")), "groups": _clean(payload.get("groups")), "items": _clean(payload.get("items"))}
     os.makedirs(STATE_DIR, exist_ok=True)
     with _LOCK:
         tmp = ORDER_FILE + ".tmp"

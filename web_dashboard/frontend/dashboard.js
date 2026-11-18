@@ -1117,16 +1117,43 @@ ${why}<div class="mfoot"><span>${av ? `<a class="mav ${av.cls}" href="${av.href}
 /* ---------- ลำดับที่ผู้ใช้จัดเอง (ลากวางในมุมมอง ตาราง / ไทล์ / การ์ด) ใช้ร่วมกันทุกคน: GET / PUT /api/ui-order
    S.order = {machines: [ชื่อเครื่อง...], groups: [path กลุ่ม...]}  ไม่อยู่ในรายการ = ต่อท้ายตามลำดับเดิม ---------- */
 function orderIndex(list, key) { const i = list.indexOf(key); return i < 0 ? 1e6 : i; }
+/* S.order.items = ลำดับรวม "m:<เครื่อง>" / "g:<path กลุ่ม>" (เครื่องกับกลุ่มสลับกันได้อิสระในแต่ละชั้น)
+   machines / groups = รูปแบบเดิม (ยังอ่านได้) */
+function itemIdx(key) { return orderIndex((S.order && S.order.items) || [], key); }
 function byOrder(list) {
+    if (!hasOrder()) return list;
     const ms = (S.order && S.order.machines) || [];
-    if (!ms.length) return list;
-    return list.map((w, i) => [w, i]).sort((a, b) => orderIndex(ms, a[0].web) - orderIndex(ms, b[0].web) || a[1] - b[1]).map(x => x[0]);
+    return list.map((w, i) => [w, i]).sort((a, b) => itemIdx("m:" + a[0].web) - itemIdx("m:" + b[0].web)
+        || orderIndex(ms, a[0].web) - orderIndex(ms, b[0].web) || a[1] - b[1]).map(x => x[0]);
 }
-function hasOrder() { return !!(S.order && S.order.machines && S.order.machines.length); }
+function hasOrder() { const o = S.order || {}; return !!((o.items && o.items.length) || (o.machines && o.machines.length)); }
 /* เรียงกลุ่มพี่น้อง: ลำดับที่จัดไว้ -> ชื่อ */
 function groupCmp(a, b) {
     const gs = (S.order && S.order.groups) || [];
-    return orderIndex(gs, a.path) - orderIndex(gs, b.path) || a.name.localeCompare(b.name);
+    return itemIdx("g:" + a.path) - itemIdx("g:" + b.path) || orderIndex(gs, a.path) - orderIndex(gs, b.path) || a.name.localeCompare(b.name);
+}
+/* ลูกของกลุ่ม 1 ชั้น (เครื่อง + กลุ่มย่อย) ตามลำดับที่แสดง · ไม่เคยจัด / กำลังเรียงตามคอลัมน์ = เครื่องก่อน แล้วกลุ่ม */
+function nodeEntries(n) {
+    const ms = (S.sort && S.sort.key ? sortServers(n.servers) : byOrder(n.servers)).map((w, i) => ({ k: "m:" + w.web, w, d: i }));
+    const gs = [...n.kids.values()].sort(groupCmp).map((g, i) => ({ k: "g:" + g.path, n: g, d: 100000 + i }));
+    const all = ms.concat(gs);
+    if (S.sort && S.sort.key) return all;
+    return all.sort((a, b) => itemIdx(a.k) - itemIdx(b.k) || a.d - b.d);
+}
+/* ทุกเครื่อง / กลุ่มตามลำดับที่แสดง (ลึกก่อน) -> ใช้สร้างลำดับรวมใหม่หลังลากวาง */
+function walkKeys(tree) {
+    const out = [];
+    const walk = n => nodeEntries(n).forEach(e => { out.push(e.k); if (e.n) walk(e.n); });
+    walk(tree);
+    return out;
+}
+/* เนื้อหาของ 1 ชั้น: เครื่องที่ติดกันรวมเป็นตาราง / ไทล์ / การ์ดเดียว กลุ่มคั่นระหว่างได้ */
+function nodeItems(n, cur, depth, forceOpen, root) {
+    let html = "", chunk = [];
+    const flush = () => { if (chunk.length) { html += root ? `<div class="gloose">${serversHtml(chunk, cur)}</div>` : serversHtml(chunk, cur); chunk = []; } };
+    nodeEntries(n).forEach(e => { if (e.w) chunk.push(e.w); else { flush(); html += groupHtml(e.n, cur, depth, forceOpen); } });
+    flush();
+    return html;
 }
 /* เรียง path กลุ่มทั้งเส้น (ใช้ในสไลด์ทีละกลุ่ม) "" = ไม่มีกลุ่ม อยู่ท้าย */
 function pathCmp(a, b) {
@@ -1177,56 +1204,54 @@ function needAdmin() {
 async function refreshOverview() {
     try { renderMachines(await apiGet("/api/overview")); } catch (e) { renderMachines(); }
 }
-/* เครื่อง -> วางบนเครื่อง (ก่อน / หลัง) ถ้าอยู่คนละกลุ่ม = ย้ายเข้ากลุ่มของเครื่องปลายทางด้วย */
-async function dropMachine(src, dst, after) {
-    if (!src || !dst || src === dst) return;
-    const ws = S.webs || [], a = ws.find(w => w.web === src), b = ws.find(w => w.web === dst);
-    if (!a || !b) return;
-    if ((a.group || "") !== (b.group || "")) {
-        if (needAdmin()) return;
-        try { await postJson(`/api/targets/${encodeURIComponent(src)}/group`, { group: b.group || "" }); a.group = b.group || ""; }
-        catch (e) { alert("ย้ายเข้ากลุ่มไม่สำเร็จ: " + e.message); return; }
-    }
-    const all = byOrder(ws.slice()).map(w => w.web);
-    S.order = { ...(S.order || {}), machines: moveIn(all, src, dst, after) };
-    await saveOrder(); refreshOverview();
+/* ลากวาง 1 ครั้ง: src / dst = "m:<เครื่อง>" | "g:<path>" | "g:" (ระดับบนสุด)  mode = before | after | in
+   ต่างชั้น = ย้ายเครื่องเข้ากลุ่ม / ย้ายกลุ่ม (admin) แล้วจัดลำดับรวมใหม่ (S.order.items) */
+function levelOfKey(k) {
+    if (k.startsWith("m:")) { const w = (S.webs || []).find(x => x.web === k.slice(2)); return w ? (w.group || "") : ""; }
+    return parentOf(k.slice(2));
 }
-/* เครื่อง -> วางบนหัวกลุ่ม = ย้ายเข้ากลุ่มนั้น (ต่อท้าย) · "" = ไม่มีกลุ่ม */
-async function dropMachineInto(src, group) {
-    const a = (S.webs || []).find(w => w.web === src);
-    if (!a || (a.group || "") === group) return;
-    if (needAdmin()) return;
-    try { await postJson(`/api/targets/${encodeURIComponent(src)}/group`, { group }); a.group = group; }
-    catch (e) { alert("ย้ายเข้ากลุ่มไม่สำเร็จ: " + e.message); return; }
-    const all = byOrder((S.webs || []).slice()).map(w => w.web).filter(x => x !== src);
-    const last = byOrder((S.webs || []).filter(w => (w.group || "") === group && w.web !== src)).map(w => w.web).pop();
-    const i = last ? all.indexOf(last) + 1 : all.length;
-    all.splice(i, 0, src);
-    S.order = { ...(S.order || {}), machines: all };
-    await saveOrder(); refreshOverview();
-}
-/* กลุ่ม -> วางบนหัวกลุ่ม: mode "in" = เข้าไปเป็นกลุ่มย่อย · "before" / "after" = อยู่ชั้นเดียวกับปลายทาง (ย้ายชั้นได้) */
-async function dropGroup(src, dst, mode) {
-    if (src == null || dst == null || src === dst || !src) return;
-    const parent = mode === "in" ? dst : parentOf(dst);
-    if (parent === src || parent.startsWith(src + "/")) { alert("ย้ายกลุ่มเข้าไปในตัวเอง / กลุ่มย่อยของตัวเองไม่ได้"); return; }
-    const leaf = src.split("/").pop(), nw = parent ? `${parent}/${leaf}` : leaf;
-    let groups = ((S.order && S.order.groups) || []).slice();
-    if (nw !== src) {
-        if (needAdmin()) return;
-        try { await postJson("/api/groups/move", { from: src, parent }); }
-        catch (e) { alert("ย้ายกลุ่มไม่สำเร็จ: " + e.message); return; }
-        (S.webs || []).forEach(w => { w.group = regroupPath(w.group, src, nw); });
-        groups = groups.map(g => regroupPath(g, src, nw));
-        [...S.closed].forEach(g => { const n = regroupPath(g, src, nw); if (n !== g) { S.closed.delete(g); S.closed.add(n); } });
-    }
-    if (mode !== "in" && dst) {
-        const paths = new Set(groups);
-        (S.webs || []).forEach(w => String(w.group || "").split("/").filter(Boolean).forEach((_, i, a) => paths.add(a.slice(0, i + 1).join("/"))));
-        S.order = { ...(S.order || {}), groups: moveIn([...paths].sort(pathCmp), nw, dst, mode === "after") };
+async function dropItem(src, dst, mode) {
+    if (!src || dst == null || src === dst) return;
+    const parent = mode === "in" ? dst.slice(2) : levelOfKey(dst);
+    let items = walkKeys(buildTree(S.webs || [], [])), key = src;
+    if (src.startsWith("m:")) {
+        const w = (S.webs || []).find(x => x.web === src.slice(2));
+        if (!w) return;
+        if ((w.group || "") !== parent) {
+            if (needAdmin()) return;
+            try { await postJson(`/api/targets/${encodeURIComponent(w.web)}/group`, { group: parent }); w.group = parent; }
+            catch (e) { alert("ย้ายเข้ากลุ่มไม่สำเร็จ: " + e.message); return; }
+        }
     } else {
-        S.order = { ...(S.order || {}), groups };
+        const g = src.slice(2);
+        if (parent === g || parent.startsWith(g + "/")) { alert("ย้ายกลุ่มเข้าไปในตัวเอง / กลุ่มย่อยของตัวเองไม่ได้"); return; }
+        const nw = parent ? `${parent}/${g.split("/").pop()}` : g.split("/").pop();
+        if (nw !== g) {
+            if (needAdmin()) return;
+            try { await postJson("/api/groups/move", { from: g, parent }); }
+            catch (e) { alert("ย้ายกลุ่มไม่สำเร็จ: " + e.message); return; }
+            (S.webs || []).forEach(w => { w.group = regroupPath(w.group, g, nw); });
+            items = items.map(k => k.startsWith("g:") ? "g:" + regroupPath(k.slice(2), g, nw) : k);
+            [...S.closed].forEach(x => { const n = regroupPath(x, g, nw); if (n !== x) { S.closed.delete(x); S.closed.add(n); } });
+            key = "g:" + nw;
+        }
     }
+    /* ลำดับรวมหลังย้ายชั้น แล้วเลื่อน src ไปไว้ก่อน / หลัง dst (in = ต้นกลุ่มสำหรับระดับบนสุด, ท้ายกลุ่มสำหรับกลุ่มอื่น) */
+    const fresh = walkKeys(buildTree(S.webs || [], []));
+    const order = items.filter(k => fresh.includes(k)).concat(fresh.filter(k => !items.includes(k)));
+    let out = order.filter(k => k !== key);
+    if (mode === "in") {
+        if (!parent) out.unshift(key);
+        else {
+            const kids = out.filter(k => levelOfKey(k) === parent || (k.startsWith("g:") && k.slice(2).startsWith(parent + "/")));
+            const last = kids.length ? out.indexOf(kids[kids.length - 1]) : out.indexOf("g:" + parent);
+            out.splice(last + 1, 0, key);
+        }
+    } else {
+        const i = out.indexOf(dst);
+        out.splice(i < 0 ? out.length : (mode === "after" ? i + 1 : i), 0, key);
+    }
+    S.order = { ...(S.order || {}), items: out };
     await saveOrder(); refreshOverview();
 }
 
@@ -1247,7 +1272,10 @@ function slideUnits() {
     if (SL.mode === "machine") return slideList().map(w => ({ key: "m:" + w.web, kind: "machine", w, state: w.state, label: w.web }));
     const f = (S.ovq || "").trim().toLowerCase(), by = new Map();
     byOrder((S.webs || []).filter(w => matchesFilter(w, f))).forEach(w => { const g = w.group || ""; if (!by.has(g)) by.set(g, []); by.get(g).push(w); });
-    return [...by.keys()].sort(pathCmp).map(p => ({ key: "g:" + p, kind: "group", path: p, list: by.get(p), state: worstState(by.get(p)), label: p || "ไม่มีกลุ่ม" }));
+    /* ลำดับกลุ่มเหมือนในตาราง (ลากจัดไว้) · "ไม่มีกลุ่ม" อยู่ตรงตำแหน่งเครื่องแรกที่ไม่มีกลุ่ม */
+    const keys = walkKeys(buildTree((S.webs || []).filter(w => matchesFilter(w, f)), []));
+    const pos = p => p ? keys.indexOf("g:" + p) : Math.min(...by.get("").map(w => keys.indexOf("m:" + w.web)));
+    return [...by.keys()].sort((a, b) => pos(a) - pos(b)).map(p => ({ key: "g:" + p, kind: "group", path: p, list: by.get(p), state: worstState(by.get(p)), label: p || "ไม่มีกลุ่ม" }));
 }
 async function slideLogs(web) {
     const c = SL.logs[web];
@@ -1459,7 +1487,7 @@ function serversHtml(list, cur) {
 function groupHtml(n, cur, depth, forceOpen) {
     const open = forceOpen || !S.closed.has(n.path);
     const body = !open ? "" :
-        `<div class="gbody">${serversHtml(n.servers, cur)}${n.checks.length ? checkTables(n.checks) : ""}${[...n.kids.values()].sort(groupCmp).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
+        `<div class="gbody">${nodeItems(n, cur, depth + 1, forceOpen)}${n.checks.length ? checkTables(n.checks) : ""}</div>`;
     const items = n.servers.length + n.checks.length;
     return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
 }
@@ -1567,7 +1595,8 @@ function renderMachines(ov) {
     }
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
-        : (tops.length || loose) ? loose + tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
+        : (tops.length || loose) ? nodeItems(tree, cur, 0, !!f, true) + (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "")
+        : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
     if (S.arrange) {
         q("#mach").insertAdjacentHTML("afterbegin", `<div class="ghead droproot" data-group="" role="button">⤒ ระดับบนสุด / ไม่มีกลุ่ม <small>ลากเครื่อง / กลุ่มมาวางที่นี่ · ลากกลุ่มไปกลางหัวกลุ่มอื่น = เป็นกลุ่มย่อย</small></div>`);
         q("#mach").querySelectorAll("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]:not(.droproot)").forEach(n => { n.draggable = true; });
@@ -2761,9 +2790,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const zone = (e, el) => {
         const r = el.getBoundingClientRect();
         if (el.hasAttribute("data-group")) {
-            if (!S.dragging || S.dragging.kind === "web" || el.dataset.group === "") return "in";
+            if (el.dataset.group === "") return "in";
             const f = (e.clientY - r.top) / r.height;
-            return f < 0.3 ? "before" : f > 0.7 ? "after" : "in";
+            if (f < 0.3) return "before";
+            return S.dragging && S.dragging.kind === "group" && f > 0.7 ? "after" : "in";
         }
         return (el.matches(".mtile, .mcard") ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2) ? "after" : "before";
     };
@@ -2776,7 +2806,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     q("#mach").addEventListener("dragover", e => {
         const el = S.dragging && dragEl(e); if (!el) return;
-        if (S.dragging.kind === "group" && el.dataset.web) return;                 /* กลุ่มวางบนหัวกลุ่มเท่านั้น */
         e.preventDefault(); clearDrop();
         const z = zone(e, el);
         el.classList.add(z === "in" ? "dropin" : z === "after" ? "dropa" : "dropb");
@@ -2786,9 +2815,8 @@ document.addEventListener("DOMContentLoaded", () => {
         e.preventDefault(); clearDrop();
         const z = zone(e, el);
         S.dragging = null;
-        if (d.kind === "web" && el.dataset.web) dropMachine(d.id, el.dataset.web, z === "after");
-        else if (d.kind === "web") dropMachineInto(d.id, el.dataset.group || "");
-        else if (el.hasAttribute("data-group")) dropGroup(d.id, el.dataset.group, el.dataset.group === "" ? "in" : z);
+        const src = (d.kind === "web" ? "m:" : "g:") + d.id, dst = el.dataset.web ? "m:" + el.dataset.web : "g:" + (el.dataset.group || "");
+        dropItem(src, dst, z);
     });
     q("#mach").addEventListener("dragend", () => {
         clearDrop(); q("#mach").querySelectorAll(".dragsrc").forEach(n => n.classList.remove("dragsrc"));
@@ -2798,7 +2826,7 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ovArrange").addEventListener("click", () => { S.arrange = !S.arrange; renderMachines(); });
     q("#ovOrderReset").addEventListener("click", async () => {
         if (!confirm("ล้างลำดับที่จัดไว้ กลับเป็นลำดับปกติ?")) return;
-        S.order = { machines: [], groups: [] }; await saveOrder(); renderMachines();
+        S.order = { machines: [], groups: [], items: [] }; await saveOrder(); renderMachines();
     });
     q("#mach").addEventListener("change", e => {
         if (e.target.id === "slSec") { SL.sec = Number(e.target.value) || 15; SL.at = Date.now(); slSave(); }

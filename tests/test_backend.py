@@ -327,9 +327,9 @@ class Backend(unittest.TestCase):
         """ลำดับเครื่อง / กลุ่มที่ลากจัด: viewer อ่านได้ แก้ไม่ได้ · operator แก้ได้ · ค่าซ้ำ / ว่างถูกตัด"""
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)
-        r = c.put("/api/ui-order", json={"machines": ["b", "a", "b", ""], "groups": ["G/x", "G"]})
+        r = c.put("/api/ui-order", json={"machines": ["b", "a", "b", ""], "groups": ["G/x", "G"], "items": ["g:G", "m:a", "m:a"]})
         self.assertEqual(r.status_code, 200, r.json)
-        self.assertEqual(c.get("/api/ui-order").json, {"machines": ["b", "a"], "groups": ["G/x", "G"]})
+        self.assertEqual(c.get("/api/ui-order").json, {"machines": ["b", "a"], "groups": ["G/x", "G"], "items": ["g:G", "m:a"]})
         c.post("/api/users", json={"username": "vord", "password": "password1", "role": "viewer"})
         self.assertEqual(self.login("vord", "password1"), 200)
         self.assertEqual(c.get("/api/ui-order").status_code, 200)
