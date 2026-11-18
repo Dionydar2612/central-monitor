@@ -17,6 +17,7 @@ system_info.py - เก็บ "สถานะของเครื่อง" �
                         กิน CPU ของ core นั้นเท่าไหร่ (ณ วินาทีที่เก็บ ไม่ใช่ค่าเฉลี่ยตลอดอายุแบบ ps)
     services      <- systemctl list-units --type=service --all
     system_events <- journalctl 15 นาทีล่าสุด ระดับ warning ขึ้นไป
+    netsec        <- netsec.py: route / พอร์ตที่เปิดรับ / การเชื่อมต่อขาเข้า-ขาออก / firewall (ufw ...) / ssh login
                      (แต่ละรายการมี type จาก classify_event, timestamp จากต้นบรรทัด, message)
 
 ไฟล์ที่เขียน (ใต้ data/state/system/)
@@ -39,6 +40,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from config import SYSTEM_DIR, parse_interval
+import netsec
 from ssh_client import run_ssh
 
 # รูปแบบเวลาในชื่อไฟล์ history -- web_dashboard/backend/system_state.py ใช้รูปแบบเดียวกัน
@@ -569,6 +571,7 @@ def collect_web_system_info(config, target):
         "processes": _collect_processes(target),
         "cpu_cores": _collect_cpu_cores(target),
         "system_events": _collect_events(target),
+        "netsec": netsec.collect(target, run_ssh),         # Network & Security (หน้า /network)
     }
 
     # เข้าเครื่องไม่ได้ (ทุกหมวดว่าง) -> ไม่เขียนทับ snapshot เดิมและไม่ลง history

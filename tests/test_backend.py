@@ -272,6 +272,39 @@ class Backend(unittest.TestCase):
         for w in d["webs"].values():                                         # แยกรายเครื่อง
             self.assertEqual(set(w), {"cpu", "memory", "disk", "traffic", "alarms"})
 
+    def test_netsec(self):
+        """Network & Security: ใครต่อหาใคร (จับคู่ IP กับเครื่อง) + ผลตรวจ firewall / login"""
+        import json as _j, netsec_service, system_state
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        for n, h in (("ns-a", "10.9.0.1"), ("ns-b", "10.9.0.2")):
+            c.post("/api/targets", json={"name": n, "host": h, "ssh": {"user": "cp"}, "logs": []})
+        os.makedirs(system_state.SYSTEM_DIR, exist_ok=True)
+        snap = lambda conns, fw, failed: {"timestamp": "2026-11-18T01:00:00+00:00", "netsec": {
+            "addrs": [], "routes": [{"dest": "0.0.0.0/0", "gw": "10.9.0.254", "if": "eth0", "metric": ""}],
+            "listening": [{"proto": "tcp", "address": "0.0.0.0", "port": 3389, "process": "", "local_only": False}],
+            "connections": conns, "firewall": fw, "logins": {"source": "x", "failed": failed, "failed_by": [], "recent_ok": []}}}
+        with open(os.path.join(system_state.SYSTEM_DIR, "ns-a.json"), "w") as f:
+            _j.dump(snap([{"dir": "out", "peer": "10.9.0.2", "port": 5432, "proc": "app", "count": 3},
+                          {"dir": "in", "peer": "8.8.4.4", "port": 22, "proc": "sshd", "count": 1}],
+                         {"tool": "ufw", "status": "inactive", "defaults": {}, "rules": []}, 150), f)
+        with open(os.path.join(system_state.SYSTEM_DIR, "ns-b.json"), "w") as f:
+            _j.dump(snap([{"dir": "in", "peer": "10.9.0.1", "port": 5432, "proc": "postgres", "count": 3}],
+                         {"tool": "ufw", "status": "active", "defaults": {"in": "deny", "out": "allow"}, "rules": []}, 0), f)
+        netsec_service._CACHE["data"] = None
+        d = c.get("/api/netsec").json
+        e = [x for x in d["edges"] if x["from"] == "ns-a" and x["to"] == "ns-b"]
+        self.assertEqual(len(e), 1)                                          # เห็นจาก 2 ฝั่ง = เส้นเดียว
+        self.assertEqual((e[0]["port"], e[0]["count"], e[0]["both_sides"]), (5432, 3, True))
+        self.assertTrue(any(x["peer"] == "8.8.4.4" and x["public"] for x in d["external"]))
+        self.assertGreaterEqual(d["totals"]["fw_off"], 1)
+        m = c.get("/api/netsec/ns-a").json
+        ck = {x["key"]: x["status"] for x in m["checks"]}
+        self.assertEqual((ck["firewall"], ck["failed_logins"], ck["open_ports"], ck["public_inbound"]), ("error", "error", "warning", "warning"))
+        self.assertEqual(m["connections"][0]["peer_web"], "ns-b")
+        self.assertEqual(c.get("/api/netsec/nope").status_code, 404)
+        self.assertEqual(c.post("/api/netsec/ns-a/refresh").status_code, 200)
+
     def test_availability(self):
         """คอลัมน์ Availability (แทน Alerts): uptime 24h / 7d / 30d จากช่วง down ของ sensor availability"""
         import json as _j, time as _t, sensors_service

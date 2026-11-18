@@ -1,0 +1,231 @@
+"""
+netsec_service.py - หน้า Network & Security (/network)
+======================================================
+ต่อเครื่อง (GET /api/netsec/<เครื่อง>):
+    การเชื่อมต่อขาเข้า / ขาออก (ใครต่อหาใคร), พอร์ตที่เปิดรับ, route, firewall (สถานะ / ค่าเริ่มต้น / กฎ), login (สำเร็จ / ไม่สำเร็จ)
+    + ผลตรวจความปลอดภัยพื้นฐาน (checks) เช่น firewall เปิดไหม, ขาเข้าปริยายเป็น deny ไหม, login ไม่สำเร็จเยอะผิดปกติไหม
+ภาพรวม (GET /api/netsec):
+    ทุกเครื่อง: สรุปต่อเครื่อง + เส้นเชื่อมระหว่างเครื่องที่ monitor (จับคู่ IP ปลายทางกับ host / IP ของเครื่อง) + ปลายทางภายนอก
+
+ที่มาของข้อมูล
+    Linux   puller/netsec.py ผ่าน SSH ทุกรอบสถานะ (scheduler.interval) -> data/state/system/<เครื่อง>.json "netsec"
+            (กด "ดึงใหม่" ในหน้าเว็บ = สั่ง puller ดึงเครื่องนั้นทันที)
+    Windows agent/windows/cm-netsec.ps1 ทุก 5 นาที -> textfile ของ windows_exporter -> Prometheus (cm_net_conn, cm_fw_* ...)
+อ่านอย่างเดียว ไม่แก้ firewall / route บนเครื่อง
+"""
+
+import ipaddress
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import agent_service
+from clients import prom_vector
+from settings import load_web_targets
+from system_state import SYSTEM_DIR, _load_json
+
+FAILED_LOGIN_WARN = 20          # login ไม่สำเร็จใน 24 ชม. >= ค่านี้ = เตือน
+FAILED_LOGIN_ERROR = 100
+_CACHE = {"at": 0, "data": None}
+CACHE_TTL = 20
+
+
+def _private(ip):
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
+
+
+# ------------------------------------------------------------------ Windows (Prometheus textfile)
+
+def _win(web):
+    q = lambda m: prom_vector(f'{m}{{cm_web="{web}"}}')
+    conns = [{"dir": l.get("dir"), "peer": l.get("peer"), "port": _int(l.get("port")), "proc": l.get("proc") or "", "count": int(v)}
+             for l, v in q("cm_net_conn")]
+    listening = [{"proto": "tcp", "address": l.get("address") or "*", "port": _int(l.get("port")), "process": l.get("process") or "",
+                  "local_only": str(l.get("address") or "").startswith("127.") or l.get("address") == "::1"}
+                 for l, v in q("cm_port_listening")]
+    seen, ls = set(), []
+    for x in sorted(listening, key=lambda x: (x["port"] or 0)):
+        k = (x["port"], x["address"])
+        if k not in seen:
+            seen.add(k)
+            ls.append(x)
+    routes = [{"dest": l.get("dest"), "gw": l.get("gw") if l.get("gw") not in ("0.0.0.0",) else "", "if": l.get("if"), "metric": l.get("metric")}
+              for l, v in q("cm_net_route")]
+    routes.sort(key=lambda r: (r["dest"] != "0.0.0.0/0", r["dest"] or ""))
+    addrs = [{"ip": l.get("ip"), "prefix": int(v), "if": l.get("if")} for l, v in q("cm_net_addr")]
+    svc = q("cm_fw_service")
+    profiles = [{"profile": l.get("profile"), "enabled": l.get("enabled") == "1", "in": (l.get("inbound") or "").lower(),
+                 "out": (l.get("outbound") or "").lower()} for l, v in q("cm_fw_profile")]
+    rules = [{"to": f'{l.get("port") or "Any"}/{l.get("proto") or "Any"}', "action": (l.get("action") or "").upper(),
+              "dir": l.get("dir"), "from": l.get("remote") or "Any", "comment": l.get("name") or "",
+              "program": l.get("program") or "", "custom": v == 1} for l, v in q("cm_fw_rule")]
+    running = bool(svc) and svc[0][1] == 1
+    on = [p for p in profiles if p["enabled"]]
+    fw = None
+    if svc or profiles:
+        fw = {"tool": "windows", "status": "active" if running and on else "inactive", "profiles": profiles,
+              "defaults": {"in": on[0]["in"] if on else "", "out": on[0]["out"] if on else ""},
+              "rules": sorted(rules, key=lambda r: (r["action"] != "BLOCK", not r["custom"], r["comment"])),
+              "note": "" if running else "service Windows Firewall (MpsSvc) ไม่ได้ทำงาน -> ไม่มีการกั้นใด ๆ"}
+    failed = prom_vector(f'cm_login_failed_24h{{cm_web="{web}"}}')
+    logins = None
+    if failed:
+        logins = {"source": "Security log 24h", "failed": int(failed[0][1]), "invalid_users": None, "success": None,
+                  "failed_by": sorted([{"ip": l.get("ip") or "-", "user": l.get("user") or "", "count": int(v)} for l, v in q("cm_login_failed_by")],
+                                      key=lambda x: -x["count"]),
+                  "recent_ok": sorted([{"time": v, "user": l.get("user"), "ip": l.get("ip"), "type": l.get("type")} for l, v in q("cm_login_ok")],
+                                      key=lambda x: -x["time"])}
+    has = conns or routes or fw or logins
+    return {"addrs": addrs, "routes": routes, "listening": ls, "connections": sorted(conns, key=lambda c: -c["count"]),
+            "firewall": fw, "logins": logins, "source": "windows", "available": bool(has),
+            "note": "" if has else "ยังไม่มีข้อมูลจากเครื่องนี้ · ติดตั้ง agent ใหม่จาก zip ชุดล่าสุด (มี cm-netsec.ps1) แล้วรอ ~5 นาที"}
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ------------------------------------------------------------------ Linux (snapshot ของ puller)
+
+def _linux(web):
+    raw = _load_json(os.path.join(SYSTEM_DIR, f"{web}.json"))
+    n = raw.get("netsec") or {}
+    out = {"addrs": n.get("addrs") or [], "routes": n.get("routes") or [], "listening": n.get("listening") or [],
+           "connections": n.get("connections") or [], "firewall": n.get("firewall"), "logins": n.get("logins"),
+           "source": "ssh", "collected_at": raw.get("timestamp"), "available": bool(n)}
+    if not n:
+        out["note"] = "ยังไม่มีข้อมูล · puller เก็บทุกรอบสถานะ (scheduler.interval) หรือกด ดึงใหม่"
+    return out
+
+
+# ------------------------------------------------------------------ ผลตรวจ
+
+def _checks(d, target):
+    out = []
+    fw = d.get("firewall")
+
+    def add(key, status, title, detail=""):
+        out.append({"key": key, "status": status, "title": title, "detail": detail})
+    if not fw:
+        add("firewall", "unknown", "Firewall", "อ่านสถานะไม่ได้")
+    else:
+        st = fw.get("status")
+        add("firewall", "ok" if st == "active" else "error" if st == "inactive" else "unknown",
+            f"Firewall ({fw.get('tool') or '-'})", {"active": "เปิดอยู่", "inactive": "ปิดอยู่"}.get(st, "ไม่ทราบ") + (f" · {fw['note']}" if fw.get("note") else ""))
+        din = (fw.get("defaults") or {}).get("in")
+        if din:
+            add("default_in", "ok" if din in ("deny", "reject", "block", "drop") else "warning", "ขาเข้าปริยาย",
+                f"{din} (ควรเป็น deny แล้วเปิดเฉพาะพอร์ตที่ใช้)")
+    lg = d.get("logins") or {}
+    if lg.get("failed") is not None:
+        f = lg["failed"]
+        add("failed_logins", "error" if f >= FAILED_LOGIN_ERROR else "warning" if f >= FAILED_LOGIN_WARN else "ok",
+            "Login ไม่สำเร็จ", f"{f} ครั้ง ({lg.get('source')})"
+            + (f" · มากสุดจาก {lg['failed_by'][0]['ip']} ({lg['failed_by'][0]['count']})" if lg.get("failed_by") else ""))
+    pub = [x for x in d.get("listening") or [] if not x.get("local_only")]
+    risky = [x for x in pub if x.get("port") in (21, 23, 445, 3389, 3306, 5432, 6379, 9200, 27017, 11211)]
+    if pub:
+        add("open_ports", "warning" if risky else "ok", "พอร์ตที่เปิดรับจากภายนอก",
+            f"{len(pub)} พอร์ต" + (f" · ควรจำกัดต้นทาง: {', '.join(str(x['port']) for x in risky[:8])}" if risky else ""))
+    ext_in = [c for c in d.get("connections") or [] if c.get("dir") == "in" and c.get("peer") and not _private(c["peer"])]
+    if ext_in:
+        add("public_inbound", "warning", "มี IP สาธารณะต่อเข้ามา",
+            ", ".join(sorted({c['peer'] for c in ext_in})[:6]) + (" ..." if len({c['peer'] for c in ext_in}) > 6 else ""))
+    return out
+
+
+def get_machine(web):
+    target = next((t for t in load_web_targets() if t.get("name") == web), None)
+    if target is None:
+        return None
+    win = agent_service.is_agent(target)
+    d = _win(web) if win else _linux(web)
+    d.update(web=web, os="windows" if win else "linux", host=target.get("host"), group=target.get("group") or "")
+    names = _ip_index(load_web_targets())
+    for c in d["connections"]:
+        c["peer_web"] = names.get(c.get("peer"))
+        c["external"] = bool(c.get("peer")) and not _private(c["peer"])
+    d["checks"] = _checks(d, target)
+    d["summary"] = _summary(d)
+    return d
+
+
+def _summary(d):
+    c = d.get("connections") or []
+    fw = d.get("firewall") or {}
+    lg = d.get("logins") or {}
+    return {"in": sum(x["count"] for x in c if x.get("dir") == "in"), "out": sum(x["count"] for x in c if x.get("dir") == "out"),
+            "peers_in": len({x["peer"] for x in c if x.get("dir") == "in"}), "peers_out": len({x["peer"] for x in c if x.get("dir") == "out"}),
+            "listening": len([x for x in d.get("listening") or [] if not x.get("local_only")]),
+            "firewall": fw.get("status") or "unknown", "fw_tool": fw.get("tool") or "", "default_in": (fw.get("defaults") or {}).get("in") or "",
+            "failed_logins": lg.get("failed"), "routes": len(d.get("routes") or []),
+            "worst": max((x["status"] for x in d.get("checks") or []), key=lambda s: {"ok": 0, "unknown": 1, "warning": 2, "error": 3}.get(s, 0), default="unknown")}
+
+
+def _ip_index(targets, snaps=None):
+    """IP -> ชื่อเครื่อง (host ใน puller.yaml + IPv4 ที่เก็บได้จากเครื่อง)"""
+    idx = {}
+    for t in targets:
+        if t.get("host"):
+            idx[str(t["host"])] = t["name"]
+    for name, d in (snaps or {}).items():
+        for a in d.get("addrs") or []:
+            if a.get("ip"):
+                idx.setdefault(a["ip"], name)
+    return idx
+
+
+def get_overview():
+    """ทุกเครื่อง: สรุป + เส้น ใครต่อหาใคร (เครื่องที่ monitor) + ปลายทางภายนอกที่ต่อบ่อย"""
+    now = time.time()
+    if _CACHE["data"] is not None and now - _CACHE["at"] < CACHE_TTL:
+        return _CACHE["data"]
+    targets = [t for t in load_web_targets() if t.get("name") and not t.get("paused")]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        snaps = dict(zip([t["name"] for t in targets],
+                         pool.map(lambda t: _win(t["name"]) if agent_service.is_agent(t) else _linux(t["name"]), targets)))
+    idx = _ip_index(targets, snaps)
+    edges, ext = {}, {}
+    machines = []
+    for t in targets:
+        name, d = t["name"], snaps[t["name"]]
+        d.update(web=name, os="windows" if agent_service.is_agent(t) else "linux")
+        d["checks"] = _checks(d, t)
+        machines.append({"web": name, "os": d["os"], "host": t.get("host"), "group": t.get("group") or "",
+                         "available": d.get("available"), **_summary(d)})
+        for c in d.get("connections") or []:
+            peer = idx.get(c.get("peer"))
+            if peer == name:
+                continue
+            if peer:
+                # in บนเครื่องนี้ = peer ต่อเข้ามา (peer -> name) · out = name -> peer  (พอร์ต = พอร์ตบริการของปลายทาง)
+                src, dst = (peer, name) if c["dir"] == "in" else (name, peer)
+                e = edges.setdefault((src, dst, c.get("port")), {"from": src, "to": dst, "port": c.get("port"), "by": {}, "procs": set()})
+                e["by"][name] = e["by"].get(name, 0) + c["count"]
+                if c.get("proc"):
+                    e["procs"].add(c["proc"])
+            else:
+                k = (name, c["dir"], c.get("peer"), c.get("port"))
+                x = ext.setdefault(k, {"web": name, "dir": c["dir"], "peer": c.get("peer"), "port": c.get("port"), "count": 0,
+                                       "public": not _private(c.get("peer") or ""), "procs": set()})
+                x["count"] += c["count"]
+                if c.get("proc"):
+                    x["procs"].add(c["proc"])
+    # เส้นเดียวกันที่เห็นจากทั้ง 2 ฝั่ง (A out -> B และ B in <- A) = นับครั้งเดียว (ค่ามากสุดของ 2 ฝั่ง)
+    out_edges = [{"from": e["from"], "to": e["to"], "port": e["port"], "count": max(e["by"].values()),
+                  "procs": sorted(e["procs"])[:5], "both_sides": len(e["by"]) > 1} for e in edges.values()]
+    externals = sorted(({**x, "procs": sorted(x["procs"])[:5]} for x in ext.values()), key=lambda x: (-x["public"], -x["count"]))[:300]
+    data = {"time": now, "machines": machines, "edges": sorted(out_edges, key=lambda e: -e["count"]), "external": externals,
+            "totals": {"machines": len(machines), "fw_off": sum(1 for m in machines if m["firewall"] == "inactive"),
+                       "fw_unknown": sum(1 for m in machines if m["firewall"] == "unknown"),
+                       "failed_logins": sum(m["failed_logins"] or 0 for m in machines),
+                       "conn_in": sum(m["in"] for m in machines), "conn_out": sum(m["out"] for m in machines),
+                       "public_peers": len({x["peer"] for x in externals if x["public"]})}}
+    _CACHE.update(at=now, data=data)
+    return data

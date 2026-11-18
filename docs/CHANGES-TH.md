@@ -336,6 +336,17 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## หน้า Network & Security (/network)
+- ปุ่ม "Network & Security" ที่หัวหน้า Dashboard / Status & Logs
+- ไทล์: จำนวนเครื่อง, Firewall ปิด, Login ไม่สำเร็จ 24h, การเชื่อมต่อขาเข้า / ขาออก, IP สาธารณะที่คุยกับเครื่องเรา
+- แผนผังการเชื่อมต่อ (ใครต่อหาใคร): วงกลม = เครื่องที่ monitor (สีตามผลตรวจ) · ลูกศร A → B = A ต่อเข้าพอร์ตของ B (ป้าย = พอร์ต) · Internet (IP สาธารณะ) / LAN อื่น (IP ภายในที่ไม่ได้ monitor) · คลิกเครื่อง = ไฮไลต์เส้นของเครื่องนั้น + รายละเอียด
+- ตารางทุกเครื่อง: ผลตรวจ, Firewall, ขาเข้าปริยาย, พอร์ตเปิดรับ, ขาเข้า / ขาออก, Login ไม่สำเร็จ, Traffic, Ping / loss, Availability · ตารางปลายทางภายนอก
+- เครื่องเดียว: ผลตรวจ (firewall เปิดไหม, ขาเข้าปริยาย deny ไหม, login ไม่สำเร็จ ≥ 20 / ≥ 100 ใน 24 ชม., พอร์ตเสี่ยงที่เปิดรับจากเครือข่าย, IP สาธารณะต่อเข้ามา) · การเชื่อมต่อขาเข้า / ขาออก (IP, พอร์ต, โปรแกรม, ชื่อเครื่องถ้าเป็นเครื่องที่ monitor) · Firewall (สถานะ / ค่าปริยาย / กฎ) · Route · พอร์ตที่เปิดรับ · Login (ไม่สำเร็จแยกต้นทาง / เข้าสำเร็จล่าสุด)
+- Linux: `puller/netsec.py` ผ่าน SSH ทุกรอบสถานะ (ip addr / ip route / ss / ufw / firewalld / iptables / journalctl sshd หรือ auth.log) · ปุ่ม "ดึงใหม่" (operator) · `ufw status` ต้อง root: ถ้าไม่ได้ตั้ง sudo -n จะได้แค่ เปิด/ปิด + ค่าปริยายจาก /etc/ufw/ufw.conf, /etc/default/ufw · ให้เห็นกฎ: sudoers `<user> ALL=(root) NOPASSWD: /usr/sbin/ufw status *` · log ของ sshd: user อยู่กลุ่ม adm / systemd-journal
+- Windows: `agent/windows/cm-netsec.ps1` (scheduled task CentralMonitorNetSec ทุก 5 นาที ทั้ง push / pull) -> textfile: cm_net_conn, cm_net_addr, cm_net_route, cm_fw_service, cm_fw_profile, cm_fw_rule, cm_login_failed_24h, cm_login_failed_by, cm_login_ok · ต้องติดตั้ง agent ใหม่จาก zip ชุดล่าสุด
+- ข้อจำกัด: เป็นภาพ ณ เวลาที่เก็บจากตัวเครื่อง (การเชื่อมต่อที่ค้างอยู่) ไม่ใช่ flow ทุก packet จาก switch / router · อ่านอย่างเดียว ไม่แก้ firewall / route
+- API: `GET /api/netsec`, `GET /api/netsec/<เครื่อง>`, `POST /api/netsec/<เครื่อง>/refresh` (operator)
+
 ## Priority / เวลาแจ้งเฉพาะ sensor
 - ตั้งได้ 2 ที่: หน้า sensor (กล่อง "ตั้งค่า sensor นี้", operator ขึ้นไป) และ Settings > เครื่อง > การแจ้งเตือน > "Priority / เวลาแจ้งเฉพาะ sensor"
 - puller.yaml `targets[].alert.sensors: {"<sensor>": {priority: 1-5, minutes: N}}` ชื่อ sensor แบบเดียวกับ disabled_sensors (`cpu`, `disk:C:`, `service:Spooler`, ชนิด หรือ `xxx*`) · ไม่ตั้ง priority = Priority ของเครื่อง · ไม่ตั้ง minutes = ค่าของเครื่อง / ทั้งระบบ

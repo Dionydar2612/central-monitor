@@ -26,6 +26,7 @@ import fingerprint        # noqa: E402
 import system_info        # noqa: E402
 import web_checks         # noqa: E402
 import notify             # noqa: E402
+import netsec             # noqa: E402
 
 
 class SensorGrade(unittest.TestCase):
@@ -430,6 +431,77 @@ class AgentPullLogs(unittest.TestCase):
                            {"name": "win-push", "type": "agent", "agent": {"mode": "push"}}]}
         s.run_once(cfg, {}, snapshot=False)
         self.assertEqual(sorted(got), [("pull", "win-p"), ("ssh", "lin")])
+
+
+class NetSec(unittest.TestCase):
+    """Network & Security (Linux ผ่าน SSH): route / พอร์ต / ขาเข้า-ขาออก / ufw / ssh login"""
+    OUT = """@@ADDR
+2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0
+@@ROUTE
+default via 10.0.0.1 dev eth0 proto static metric 100
+10.0.0.0/24 dev eth0 proto kernel scope link src 10.0.0.5
+@@LISTEN
+tcp   LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1,fd=3))
+tcp   LISTEN 0      511        127.0.0.1:6379      0.0.0.0:*
+tcp   LISTEN 0      4096            [::]:22           [::]:*
+udp   UNCONN 0      0            0.0.0.0:68        0.0.0.0:*
+@@CONN
+tcp   0      0       10.0.0.5:22      10.0.0.9:51234 users:(("sshd",pid=9,fd=4))
+tcp   0      0       10.0.0.5:22      10.0.0.9:51235 users:(("sshd",pid=10,fd=4))
+tcp   0      0       10.0.0.5:40000   10.0.0.7:5432  users:(("python3",pid=7,fd=5))
+tcp   0      0       10.0.0.5:40001   8.8.8.8:443
+tcp   0      0      127.0.0.1:40002  127.0.0.1:6379
+@@UFW
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), disabled (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    10.0.0.0/24                # ssh
+80,443/tcp                 ALLOW IN    Anywhere
+Anywhere                   DENY OUT    1.2.3.4
+@@UFWCONF
+@@FWD
+@@IPT
+@@AUTH
+2026-11-18T08:00:00+07:00 web sshd[1]: Failed password for invalid user admin from 1.2.3.4 port 5555 ssh2
+2026-11-18T08:00:01+07:00 web sshd[1]: Failed password for root from 1.2.3.4 port 5556 ssh2
+2026-11-18T08:01:00+07:00 web sshd[1]: Invalid user test from 5.6.7.8 port 1
+2026-11-18T09:00:00+07:00 web sshd[1]: Accepted publickey for cp from 10.0.0.9 port 51234 ssh2
+@@AUTHFILE
+"""
+
+    def test_parse(self):
+        d = netsec.parse(self.OUT)
+        self.assertEqual(d["addrs"][0]["ip"], "10.0.0.5")
+        self.assertEqual(d["routes"][0], {"dest": "0.0.0.0/0", "gw": "10.0.0.1", "if": "eth0", "metric": "100"})
+        self.assertEqual([x["port"] for x in d["listening"]], [22, 22, 68, 6379])
+        self.assertTrue([x for x in d["listening"] if x["port"] == 6379][0]["local_only"])
+        c = {(x["dir"], x["peer"], x["port"]): x for x in d["connections"]}
+        self.assertEqual(c[("in", "10.0.0.9", 22)]["count"], 2)              # ต่อเข้าพอร์ต 22 ของเรา
+        self.assertEqual(c[("out", "10.0.0.7", 5432)]["proc"], "python3")    # เราต่อออกไป DB
+        self.assertIn(("out", "8.8.8.8", 443), c)
+        self.assertNotIn(("out", "127.0.0.1", 6379), c)                      # loopback ไม่นับ
+        fw = d["firewall"]
+        self.assertEqual((fw["tool"], fw["status"], fw["defaults"]["in"]), ("ufw", "active", "deny"))
+        self.assertEqual(fw["rules"][0], {"to": "22/tcp", "action": "ALLOW", "dir": "in", "from": "10.0.0.0/24", "comment": "ssh"})
+        self.assertEqual(fw["rules"][2]["dir"], "out")
+        lg = d["logins"]
+        self.assertEqual((lg["failed"], lg["invalid_users"], lg["success"]), (2, 1, 1))
+        self.assertEqual(lg["failed_by"][0], {"ip": "1.2.3.4", "user": "admin", "count": 1})
+
+    def test_ufw_without_root(self):
+        out = "@@UFW\nERROR: You need to be root to run this script\n@@UFWCONF\nENABLED=yes\nDEFAULT_INPUT_POLICY=\"DROP\"\nDEFAULT_OUTPUT_POLICY=\"ACCEPT\"\n"
+        fw = netsec.parse(out)["firewall"]
+        self.assertEqual((fw["status"], fw["defaults"]["in"], fw["defaults"]["out"]), ("active", "deny", "allow"))
+        self.assertIn("root", fw["note"])
+
+    def test_iptables(self):
+        out = "@@UFW\nNOUFW\n@@IPT\n-P INPUT DROP\n-P OUTPUT ACCEPT\n-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT\n"
+        fw = netsec.parse(out)["firewall"]
+        self.assertEqual((fw["tool"], fw["defaults"]["in"], fw["rules"][0]["to"]), ("iptables", "deny", "22/tcp"))
 
 
 class CustomRules(unittest.TestCase):

@@ -1586,3 +1586,30 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .snset select,.snset input{font:inherit;padding:4px 6px;border:1px solid var(--line,#d7dce4);border-radius:6px;background:var(--card,#fff);color:inherit}
 .snset input{width:80px}.sntog.dark{background:var(--blue,#1f7bff);color:#fff;border-color:transparent}
 .senstbl input,.senstbl select{width:100%}
+
+/* ---------- Network & Security (/network) ---------- */
+.nsTiles{grid-template-columns:repeat(6,minmax(0,1fr))}
+@media(max-width:900px){.nsTiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.nsbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.nsbar input{flex:1;min-width:200px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
+.nsmap{width:100%;height:auto;display:block}
+.nsE path{fill:none;stroke:#9aa6bd;stroke-width:1.6}.nsE text{font-size:11px;fill:var(--mut);paint-order:stroke;stroke:var(--card);stroke-width:3px}
+.nsE.pub path{stroke:#e08a00;stroke-dasharray:5 4}.nsE.lan path{stroke:#b8c2d6;stroke-dasharray:2 4}
+.nsE.on path{stroke:#1f7bff;stroke-width:2.6}.nsE.on text{fill:var(--ink);font-weight:600}.nsE.dim{opacity:.18}
+.nsE path:hover{stroke-width:4}
+.nsN{cursor:pointer}.nsN circle{stroke:var(--card);stroke-width:3}.nsN.on circle{stroke:#1f7bff;stroke-width:4}.nsN.dim{opacity:.45}
+.nsN .os{font-size:11px;font-weight:700;fill:#fff}.nsN .nm,.nsV .nm{font-size:13px;font-weight:600;fill:var(--ink)}.nsN .sb,.nsV .sb{font-size:11px;fill:#e5484d}.nsV .sb{fill:var(--mut)}
+.nsV rect{fill:var(--chip);stroke:var(--line)}
+.nslegend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mut);margin-top:6px}.nslegend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.nstbl tr[data-web]{cursor:pointer}.nstbl tr[data-web]:hover{background:var(--chip)}.nssub{display:block;color:var(--mut);font-size:12px}
+.nstbl code,.nsaddr code{font-size:12px}
+.nsmeta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--mut)}.nsmeta a.svbtn{text-decoration:none}
+.nsnet{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:12px 0}.nsnet div{background:var(--chip);border-radius:8px;padding:8px 10px}.nsnet small{display:block;color:var(--mut);font-size:12px}.nsnet b{font-size:15px}
+@media(max-width:900px){.nsnet{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.nstabs{margin:6px 0 12px}.nsh{font-weight:700;margin:14px 0 6px}.nsh small{font-weight:400;color:var(--mut)}
+.nschecks{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.nsck{border:1px solid var(--line);border-left:5px solid #9aa6bd;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:3px}.nsck span{font-size:13px;color:var(--mut)}
+.nsck.ok{border-left-color:#0a9a60}.nsck.wr{border-left-color:#f5b400}.nsck.cr{border-left-color:#e5484d}.nsck.cr b{color:#e5484d}
+.nsfw{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;margin-bottom:10px}.nsfw b.cr{color:#e5484d}.nsfw b.wr{color:#c27c00}
+.nsnote{background:rgba(245,165,36,.12);color:#8a5a00;border-radius:8px;padding:8px 12px;font-size:13px;margin:8px 0}
+.nsaddr{font-size:13px;margin-top:12px;color:var(--mut)}
+.ovst.na{background:var(--chip);color:var(--mut)}

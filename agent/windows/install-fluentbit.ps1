@@ -460,6 +460,20 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
             $set2 = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable -MultipleInstances IgnoreNew
             Register-ScheduledTask -TaskName $ProbeTask -Action $act2 -Trigger $trg2 -Principal $pr -Settings $set2 -Force | Out-Null
             Write-Host "   Docker / เว็บบนเครื่อง: scheduled task '$ProbeTask' ทุก 1 นาที"
+            # Network & Security: การเชื่อมต่อขาเข้า/ขาออก, route, firewall, logon ไม่สำเร็จ (cm-netsec.ps1 ข้างสคริปต์นี้)
+            $NetSrc = Join-Path $PSScriptRoot "cm-netsec.ps1"
+            if (Test-Path $NetSrc) {
+                $NetScript = Join-Path $InstallDir "cm-netsec.ps1"
+                Copy-Item $NetSrc $NetScript -Force
+                try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $NetScript } catch { }
+                $act4 = New-ScheduledTaskAction -Execute "powershell.exe" `
+                    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$NetScript`""
+                $trg4 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 5) `
+                    -RepetitionDuration (New-TimeSpan -Days 3650)
+                $set4 = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -StartWhenAvailable -MultipleInstances IgnoreNew
+                Register-ScheduledTask -TaskName "CentralMonitorNetSec" -Action $act4 -Trigger $trg4 -Principal $pr -Settings $set4 -Force | Out-Null
+                Write-Host "   Network & Security (การเชื่อมต่อ / route / firewall / logon): scheduled task 'CentralMonitorNetSec' ทุก 5 นาที"
+            } else { Warn "ไม่พบ cm-netsec.ps1 ข้างสคริปต์นี้ -> หน้า Network & Security ของเครื่องนี้จะว่าง (แตก zip ใหม่ทั้งชุด)" }
         } catch { Warn "สร้าง scheduled task '$InvTask' ไม่ได้: $($_.Exception.Message) (รายการโปรแกรมจะไม่อัปเดต)" }
         $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
                   Select-Object -ExpandProperty LocalAddress -Unique

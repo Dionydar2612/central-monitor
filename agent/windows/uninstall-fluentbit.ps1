@@ -12,6 +12,10 @@ if (Get-ScheduledTask -TaskName "CentralMonitorProbe" -ErrorAction SilentlyConti
     Unregister-ScheduledTask -TaskName "CentralMonitorProbe" -Confirm:$false
     Write-Host "ลบ scheduled task CentralMonitorProbe แล้ว"
 }
+if (Get-ScheduledTask -TaskName "CentralMonitorNetSec" -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName "CentralMonitorNetSec" -Confirm:$false
+    Write-Host "ลบ scheduled task CentralMonitorNetSec แล้ว"
+}
 # log ของโหมด pull
 if (Get-ScheduledTask -TaskName "CentralMonitorLogs" -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName "CentralMonitorLogs" -Confirm:$false

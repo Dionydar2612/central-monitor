@@ -84,6 +84,7 @@ import alert_settings_service
 import notify_service
 import alert_rules_service
 import host_details
+import netsec_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
@@ -168,12 +169,13 @@ def require_authentication():
 _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$"
                          r"|^/api/targets/[^/]+/sensor-(toggle|settings)$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
+_NETSEC_REFRESH = re.compile(r"^/api/netsec/[^/]+/refresh$")
 _TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
 
 
 def _required_role(method, path):
     """role ขั้นต่ำของแต่ละเส้นทาง (ไม่ระบุ = viewer)"""
-    if _PAUSE_PATH.match(path):
+    if _PAUSE_PATH.match(path) or _NETSEC_REFRESH.match(path):
         return "operator"
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
@@ -260,7 +262,7 @@ def no_stale_frontend(response):
     กันอาการ "อัปเดตแล้วแต่หน้าเว็บยังเป็นแบบเก่า" ที่ต้องกด Ctrl+F5"""
     if request.method == "GET" and not request.path.startswith("/api/") and "Cache-Control" not in response.headers:
         p = request.path
-        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/login") or p.endswith((".js", ".css", ".html")):
+        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/login") or p.endswith((".js", ".css", ".html")):
             response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -520,6 +522,34 @@ def notify_settings_test():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)
+
+
+@app.get("/network")
+def network_page():
+    """หน้า Network & Security (frontend/network.html)"""
+    return send_from_directory(STATIC_DIR, "network.html")
+
+
+@app.get("/api/netsec")
+def netsec_overview():
+    """ทุกเครื่อง: สรุป firewall / การเชื่อมต่อ / login + เส้น ใครต่อหาใคร + ปลายทางภายนอก"""
+    return jsonify(netsec_service.get_overview())
+
+
+@app.get("/api/netsec/<web>")
+def netsec_machine(web):
+    """เครื่องเดียว: การเชื่อมต่อขาเข้า/ขาออก, พอร์ตที่เปิดรับ, route, firewall, login, ผลตรวจ"""
+    d = netsec_service.get_machine(web)
+    return (jsonify(d), 200) if d else (jsonify({"error": "not found"}), 404)
+
+
+@app.post("/api/netsec/<web>/refresh")
+def netsec_refresh(web):
+    """Linux: สั่ง puller ดึงสถานะเครื่องนี้ทันที (Windows อัปเดตเองทุก 5 นาที)"""
+    if not any(t.get("name") == web for t in load_web_targets()):
+        return jsonify({"error": "not found"}), 404
+    targets_service.request_pull(web)
+    return jsonify({"ok": True})
 
 
 @app.get("/apps")

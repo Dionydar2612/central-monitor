@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!--
+  network.html - Network & Security (/network)
+    ภาพรวม: ไทล์สรุป · แผนผัง ใครต่อหาใคร (เครื่องที่ monitor + ภายนอก) · ตารางทุกเครื่อง · ปลายทางภายนอก
+    เครื่องเดียว (/network?web=): ผลตรวจ · การเชื่อมต่อขาเข้า/ขาออก · Firewall · Route · พอร์ตที่เปิดรับ · Login
+  ข้อมูล: GET /api/netsec · GET /api/netsec/<เครื่อง> · GET /api/overview (traffic / ping / loss / availability)
+-->
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor - Network &amp; Security</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><b>Network &amp; Security</b></div>
+<div class="sbadges" id="sbadges"></div>
+<div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><a class="st-nav" href="/events">Status &amp; Logs</a><span>Logged in as <b id="currentUsername">...</b></span><button id="logoutButton">Logout</button></div>
+</header>
+<section class="card"><div class="ovtiles nsTiles" id="nsTiles"></div></section>
+<section class="card" style="margin-top:16px">
+<div class="nsbar"><div class="vseg" id="nsView" role="group"><button type="button" data-v="map">แผนผังการเชื่อมต่อ</button><button type="button" data-v="table">ทุกเครื่อง</button><button type="button" data-v="external">ปลายทางภายนอก</button></div>
+<input type="search" id="nsFind" placeholder="ค้นหาเครื่อง / IP / พอร์ต / โปรแกรม" autocomplete="off"></div>
+<div id="nsMain"><div class="empty">Loading...</div></div>
+</section>
+<section class="card" id="nsDetail" style="margin-top:16px" hidden></section>
+</div>
+<script src="/badges.js"></script>
+<script src="/popup.js"></script>
+<script src="/network.js"></script>
+</body>
+</html>
