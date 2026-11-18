@@ -1677,3 +1677,19 @@ tr.dropb td{box-shadow:inset 0 3px 0 var(--blue,#1f7bff)}tr.dropa td{box-shadow:
 .tti{display:inline-flex;width:22px;justify-content:center;color:var(--mut)}
 .ttbl tr.tgwrow td{background:rgba(31,123,255,.05)}.ttbl tr.tboxrow td{background:var(--chip)}
 .ttbl tr.tmrow{cursor:pointer}.ttbl tr.tmrow:hover td{background:rgba(31,123,255,.05)}.ttbl tr.tmrow.on td{background:rgba(31,123,255,.12)}
+
+/* Network & Security: แผนผังการเชื่อมต่อ (ซ้าย -> ขวา) */
+.flow{width:100%;height:auto;display:block}
+.flow .fh{font-size:12px;fill:var(--mut);font-weight:600}
+.flow .fn rect{fill:var(--card);stroke:var(--line);stroke-width:1.4}
+.flow .fn.m{cursor:pointer}.flow .fn.m:hover rect:first-child{stroke:#9fb4d9}.flow .fn.on rect:first-child{stroke:#1f7bff;stroke-width:2.4;fill:rgba(31,123,255,.06)}
+.flow .fn .bar{stroke:none}
+.flow .fn.x rect{fill:var(--chip);stroke-dasharray:4 3}.flow .fn.x.pub rect{fill:#fff4e2;stroke:#e8b25a}
+.flow .fn .nm{font-size:13px;font-weight:700;fill:var(--ink)}.flow .fn .ip{font-size:11.5px;fill:var(--mut);font-variant-numeric:tabular-nums}.flow .fn .ip.cr{fill:#e5484d}
+.flow .fn .os{font-size:10.5px;font-weight:700;fill:#7c8aa5}
+.flow .fn.dim{opacity:.35}
+.flow .fe path{fill:none;stroke:#7c8aa5;opacity:.75}.flow .fe.pub path{stroke:#e08a00}.flow .fe.lan path{stroke:#9aa6bd;stroke-dasharray:5 4}
+.flow .fe.back path{stroke-dasharray:7 5}
+.flow .fe.on path{stroke:#1f7bff;opacity:1}.flow .fe.pub.on path{stroke:#e08a00}.flow .fe.dim{opacity:.12}
+.flow .fe path:hover{opacity:1;filter:drop-shadow(0 0 2px rgba(31,123,255,.5))}
+.flow .fl{font-size:11px;fill:var(--mut);paint-order:stroke;stroke:var(--card);stroke-width:3px;font-variant-numeric:tabular-nums}.flow .fl.on{fill:#1f7bff;font-weight:600}

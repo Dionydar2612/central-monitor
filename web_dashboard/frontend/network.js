@@ -41,201 +41,148 @@ function renderTiles() {
         + tile("IP สาธารณะ", t.public_peers, t.public_peers ? "nok" : "up", "ที่คุยกับเครื่องเรา");
 }
 
-/* ---------------- แผนผังเครือข่าย (แบบ topology) ----------------
-   Internet ── Gateway (router) ── Switch ของแต่ละวง (subnet หรือ กลุ่ม) ── เครื่อง (ไอคอน server = Linux, PC = Windows)
-   ในกรอบของแต่ละวง: เครื่องที่ monitor (สีตามผลตรวจ) + IP ในวงเดียวกันที่คุยกับเครื่องเราแต่ไม่ได้ monitor (สีเทา)
-   เส้นระหว่างเครื่อง = การเชื่อมต่อ (A → B = A ต่อเข้าพอร์ตของ B) · คลิกเครื่อง = แสดงเส้นทั้งหมดของเครื่องนั้น + รายละเอียด
-   ข้อมูล IP / subnet / gateway มาจากตัวเครื่อง (ip addr / ip route, Get-NetIPAddress / Get-NetRoute) ไม่ใช่จาก switch จริง */
-function inNet(ip, cidr) {
-    const n = s => s.split(".").reduce((a, x) => a * 256 + Number(x), 0);
-    const [base, bits] = String(cidr || "").split("/");
-    if (!base || !/^\d+\.\d+\.\d+\.\d+$/.test(ip || "")) return false;
-    const m = Number(bits) === 0 ? 0 : 2 ** 32 - 2 ** (32 - Number(bits));
-    return Math.floor(n(ip) / 2 ** (32 - Number(bits))) === Math.floor(n(base) / 2 ** (32 - Number(bits))) && m >= 0;
-}
-const ICON = {
-    server: (x, y, c) => `<g class="ico"><rect x="${x - 17}" y="${y - 24}" width="34" height="48" rx="4" class="body"/><line x1="${x - 11}" x2="${x + 11}" y1="${y - 14}" y2="${y - 14}"/><line x1="${x - 11}" x2="${x + 11}" y1="${y - 6}" y2="${y - 6}"/><line x1="${x - 11}" x2="${x + 11}" y1="${y + 2}" y2="${y + 2}"/><circle cx="${x + 8}" cy="${y + 14}" r="4" fill="${c}"/></g>`,
-    pc: (x, y, c) => `<g class="ico"><rect x="${x - 24}" y="${y - 22}" width="48" height="32" rx="3" class="body"/><rect x="${x - 19}" y="${y - 17}" width="38" height="22" rx="1" class="scr" fill="${c}"/><path d="M${x - 6},${y + 10}L${x - 9},${y + 20}H${x + 9}L${x + 6},${y + 10}Z" class="body"/><rect x="${x - 15}" y="${y + 19}" width="30" height="4" rx="2" class="body"/></g>`,
-    peer: (x, y) => `<g class="ico peer"><rect x="${x - 13}" y="${y - 11}" width="26" height="17" rx="2" class="body"/><path d="M${x - 4},${y + 6}L${x - 5},${y + 11}H${x + 5}L${x + 4},${y + 6}Z" class="body"/></g>`,
-    sw: (x, y, w) => `<g class="ico sw"><path d="M${x - w / 2 + 10},${y - 9}H${x + w / 2}L${x + w / 2 - 10},${y + 9}H${x - w / 2}Z" class="body"/>${Array.from({ length: Math.floor(w / 14) - 2 }, (_, i) => `<rect x="${x - w / 2 + 14 + i * 12}" y="${y - 2}" width="6" height="4" rx="1" class="port"/>`).join("")}</g>`,
-    router: (x, y) => `<g class="ico router"><ellipse cx="${x}" cy="${y + 8}" rx="34" ry="12" class="body"/><rect x="${x - 34}" y="${y - 6}" width="68" height="14" class="body side"/><ellipse cx="${x}" cy="${y - 6}" rx="34" ry="12" class="top"/><path d="M${x - 18},${y - 10}l8,4l-8,4M${x + 18},${y - 2}l-8,-4l8,-4M${x - 10},${y - 6}H${x - 22}M${x + 10},${y - 6}H${x + 22}" class="arr"/></g>`,
-    cloud: (x, y) => `<g class="ico cloud"><path d="M${x - 70},${y + 22}a26,26 0 0 1 8,-44a34,34 0 0 1 58,-14a30,30 0 0 1 52,12a24,24 0 0 1 22,46z" class="body"/></g>`,
-};
+/* ---------------- แผนผังการเชื่อมต่อ (ใครต่อหาใคร) อ่านจากซ้ายไปขวา ----------------
+   ซ้ายสุด = ผู้เริ่มเชื่อมต่อ · ขวา = ปลายทางที่ถูกต่อเข้า (ลูกศร A → B = A ต่อเข้าพอร์ตของ B ป้ายบนเส้น = พอร์ต)
+   Internet / LAN อื่น (IP ที่ไม่ได้ monitor) แยกเป็น "ต่อเข้ามา" (ซ้ายสุด) กับ "ต่อออกไป" (ขวาสุด)
+   จัดชั้นอัตโนมัติ (longest path) + เรียงในชั้นให้เส้นตัดกันน้อย · เส้นโค้งนุ่มแนวนอน หนาตามจำนวนการเชื่อมต่อ
+   เครื่องที่ไม่มีการเชื่อมต่อกับใคร อยู่แถวล่าง · คลิกเครื่อง = ไฮไลต์เส้นของเครื่องนั้น + รายละเอียด */
 const STC = { ok: "#0a9a60", warning: "#f5b400", error: "#e5484d", unknown: "#9aa6bd" };
 const ipNum = ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip || "") ? ip.split(".").reduce((a, x) => a * 256 + Number(x), 0) : Infinity;
-const netNum = cidr => ipNum(String(cidr || "").split("/")[0]);
-/* โครงสร้างเครือข่าย (ใช้ทั้งแผนผังและรายการ): Gateway -> วง (subnet / กลุ่ม) -> เครื่อง เรียงตาม IP */
-function topoModel() {
-    const ms = N.d.machines.filter(m => match(m.web, m.host, m.group, m.ip, m.subnet));
-    const bySubnet = N.layout !== "group";
-    const boxes = new Map();
-    const boxOf = m => bySubnet ? (m.subnet || "?") : (m.group || "");
-    ms.forEach(m => {
-        const k = boxOf(m);
-        if (!boxes.has(k)) boxes.set(k, { key: k, ms: [], peers: new Set(), gws: new Set() });
-        const b = boxes.get(k); b.ms.push(m); if (m.gateway) b.gws.add(m.gateway);
-    });
-    const lanOther = new Set();
-    N.d.external.filter(x => !x.public && x.peer).forEach(x => {
-        const b = bySubnet ? [...boxes.values()].find(b => inNet(x.peer, b.key)) : null;
-        if (b) b.peers.add(x.peer); else lanOther.add(x.peer);
-    });
-    boxes.forEach(b => {
-        b.ms.sort((a, c) => ipNum(a.ip) - ipNum(c.ip) || a.web.localeCompare(c.web));
-        b.peerList = [...b.peers].sort((a, c) => ipNum(a) - ipNum(c));
-        b.title = b.key === "?" ? "ไม่ทราบ subnet" : bySubnet ? b.key : (b.key || "ไม่มีกลุ่ม");
-    });
-    /* คอลัมน์ = gateway (เรียงตาม IP) · วงที่ไม่รู้ gateway = คอลัมน์ "ไม่ทราบ Gateway" · LAN อื่น = คอลัมน์ท้าย */
-    const cols = new Map();
-    [...boxes.values()].sort((a, c) => netNum(a.key) - netNum(c.key) || a.title.localeCompare(c.title)).forEach(b => {
-        const g = [...b.gws].sort((a, c) => ipNum(a) - ipNum(c))[0] || "";
-        if (!cols.has(g)) cols.set(g, { gw: g, boxes: [] });
-        cols.get(g).boxes.push(b);
-    });
-    const list = [...cols.values()].sort((a, c) => (!a.gw) - (!c.gw) || ipNum(a.gw) - ipNum(c.gw));
-    if (lanOther.size) list.push({ gw: "__lan", boxes: [{ key: "__lan", title: "LAN อื่น (ไม่ได้ monitor)", ms: [], peerList: [...lanOther].sort((a, c) => ipNum(a) - ipNum(c)), gws: new Set() }] });
-    return { cols: list, bySubnet, pub: new Set(N.d.external.filter(x => x.public).map(x => x.peer)).size };
-}
-function machineSub(m) {
-    return !m.available ? "ไม่มีข้อมูล" : [m.firewall === "inactive" ? "FW ปิด" : "", m.failed_logins >= 20 ? `login ✕${m.failed_logins}` : "", m.peers_out ? `↗${m.peers_out}` : "", m.peers_in ? `↙${m.peers_in}` : ""].filter(Boolean).join(" ");
-}
-/* ---------------- แผนผัง: Internet (บนกลาง) -> Gateway (1 คอลัมน์ต่อ gateway) -> สายหลักซ้ายคอลัมน์ -> วง (switch + เครื่องเรียงตาม IP) ---------------- */
-function mapHtml() {
-    const md = topoModel();
-    if (!md.cols.length) return `<div class="empty">ไม่มีเครื่อง</div>`;
-    const CW = 134, CH = 104, PEERMAX = 6, GAPX = 34, W = 1120, X0 = 20, BUSX = W - 18, MAXX = W - 46;
-    /* คอลัมน์ละ 1 gateway · กว้างเกินหน้า = ขึ้นแถวใหม่ (แต่ละแถวมี gateway ของตัวเอง) */
-    md.cols.forEach(col => {
-        col.boxes.forEach(b => {
-            const n = b.ms.length + Math.min(b.peerList.length, PEERMAX) + (b.peerList.length > PEERMAX ? 1 : 0);
-            b.cols = Math.max(1, Math.min(n, 3, Math.floor((MAXX - X0 - 26) / CW)));
-            b.rows = Math.max(1, Math.ceil(n / b.cols));
-            b.w = Math.max(250, b.cols * CW + 20); b.h = 58 + b.rows * CH;
-        });
-        col.w = 26 + Math.max(...col.boxes.map(b => b.w));
-    });
-    const rows = [];
-    let x = X0;
-    md.cols.forEach(col => {
-        if (!rows.length || (x + col.w > MAXX && x > X0)) { rows.push([]); x = X0; }
-        col.x = x; x += col.w + GAPX; rows[rows.length - 1].push(col);
-    });
-    let rowTop = 110;
-    rows.forEach(row => {
-        const used = row[row.length - 1].x + row[row.length - 1].w - X0, off = Math.max(0, (MAXX - X0 - used) / 2);
-        const GY = rowTop + 40, TOP = rowTop + 120;
-        row.forEach(col => {
-            col.x += off; col.GY = GY; col.TOP = TOP;
-            let y = TOP;
-            col.boxes.forEach(b => { b.x = col.x + 26; b.y = y; b.hy = y + 26; y += b.h + 22; });
-            col.h = y; col.gx = col.x + 26 + Math.min(...col.boxes.map(b => b.w)) / 2;
-        });
-        rowTop = Math.max(...row.map(c => c.h)) + 30;
-    });
-    const H = rowTop;
-    const CLX = BUSX - 92, CLY = 50, sel = N.web, pos = {};
-    let svg = "";
-    /* WAN: Internet -> สายขอบขวา -> แยกเข้าแต่ละ gateway */
-    const gwCols = md.cols.filter(c => c.gw && c.gw !== "__lan");
-    if (gwCols.length) {
-        const lastY = Math.max(...gwCols.map(c => c.GY - 40));
-        svg += `<path class="tl wan" d="M${BUSX - 30},${CLY + 26} Q${BUSX},${CLY + 30} ${BUSX},${CLY + 60} V${lastY}"/>`;
-        gwCols.forEach(c => { svg += `<path class="tl wan" d="M${BUSX},${c.GY - 40} H${c.gx} V${c.GY - 20}"/>`; });
-    }
-    md.cols.forEach(c => {
-        const tx = c.x + 8, GY = c.GY, TOP = c.TOP;
-        if (c.gw !== "__lan") {
-            /* สายหลัก: gateway ลงมา -> ซ้ายคอลัมน์ -> แตกเข้าแต่ละวง (switch) */
-            const last = c.boxes[c.boxes.length - 1];
-            svg += `<path class="tl${c.gw ? "" : " unk"}" d="M${c.gx},${GY + 22} V${TOP - 22} H${tx} V${last.hy}"/>`;
-            c.boxes.forEach(b => { svg += `<path class="tl${c.gw ? "" : " unk"}" d="M${tx},${b.hy} H${b.x + 14}"/>`; });
-            svg += c.gw ? `<g class="tgw">${ICON.router(c.gx, GY)}<text x="${c.gx}" y="${GY + 38}" text-anchor="middle" class="nm">Gateway ${esc(c.gw)}</text></g>`
-                : `<g class="tgw"><text x="${c.gx}" y="${GY + 4}" text-anchor="middle" class="ml">ไม่ทราบ Gateway</text></g>`;
-        }
-        c.boxes.forEach(b => {
-            const lan = b.key === "__lan";
-            svg += `<g class="tbox${lan ? " lan" : ""}"><rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10"/>`
-                + (lan ? "" : ICON.sw(b.x + 52, b.hy, 64))
-                + `<text x="${b.x + (lan ? 14 : 92)}" y="${b.y + 22}" class="bt">${esc(b.title)}</text>`
-                + `<text x="${b.x + (lan ? 14 : 92)}" y="${b.y + 38}" class="bs">${esc([b.ms.length ? `${b.ms.length} เครื่อง` : "", b.peerList.length ? `${b.peerList.length} IP ไม่ได้ monitor` : ""].filter(Boolean).join(" · "))}</text>`;
-            let i = 0;
-            const cell = () => { const cc = i % b.cols, r = Math.floor(i / b.cols); i++; return [b.x + 10 + cc * CW + CW / 2, b.y + 58 + r * CH + 30]; };
-            b.ms.forEach(m => {
-                const [cx, cy] = cell(); pos[m.web] = [cx, cy];
-                const c = m.available ? STC[m.worst] || STC.unknown : STC.unknown, sub = machineSub(m);
-                svg += `<g class="tnode${sel === m.web ? " on" : ""}${sel && sel !== m.web ? " dim" : ""}" data-web="${esc(m.web)}" tabindex="0">`
-                    + `<rect x="${cx - 60}" y="${cy - 32}" width="120" height="96" rx="8" class="hit"/>`
-                    + (m.os === "windows" ? ICON.pc(cx, cy, c) : ICON.server(cx, cy, c))
-                    + `<text x="${cx}" y="${cy + 38}" text-anchor="middle" class="nm">${esc(m.web)}</text><text x="${cx}" y="${cy + 51}" text-anchor="middle" class="ip">${esc(m.ip || m.host || "-")}</text>`
-                    + (sub ? `<text x="${cx}" y="${cy + 63}" text-anchor="middle" class="sb${m.firewall === "inactive" || !m.available ? " cr" : ""}">${esc(sub)}</text>` : "")
-                    + `<title>${esc(`${m.web} · ${m.os === "windows" ? "Windows" : "Linux"} · ${m.ip || m.host || ""}${m.subnet ? " (" + m.subnet + ")" : ""}${m.gateway ? " · gw " + m.gateway : ""} · Firewall ${fwText(m.firewall)} · ขาเข้า ${m.in} · ขาออก ${m.out}`)}</title></g>`;
-            });
-            b.peerList.slice(0, PEERMAX).forEach(ip => { const [cx, cy] = cell(); pos["ip:" + ip] = [cx, cy];
-                svg += `<g class="tpeer">${ICON.peer(cx, cy)}<text x="${cx}" y="${cy + 26}" text-anchor="middle" class="ip">${esc(ip)}</text><title>${esc(ip)} · คุยกับเครื่องที่ monitor แต่ไม่ได้ monitor</title></g>`; });
-            if (b.peerList.length > PEERMAX) { const [cx, cy] = cell(); svg += `<text x="${cx}" y="${cy}" text-anchor="middle" class="ml">+${b.peerList.length - PEERMAX} IP</text>`; }
-            svg += `</g>`;
-        });
-    });
-    /* เส้นการเชื่อมต่อ: เฉพาะเครื่องที่เลือก (หรือทั้งหมดถ้าติ๊ก) */
-    const curve = (a, b, cls, tip, lab) => {
-        const [x1, y1] = a, [x2, y2] = b, mx = (x1 + x2) / 2, my = Math.min(y1, y2) - 34 - Math.abs(x2 - x1) * 0.06;
-        return `<g class="tc ${cls}"><path d="M${x1},${y1 - 24} Q${mx},${my} ${x2},${y2 - 28}" marker-end="url(#tArr${cls.includes("on") ? "O" : ""})"><title>${esc(tip)}</title></path>${lab ? `<text x="${mx}" y="${(my + Math.min(y1, y2)) / 2 - 6}" text-anchor="middle">${esc(lab)}</text>` : ""}</g>`;
+function flowModel() {
+    const ms = N.d.machines.filter(m => match(m.web, m.host, m.group, m.ip));
+    const byName = Object.fromEntries(ms.map(m => [m.web, m]));
+    const nodes = {}, edges = {};
+    const node = (id, o) => nodes[id] || (nodes[id] = { id, ...o, ins: [], outs: [] });
+    const edge = (from, to, port, count, kind, peer, procs) => {
+        const k = from + "→" + to;
+        const e = edges[k] || (edges[k] = { from, to, ports: new Set(), count: 0, kind, peers: new Set(), procs: new Set() });
+        if (port != null) e.ports.add(port); e.count += count || 1; if (peer) e.peers.add(peer); (procs || []).forEach(p => e.procs.add(p));
     };
-    const pairs = {};
-    N.d.edges.filter(e => pos[e.from] && pos[e.to]).forEach(e => { const k = e.from + "→" + e.to, p = pairs[k] || (pairs[k] = { from: e.from, to: e.to, ports: new Set(), count: 0 }); p.ports.add(e.port); p.count += e.count; });
-    Object.values(pairs).forEach(p => {
-        const on = sel && (p.from === sel || p.to === sel);
-        if (sel ? !on : !N.allLines) return;
-        const ports = [...p.ports].sort((a, b) => a - b);
-        svg += curve(pos[p.from], pos[p.to], on ? "on" : "", `${p.from} → ${p.to} · พอร์ต ${ports.join(", ")} · ${p.count} การเชื่อมต่อ`, ports.slice(0, 3).map(x => ":" + x).join(" "));
+    N.d.edges.filter(e => byName[e.from] && byName[e.to]).forEach(e => {
+        node(e.from, { kind: "m", m: byName[e.from] }); node(e.to, { kind: "m", m: byName[e.to] });
+        edge(e.from, e.to, e.port, e.count, "m", null, e.procs);
     });
-    if (sel && pos[sel]) {
-        const pub = { in: new Set(), out: new Set() };
-        N.d.external.filter(x => x.web === sel).forEach(x => {
-            if (x.public) { pub[x.dir].add(x.port); return; }
-            const pp = pos["ip:" + x.peer];
-            if (pp) svg += x.dir === "in" ? curve(pp, pos[sel], "on lan", `${x.peer} → ${sel} :${x.port}`, ":" + x.port) : curve(pos[sel], pp, "on lan", `${sel} → ${x.peer} :${x.port}`, ":" + x.port);
+    if (N.showExt !== false) N.d.external.filter(x => byName[x.web]).forEach(x => {
+        const ext = (x.public ? "inet" : "lan") + (x.dir === "in" ? "-in" : "-out");
+        node(x.web, { kind: "m", m: byName[x.web] });
+        node(ext, { kind: "x", pub: x.public, dir: x.dir });
+        if (x.dir === "in") edge(ext, x.web, x.port, x.count, x.public ? "pub" : "lan", x.peer, x.procs);
+        else edge(x.web, ext, x.port, x.count, x.public ? "pub" : "lan", x.peer, x.procs);
+    });
+    Object.values(edges).forEach(e => { nodes[e.from].outs.push(e); nodes[e.to].ins.push(e); });
+    /* ชั้น: ต่อเข้ามา = 0 · เครื่อง = 1 + ทางยาวสุดจากผู้เริ่ม (ไม่นับเส้นย้อนวน) · ต่อออกไป = ชั้นสุดท้าย */
+    const layer = {}, state = {};
+    const back = new Set();
+    const dfs = id => {
+        state[id] = 1;
+        nodes[id].outs.forEach(e => { if (nodes[e.to].kind !== "m") return; if (state[e.to] === 1) back.add(e); else if (!state[e.to]) dfs(e.to); });
+        state[id] = 2;
+    };
+    Object.keys(nodes).filter(id => nodes[id].kind === "m").sort().forEach(id => { if (!state[id]) dfs(id); });
+    const lay = id => {
+        if (layer[id] != null) return layer[id];
+        layer[id] = 1;
+        const ins = nodes[id].ins.filter(e => !back.has(e) && nodes[e.from].kind === "m");
+        layer[id] = ins.length ? 1 + Math.max(...ins.map(e => lay(e.from))) : 1;
+        return layer[id];
+    };
+    Object.keys(nodes).filter(id => nodes[id].kind === "m").forEach(lay);
+    const maxL = Math.max(1, ...Object.values(layer));
+    Object.values(nodes).forEach(n => { if (n.kind === "x") layer[n.id] = n.dir === "in" ? 0 : maxL + 1; });
+    const cols = [];
+    Object.values(nodes).forEach(n => { (cols[layer[n.id]] = cols[layer[n.id]] || []).push(n); });
+    /* เรียงในชั้น: เริ่มตาม IP แล้วจัดตามค่าเฉลี่ยตำแหน่งของคู่เชื่อม (ลดเส้นตัดกัน) 4 รอบ */
+    const key = n => n.kind === "x" ? (n.pub ? 0 : 1) : ipNum(n.m.ip) || 0;
+    cols.forEach(c => c && c.sort((a, b) => key(a) - key(b) || a.id.localeCompare(b.id)));
+    const idx = () => { const o = {}; cols.forEach(c => c && c.forEach((n, i) => { o[n.id] = i; })); return o; };
+    for (let it = 0; it < 4; it++) {
+        const ix = idx();
+        cols.forEach((c, li) => {
+            if (!c || li === 0) return;
+            const bc = n => { const nb = (it % 2 ? n.outs.map(e => e.to) : n.ins.map(e => e.from)); return nb.length ? nb.reduce((a, x) => a + ix[x], 0) / nb.length : ix[n.id]; };
+            c.sort((a, b) => bc(a) - bc(b));
         });
-        const [sx, sy] = pos[sel];
-        if (pub.in.size || pub.out.size) svg += `<g class="tc on pub"><path d="M${sx},${sy - 24} C${sx},${CLY + 140} ${CLX},${CLY + 120} ${CLX},${CLY + 28}"><title>Internet: ขาออก ${[...pub.out].join(", ") || "-"} · ขาเข้า ${[...pub.in].join(", ") || "-"}</title></path></g>`;
     }
-    const wide = false;
-    return `${topoBar(md)}<div class="topow"><svg class="topo" viewBox="0 0 ${W} ${H}" ${wide ? `style="width:${W}px;max-width:none"` : ""} role="img" aria-label="แผนผังเครือข่าย">
-<defs>${[["", "#9aa6bd"], ["O", "#1f7bff"]].map(([k, c]) => `<marker id="tArr${k}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`).join("")}</defs>
-${ICON.cloud(CLX, CLY)}<text x="${CLX}" y="${CLY + 2}" text-anchor="middle" class="cl">Internet</text><text x="${CLX}" y="${CLY + 18}" text-anchor="middle" class="cls">${md.pub} IP สาธารณะ</text>
-${svg}</svg></div>
-<div class="nslegend"><span><i style="background:${STC.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${STC.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${STC.error}"></i>มีปัญหา</span><span><i style="background:${STC.unknown}"></i>ไม่มีข้อมูล / ไม่ได้ monitor</span><span>↗ ต่อออกไปกี่ IP · ↙ มีกี่ IP ต่อเข้ามา · เรียงตาม IP</span></div>`;
+    const lone = ms.filter(m => !nodes[m.web]).sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
+    return { nodes, edges: Object.values(edges), cols: cols.map(c => c || []), lone, back };
 }
-function topoBar() {
-    const sel = N.web;
-    return `<div class="tbar"><span class="vseg"><button type="button" data-shape="map" class="${N.shape !== "list" ? "on" : ""}">แผนผัง</button><button type="button" data-shape="list" class="${N.shape === "list" ? "on" : ""}">รายการ</button></span>
-<span class="vseg"><button type="button" data-lay="subnet" class="${N.layout !== "group" ? "on" : ""}">ตาม Subnet</button><button type="button" data-lay="group" class="${N.layout === "group" ? "on" : ""}">ตามกลุ่ม</button></span>
-${N.shape !== "list" ? `<label class="st-check"><input type="checkbox" data-all ${N.allLines ? "checked" : ""}> เส้นการเชื่อมต่อทั้งหมด</label>` : ""}
-<span class="st-mut">คลิกเครื่องเพื่อดูรายละเอียด${N.shape !== "list" ? " และเส้นของเครื่องนั้น" : ""}${sel ? ` · <a href="#" data-clear>ยกเลิกเลือก</a>` : ""}</span></div>`;
-}
-/* ---------------- รายการ (tree): Internet -> Gateway -> วง -> เครื่อง อ่านง่าย เรียงตาม IP ---------------- */
-function listHtml() {
-    const md = topoModel();
-    const row = (lv, icon, main, cols, attrs) => `<tr ${attrs || ""}><td><div class="ttree" style="--lv:${lv}"><span class="tti">${icon}</span>${main}</div></td>${cols.map(c => `<td>${c}</td>`).join("")}</tr>`;
-    let html = row(0, "☁", `<b>Internet</b>`, [`<span class="st-mut">${md.pub} IP สาธารณะ</span>`, "", "", "", "", ""]);
-    md.cols.forEach(c => {
-        const lv = c.gw === "__lan" ? 1 : 2;
-        if (c.gw !== "__lan") html += row(1, "⇄", c.gw ? `<b>Gateway ${esc(c.gw)}</b>` : `<span class="st-mut">ไม่ทราบ Gateway</span>`, ["", "", "", "", "", ""], `class="tgwrow"`);
-        c.boxes.forEach(b => {
-            html += row(lv, "▭", `<b>${esc(b.title)}</b>`, [`<span class="st-mut">${b.ms.length} เครื่อง${b.peerList.length ? ` · ${b.peerList.length} IP ไม่ได้ monitor` : ""}</span>`, "", "", "", "", ""], `class="tboxrow"`);
-            b.ms.forEach(m => {
-                const [wl, wc] = ST[m.worst] || ST.unknown;
-                html += row(lv + 1, m.os === "windows" ? "🖥" : "🗄", `<b>${esc(m.web)}</b>`,
-                    [`<code>${esc(m.ip || m.host || "-")}</code>`, m.os === "windows" ? "Windows" : "Linux",
-                     m.available ? pill(wl, wc) : `<span class="st-mut">ไม่มีข้อมูล</span>`,
-                     !m.available || m.firewall === "unknown" ? `<span class="st-mut">-</span>` : pill(fwText(m.firewall), fwCls(m.firewall)),
-                     `↙ ${m.in} <small class="st-mut">(${m.peers_in} IP)</small>`, `↗ ${m.out} <small class="st-mut">(${m.peers_out} IP)</small>`],
-                    `data-web="${esc(m.web)}" class="tmrow${N.web === m.web ? " on" : ""}" tabindex="0"`);
-            });
-            if (b.peerList.length) html += row(lv + 1, "·", `<span class="st-mut">ไม่ได้ monitor: ${b.peerList.slice(0, 12).map(esc).join(", ")}${b.peerList.length > 12 ? ` +${b.peerList.length - 12}` : ""}</span>`, ["", "", "", "", "", ""]);
-        });
+function mapHtml() {
+    const md = flowModel(), sel = N.web;
+    const NW = 196, NH = 54, GX = 120, GY = 24, PAD = 20;
+    const ncol = md.cols.length;
+    const colH = c => c.length * NH + Math.max(0, c.length - 1) * GY;
+    const maxH = Math.max(NH, ...md.cols.map(colH));
+    const W = Math.max(1120, PAD * 2 + ncol * NW + (ncol - 1) * GX);
+    const gx = ncol > 1 ? (W - PAD * 2 - ncol * NW) / (ncol - 1) : 0;
+    const pos = {};
+    md.cols.forEach((c, li) => {
+        const x = PAD + li * (NW + gx), y0 = 40 + (maxH - colH(c)) / 2;
+        c.forEach((n, i) => { pos[n.id] = { x, y: y0 + i * (NH + GY) }; });
     });
-    return `${topoBar(md)}<div class="tblw"><table class="st-tbl nstbl ttbl"><thead><tr><th>เครือข่าย / เครื่อง</th><th>IP</th><th>OS</th><th>ผลตรวจ</th><th>Firewall</th><th>ขาเข้า</th><th>ขาออก</th></tr></thead><tbody>${html}</tbody></table></div>`;
+    /* จุดต่อของเส้นกระจายตามขอบซ้าย / ขวาของกล่อง (เส้นไม่ทับกัน) */
+    const port = {};
+    Object.values(md.nodes).forEach(n => {
+        const outs = n.outs.slice().sort((a, b) => pos[a.to].y - pos[b.to].y), ins = n.ins.slice().sort((a, b) => pos[a.from].y - pos[b.from].y);
+        outs.forEach((e, i) => { port[e.from + "→" + e.to + ":s"] = pos[n.id].y + NH * (i + 1) / (outs.length + 1); });
+        ins.forEach((e, i) => { port[e.from + "→" + e.to + ":t"] = pos[n.id].y + NH * (i + 1) / (ins.length + 1); });
+    });
+    const touches = e => sel && (e.from === sel || e.to === sel);
+    let edgesSvg = "", labels = "";
+    md.edges.forEach(e => {
+        const a = pos[e.from], b = pos[e.to], k = e.from + "→" + e.to;
+        const x1 = a.x + NW, y1 = port[k + ":s"], x2 = b.x, y2 = port[k + ":t"];
+        const backward = x2 <= x1, dx = Math.max(60, Math.abs(x2 - x1) * 0.45);
+        const d = backward ? `M${x1},${y1} C${x1 + 70},${y1} ${x1 + 70},${maxH + 90} ${(x1 + x2) / 2},${maxH + 90} S${x2 - 70},${y2} ${x2 - 8},${y2}`
+            : `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2 - 8},${y2}`;
+        const on = touches(e), dim = sel && !on;
+        const w = 1.4 + Math.min(4, Math.log2(e.count + 1));
+        const ports = [...e.ports].sort((p, q) => p - q);
+        const tip = `${nodeName(md.nodes[e.from])} → ${nodeName(md.nodes[e.to])} · พอร์ต ${ports.join(", ")} · ${e.count} การเชื่อมต่อ`
+            + (e.procs.size ? ` · ${[...e.procs].slice(0, 4).join(", ")}` : "") + (e.peers.size ? ` · ${[...e.peers].slice(0, 8).join(", ")}${e.peers.size > 8 ? " ..." : ""}` : "");
+        edgesSvg += `<g class="fe ${e.kind}${on ? " on" : ""}${dim ? " dim" : ""}${backward ? " back" : ""}"><path d="${d}" style="stroke-width:${w.toFixed(1)}px" marker-end="url(#fA${e.kind}${on ? "o" : ""})"><title>${esc(tip)}</title></path></g>`;
+        /* ป้ายพอร์ตใกล้ปลายทาง (อ่านได้ว่าเข้าพอร์ตไหนของใคร) */
+        const lab = ports.slice(0, 3).map(p => ":" + p).join(" ") + (ports.length > 3 ? ` +${ports.length - 3}` : "");
+        if (!backward && (!sel || on)) labels += `<text class="fl${on ? " on" : ""}" x="${x2 - 14}" y="${y2 - 4}" text-anchor="end">${esc(lab)}</text>`;
+    });
+    const nodeSvg = n => {
+        const p = pos[n.id], on = sel === n.id, dim = sel && !on && !md.edges.some(e => touches(e) && (e.from === n.id || e.to === n.id));
+        if (n.kind === "x") {
+            const peers = new Set(); (n.dir === "in" ? n.ins : n.outs).concat(n.dir === "in" ? n.outs : n.ins).forEach(e => e.peers.forEach(x => peers.add(x)));
+            return `<g class="fn x ${n.pub ? "pub" : "lan"}${dim ? " dim" : ""}"><rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="27"/>`
+                + `<text x="${p.x + NW / 2}" y="${p.y + 23}" text-anchor="middle" class="nm">${n.pub ? "🌐 Internet" : "LAN อื่น"}</text>`
+                + `<text x="${p.x + NW / 2}" y="${p.y + 40}" text-anchor="middle" class="ip">${n.dir === "in" ? "ต่อเข้ามา" : "ต่อออกไป"} · ${peers.size} IP</text>`
+                + `<title>${esc([...peers].slice(0, 20).join(", "))}</title></g>`;
+        }
+        return machineNode(n.m, p.x, p.y, NW, NH, on, dim);
+    };
+    const nodesSvg = Object.values(md.nodes).map(nodeSvg).join("");
+    /* เครื่องที่ไม่มีการเชื่อมต่อ: แถวล่าง */
+    let loneSvg = "", H = maxH + 60 + (md.back.size ? 60 : 0);
+    if (md.lone.length) {
+        const per = Math.max(1, Math.floor((W - PAD * 2 + 16) / (NW + 16)));
+        loneSvg += `<text x="${PAD}" y="${H + 10}" class="fh">ไม่มีการเชื่อมต่อกับเครื่องอื่นตอนเก็บข้อมูล (${md.lone.length})</text>`;
+        md.lone.forEach((m, i) => { loneSvg += machineNode(m, PAD + (i % per) * (NW + 16), H + 22 + Math.floor(i / per) * (NH + 14), NW, NH, sel === m.web, sel && sel !== m.web); });
+        H += 30 + Math.ceil(md.lone.length / per) * (NH + 14);
+    }
+    const heads = md.cols.length > 1 ? `<text x="${PAD}" y="22" class="fh">เริ่มเชื่อมต่อ →</text><text x="${W - PAD}" y="22" text-anchor="end" class="fh">→ ปลายทาง</text>` : "";
+    const marker = (id, c) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`;
+    return `<div class="tbar"><label class="st-check"><input type="checkbox" data-ext ${N.showExt !== false ? "checked" : ""}> แสดง Internet / LAN อื่น</label>
+<span class="st-mut">ลูกศร A → B = A ต่อเข้าพอร์ตของ B · เส้นหนา = เชื่อมต่อมาก · คลิกเครื่องเพื่อไฮไลต์และดูรายละเอียด${sel ? ` · <a href="#" data-clear>ยกเลิกเลือก</a>` : ""}</span></div>
+<div class="topow"><svg class="flow" viewBox="0 0 ${W} ${H + 10}" role="img" aria-label="แผนผังการเชื่อมต่อ">
+<defs>${marker("fAm", "#7c8aa5")}${marker("fAmo", "#1f7bff")}${marker("fApub", "#e08a00")}${marker("fApubo", "#e08a00")}${marker("fAlan", "#9aa6bd")}${marker("fAlano", "#1f7bff")}</defs>
+${heads}${edgesSvg}${nodesSvg}${labels}${loneSvg}</svg></div>
+<div class="nslegend"><span><i style="background:${STC.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${STC.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${STC.error}"></i>มีปัญหา</span><span><i style="background:${STC.unknown}"></i>ไม่มีข้อมูล</span><span><b style="color:#7c8aa5">━</b> ระหว่างเครื่อง</span><span><b style="color:#e08a00">━</b> Internet</span><span><b style="color:#9aa6bd">┅</b> LAN อื่น</span></div>`;
+}
+function nodeName(n) { return n.kind === "m" ? n.m.web : `${n.pub ? "Internet" : "LAN อื่น"} (${n.dir === "in" ? "ต่อเข้ามา" : "ต่อออกไป"})`; }
+function machineNode(m, x, y, w, h, on, dim) {
+    const c = m.available ? STC[m.worst] || STC.unknown : STC.unknown;
+    const sub = [m.ip || m.host || "", !m.available ? "ไม่มีข้อมูล" : m.firewall === "inactive" ? "FW ปิด" : ""].filter(Boolean).join(" · ");
+    return `<g class="fn m${on ? " on" : ""}${dim ? " dim" : ""}" data-web="${esc(m.web)}" tabindex="0"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/>`
+        + `<rect x="${x}" y="${y + 1}" width="6" height="${h - 2}" rx="3" style="fill:${c}" class="bar"/>`
+        + `<text x="${x + 18}" y="${y + 22}" class="nm">${esc(m.web.length > 20 ? m.web.slice(0, 19) + "…" : m.web)}</text>`
+        + `<text x="${x + w - 10}" y="${y + 22}" text-anchor="end" class="os">${m.os === "windows" ? "Win" : "Linux"}</text>`
+        + `<text x="${x + 18}" y="${y + 40}" class="ip${m.firewall === "inactive" || !m.available ? " cr" : ""}">${esc(sub)}</text>`
+        + `<title>${esc(`${m.web} · ${m.ip || m.host || ""} · Firewall ${fwText(m.firewall)} · ขาเข้า ${m.in} · ขาออก ${m.out}`)}</title></g>`;
 }
 
 /* ---------------- ตารางทุกเครื่อง ---------------- */
@@ -265,7 +212,7 @@ function externalHtml() {
 
 function renderMain() {
     document.querySelectorAll("#nsView button").forEach(b => b.classList.toggle("on", b.dataset.v === N.view));
-    $("nsMain").innerHTML = N.view === "table" ? tableHtml() : N.view === "external" ? externalHtml() : N.shape === "list" ? listHtml() : mapHtml();
+    $("nsMain").innerHTML = N.view === "table" ? tableHtml() : N.view === "external" ? externalHtml() : mapHtml();
 }
 
 /* ---------------- เครื่องเดียว ---------------- */
@@ -362,14 +309,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     try { N.view = sessionStorage.getItem("cm.nsView") || "map"; } catch (e) { /* ignore */ }
     $("nsView").addEventListener("click", e => { const b = e.target.closest("button[data-v]"); if (!b) return; N.view = b.dataset.v; try { sessionStorage.setItem("cm.nsView", N.view); } catch (err) { /* ignore */ } renderMain(); });
     $("nsFind").addEventListener("input", e => { N.q = e.target.value.trim().toLowerCase(); renderMain(); renderDetail(); });
-    try { N.layout = localStorage.getItem("cm.nsLayout") || "subnet"; N.shape = localStorage.getItem("cm.nsShape") || "map"; } catch (e) { /* ignore */ }
     $("nsMain").addEventListener("click", e => {
-        const l = e.target.closest("[data-lay]");
-        if (l) { N.layout = l.dataset.lay; try { localStorage.setItem("cm.nsLayout", N.layout); } catch (err) { /* ignore */ } renderMain(); return; }
-        const sh = e.target.closest("[data-shape]");
-        if (sh) { N.shape = sh.dataset.shape; try { localStorage.setItem("cm.nsShape", N.shape); } catch (err) { /* ignore */ } renderMain(); return; }
         if (e.target.closest("[data-clear]")) { e.preventDefault(); selectWeb(N.web); return; }
-        if (e.target.matches("[data-all]")) { N.allLines = e.target.checked; renderMain(); return; }
+        if (e.target.matches("[data-ext]")) { N.showExt = e.target.checked; renderMain(); return; }
         const n = e.target.closest("[data-web]"); if (n) selectWeb(n.dataset.web);
     });
     $("nsMain").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.dataset.web) selectWeb(e.target.dataset.web); });
