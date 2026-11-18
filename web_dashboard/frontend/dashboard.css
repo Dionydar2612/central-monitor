@@ -1166,6 +1166,10 @@ td.bad{color:#e5484d}
 .ovtbl th.sortable{cursor:pointer;user-select:none;white-space:nowrap}.ovtbl th.sortable:hover,.ovtbl th.sortable.on{color:var(--blue)}
 .ovnet{white-space:nowrap;font-variant-numeric:tabular-nums}.ovnet small{display:block;font-size:11px;color:var(--mut)}
 .ovnet small.wr{color:#c27c00}.ovnet small.cr{color:#e5484d}
+.ovav{white-space:nowrap;font-variant-numeric:tabular-nums}.ovav a{display:block;color:inherit;text-decoration:none;border-radius:6px;padding:2px 4px;margin:-2px -4px}
+.ovav a:hover{background:var(--chip,#eef1f5)}.ovav b{font-weight:600}.ovav small{display:block;font-size:11px;color:var(--mut)}
+.ovav.ok b{color:#0a9a60}.ovav.wr{background:rgba(245,165,36,.12)}.ovav.wr b{color:#c27c00}.ovav.cr{background:rgba(229,72,77,.12)}.ovav.cr b,.ovav.cr small{color:#e5484d}
+.mav{text-decoration:none;font-weight:600}.mav.ok{color:#0a9a60}.mav.wr{color:#c27c00}.mav.cr{color:#e5484d}.mav:hover{text-decoration:underline}
 .ostag.lx{background:#4b5563}
 
 /* ---- 10. รายละเอียดเครื่อง: แท็บ + แผงข้อมูล (machine.js) ---- */
@@ -1452,6 +1456,12 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .sntabs button.on{background:var(--bg);border-bottom-color:var(--blue);color:var(--blue)}
 .sntabs button:disabled{opacity:.4;cursor:default}
 .sngrid,.devgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 18px}
+.avgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:14px}
+.avc{border:1px solid var(--line,#e3e7ee);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:3px}
+.avc small{color:var(--mut);font-size:12px}.avc b{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.avc span{font-size:12px;color:var(--mut)}.avc i{display:block;height:5px;border-radius:3px;background:rgba(229,72,77,.35);overflow:hidden}
+.avc i em{display:block;height:100%;background:#0a9a60}
+.avc.ok b{color:#0a9a60}.avc.wr b{color:#c27c00}.avc.wr i em{background:#f5b400}.avc.cr b{color:#e5484d}.avc.cr{border-color:rgba(229,72,77,.45)}
 .sngrid small,.devgrid small{display:block;color:var(--mut);font-size:12px}.sngrid b,.devgrid b{font-size:14px;font-weight:600}
 .snover{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
 .snbig{display:flex;flex-direction:column;align-items:center;min-width:200px}.snbt{font-weight:600;align-self:flex-start}.snbv{font-size:22px;font-weight:700}

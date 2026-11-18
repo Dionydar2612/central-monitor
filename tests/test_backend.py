@@ -252,6 +252,33 @@ class Backend(unittest.TestCase):
         for w in d["webs"].values():                                         # แยกรายเครื่อง
             self.assertEqual(set(w), {"cpu", "memory", "disk", "traffic", "alarms"})
 
+    def test_availability(self):
+        """คอลัมน์ Availability (แทน Alerts): uptime 24h / 7d / 30d จากช่วง down ของ sensor availability"""
+        import json as _j, time as _t, sensors_service
+        now = _t.time()
+        with open(sensors_service.SENSORS_FILE, "w") as f:
+            _j.dump({"sensors": [
+                {"id": "web-01:availability", "web": "web-01", "kind": "availability", "name": "Availability", "status": "down",
+                 "since": now - 600, "incident": {"start": now - 600, "worst": "down"}},
+                {"id": "web-02:availability", "web": "web-02", "kind": "availability", "name": "Availability", "status": "ok",
+                 "since": now - 86400 * 3}]}, f)
+        with open(sensors_service.INCIDENTS_FILE, "w") as f:
+            _j.dump([{"id": "web-01:availability", "web": "web-01", "kind": "availability", "start": now - 4000, "end": now - 3136, "worst": "down"},
+                     {"id": "web-02:availability", "web": "web-02", "kind": "availability", "start": now - 86400 * 5, "end": now - 86400 * 5 + 3600, "worst": "down"},
+                     {"id": "web-02:cpu", "web": "web-02", "kind": "cpu", "start": now - 100, "end": now - 50, "worst": "error"}], f)
+        a = sensors_service.availability_by_web()
+        w1 = a["web-01"]["windows"]["24h"]
+        self.assertEqual(w1["outages"], 2)                                   # ที่จบแล้ว + ที่ยัง down อยู่
+        self.assertAlmostEqual(w1["downtime"], 864 + 600, delta=3)
+        self.assertEqual(a["web-01"]["status"], "down")
+        self.assertEqual(a["web-02"]["uptime_24h"], 100.0)                   # cpu ไม่นับ · down 5 วันก่อน ไม่อยู่ใน 24h
+        self.assertAlmostEqual(a["web-02"]["windows"]["7d"]["downtime"], 3600, delta=1)
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        d = self.c.get("/api/sensors/detail?id=web-02:availability").json
+        self.assertEqual(d["availability"]["windows"]["30d"]["outages"], 1)
+        self.assertIsNotNone(d["availability"]["last_down"])
+        os.remove(sensors_service.SENSORS_FILE); os.remove(sensors_service.INCIDENTS_FILE)
+
     def test_sensor_detail(self):
         import json as _j, time as _t, sensors_service
         self.assertEqual(self.login("admin", "rootpass"), 200)

@@ -28,6 +28,21 @@ function fmtDur(sec) {
 function ago(v) { const n = ts(v); return n ? fmtDur((Date.now() - n) / 1000) : "-"; }
 const fmt = (v, u) => CMGauge.fmt(v, u);
 
+/* sensor Availability: Uptime / Downtime 24h · 7d · 30d (มาจากตาราง WEB status คอลัมน์ Availability) */
+function availHtml(a) {
+    if (!a || !a.windows) return "";
+    const lbl = { "24h": "24 ชั่วโมง", "7d": "7 วัน", "30d": "30 วัน" };
+    const cls = p => p >= 99.9 ? "ok" : p >= 99 ? "wr" : "cr";
+    const down = a.status === "down" || a.status === "error";
+    const cards = Object.entries(a.windows).map(([k, w]) => `<div class="avc ${cls(w.uptime_pct)}"><small>Uptime ${esc(lbl[k] || k)}</small>`
+        + `<b>${w.uptime_pct >= 99.995 ? "100" : w.uptime_pct.toFixed(w.uptime_pct >= 99 ? 3 : 2)}%</b>`
+        + `<i><em style="width:${Math.max(0, Math.min(100, w.uptime_pct))}%"></em></i>`
+        + `<span>Downtime ${esc(w.downtime ? fmtDur(w.downtime) : "0")} · ${w.outages} ครั้ง</span></div>`).join("");
+    const now = a.since ? `<div class="avc ${down ? "cr" : "ok"}"><small>สถานะตอนนี้</small><b>${down ? "Down" : "Up"}</b>`
+        + `<span>มาแล้ว ${esc(ago(a.since))}</span><span>นานสุด (30 วัน): ${a.longest ? esc(fmtDur(a.longest)) : "-"}</span></div>` : "";
+    return `<div class="avgrid">${now}${cards}</div>`;
+}
+
 function renderHead() {
     const s = N.d.sensor, [icon, label, cls] = ST[s.status] || ST.unknown;
     document.title = `Central Monitor - ${s.web} · ${s.name}`;
@@ -54,7 +69,7 @@ function renderHead() {
         + cell("Interval", `${esc(d.interval)} s`)
         + cell("Limits", s.warning != null || s.error != null ? `warning ${esc(fmt(s.warning, s.unit))} · error ${esc(fmt(s.error, s.unit))}${s.low_is_bad ? " (ต่ำกว่า = แจ้ง)" : ""}` : "-")
         + cell("ID", `<code>${esc(s.id)}</code>`)
-        + `</div>`;
+        + `</div>` + availHtml(d.availability);
     [...$("snTabs").children].forEach(b => b.classList.toggle("on", b.dataset.t === N.tab));
     const noGraph = !d.has_graph;
     [...$("snTabs").children].forEach(b => { if (["live", "2d", "30d", "365d"].includes(b.dataset.t)) b.disabled = noGraph; });

@@ -7,7 +7,7 @@ overview_service.py - ภาพรวมทุกเครื่อง (กา�
         ไทล์: Total / Up / Down / Warning / Critical + ค่าเฉลี่ย CPU / RAM / Disk ของเครื่องที่ online
         สรุปต่อกลุ่ม (groups): จำนวน + ค่าเฉลี่ย
         1 แถวต่อเครื่อง: ชื่อ, OS, IP, สถานะ (OK / WARNING / PROBLEM / DOWN), CPU, Memory, Disk (mount ที่เต็มสุด),
-                        Network (MB/s รับ+ส่ง), Ping (ms / loss %), Alerts (sensor ที่มีปัญหา), Last pull
+                        Network (MB/s รับ+ส่ง), Ping (ms / loss %), Availability (uptime 24h + up/down มานานเท่าไหร่), Last pull
     เกณฑ์ OK / WARNING / PROBLEM = สถานะจาก sensor_monitor (เกณฑ์ของ OS + เฉพาะเครื่อง)
         ไม่มีผล sensor -> metrics_service.classify_state
 
@@ -28,7 +28,7 @@ from checks_service import get_checks
 from clients import prom_value, prom_vector
 from metrics_service import PROMQL, _labels, _round, classify_state, get_web_prometheus_config
 from settings import load_web_targets
-from sensors_service import target_states
+from sensors_service import availability_by_web, target_states
 from system_state import last_pull_time, pull_interval_seconds
 
 CACHE_TTL = 5
@@ -222,6 +222,17 @@ def get_overview():
     batch = _batch()
     with ThreadPoolExecutor(max_workers=8) as pool:
         servers = list(pool.map(lambda t: _server(t, states, batch), targets))
+
+    # Uptime / Downtime ต่อเครื่อง (คอลัมน์ Availability แทน Alerts)
+    try:
+        avail = availability_by_web()
+    except Exception as e:
+        print(f"[OVERVIEW] availability error: {e}")
+        avail = {}
+    for s in servers:
+        a = avail.get(s["web"]) or {}
+        s["availability"] = a.get("uptime_24h")
+        s["avail"] = {k: a.get(k) for k in ("status", "since", "uptime_24h", "outages_24h", "downtime_24h", "sensor_id")} if a else None
 
     try:
         checks = get_checks()

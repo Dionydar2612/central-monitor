@@ -336,6 +336,12 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## คอลัมน์ Availability แทน Alerts (ตาราง WEB status)
+- แสดง Uptime 24 ชม. (%) + Up / Down มานานเท่าไหร่ + จำนวนครั้งที่ down ใน 24 ชม. · สี: ≥ 99.9% เขียว, ≥ 99% เหลือง, ต่ำกว่า / down อยู่ = แดง · เรียงตามคอลัมน์ได้
+- คลิก -> หน้า sensor Availability ของเครื่อง: การ์ด สถานะตอนนี้ (มาแล้วนานเท่าไหร่, down นานสุด 30 วัน) + Uptime 24 ชม. / 7 วัน / 30 วัน (downtime + จำนวนครั้ง) + ประวัติ down
+- มุมมองการ์ดแสดง uptime แทนจำนวน alert · จำนวน sensor ที่มีปัญหายังดูได้จาก tooltip ของ Status
+- backend: `sensors_service.availability_by_web()` / `availability_stats()` (downtime = ช่วงที่ sensor availability เป็น down / error จาก incidents.json + ที่ยังเป็นอยู่) · `/api/overview` เพิ่ม `servers[].avail` · `/api/sensors/detail` เพิ่ม `availability`
+
 ## log ของ Windows โหมด pull
 - เดิมโหมด pull ไม่มี log เพราะเครื่อง Windows ส่งออกไปหา central ไม่ได้ -> ใช้ช่องทางเดียวกับ metrics (central ต่อเข้า :9182) แทน
 - `agent/windows/cm-logs.ps1` (scheduled task `CentralMonitorLogs` ทุก 1 นาที, SYSTEM): อ่าน Event Log (Critical / Error / Warning ต่อจาก RecordId ครั้งก่อน) + ไฟล์ log (ส่วนที่เพิ่ม เฉพาะบรรทัด error / warn) -> textfile `cm_logs.prom` ของ windows_exporter: `cm_log_entry{seq,type,body}` เก็บย้อนหลัง ~3 ชม. / 1000 รายการ · ตั้งค่าใน `%ProgramData%\central-monitor-agent\cm-logs.json`

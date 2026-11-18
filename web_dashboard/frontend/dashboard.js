@@ -970,6 +970,31 @@ function sortServers(list) {
     });
 }
 
+/* ---------- Availability (แทน Alerts): uptime 24h + Up/Down มานานเท่าไหร่ · คลิก = หน้า sensor Availability ---------- */
+function shortDur(sec) {
+    sec = Math.max(0, Math.round(Number(sec) || 0));
+    const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${sec}s`;
+}
+function availInfo(w) {
+    const a = w.avail;
+    if (w.paused || !a || !hasValue(a.uptime_24h)) return null;
+    const up = Number(a.uptime_24h), down = a.status === "down" || a.status === "error";
+    const since = a.since ? Date.now() / 1000 - Number(a.since) : null;
+    const cls = down ? "cr" : up >= 99.9 ? "ok" : up >= 99 ? "wr" : "cr";
+    const pct = (up >= 99.995 ? 100 : up).toFixed(up >= 99.995 ? 0 : up >= 99 ? 2 : 1) + "%";
+    const state = since == null ? "" : `${down ? "Down" : "Up"} ${shortDur(since)}`;
+    const outs = Number(a.outages_24h) || 0;
+    const href = "/sensor?id=" + encodeURIComponent(a.sensor_id || `${w.web}:availability`);
+    const tip = `Uptime 24h ${pct} · ${outs} outage(s) · downtime ${shortDur(a.downtime_24h)}${state ? " · " + state : ""}`;
+    return { cls, pct, state, outs, href, tip, down };
+}
+function availCell(w) {
+    const i = availInfo(w);
+    if (!i) return `<td class="ovav">-</td>`;
+    return `<td class="ovav ${i.cls}"><a href="${i.href}" title="${escapeHtml(i.tip)}"><b>${i.pct}</b><small>${escapeHtml(i.state)}${i.outs ? ` · ${i.outs} down` : ""}</small></a></td>`;
+}
+
 function serverRows(list, cur, keepOrder) {
     const cell = (key, v) => {
         const ok = hasValue(v) && Number.isFinite(Number(v));
@@ -988,15 +1013,14 @@ function serverRows(list, cur, keepOrder) {
         return `<th data-sort="${key}" class="sortable${on ? " on" : ""}" aria-sort="${on ? (S.sort.dir === "asc" ? "ascending" : "descending") : "none"}">${label}${on ? (S.sort.dir === "asc" ? " ▲" : " ▼") : ""}</th>`;
     };
     const op = canOperate();
-    return `<table class="ovtbl"><thead><tr>${th("web", "Name")}${th("os", "OS")}${th("host", "IP")}${th("state", "Status")}${th("cpu", "CPU avg 5m")}${th("memory", "Memory %")}${th("disk", "Disk %")}${th("net", "Network")}${th("alerts", "Alerts")}<th>Last pull</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
+    return `<table class="ovtbl"><thead><tr>${th("web", "Name")}${th("os", "OS")}${th("host", "IP")}${th("state", "Status")}${th("cpu", "CPU avg 5m")}${th("memory", "Memory %")}${th("disk", "Disk %")}${th("net", "Network")}${th("availability", "Availability")}<th>Last pull</th>${op ? "<th></th>" : ""}</tr></thead><tbody>` +
         (keepOrder ? list : sortServers(list)).map(w => {
             const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
             const os = w.os === "windows" ? `<span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent">Win</span>` : `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
-            const al = Number(w.alerts) || 0;
-            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}<td class="ovv ${w.paused ? "" : al ? "cr" : "ok"}"${why}>${w.paused ? "-" : al}</td><td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
 
@@ -1080,14 +1104,14 @@ function cardsHtml(list, cur) {
     };
     return `<div class="mcards">${bySeverity(list).map(w => {
         const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
-        const al = Number(w.alerts) || 0;
+        const av = availInfo(w);
         const btn = op ? `<button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button>` : "";
         const why = w.problems && w.problems.length ? `<div class="mwhy" title="${escapeHtml(w.problems.join(", "))}">${escapeHtml(w.problems.slice(0, 2).join(" · "))}</div>` : "";
         return `<div class="mcard ${cls}" data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0">
 <div class="mtop"><b>${escapeHtml(w.web)}</b>${osTag(w)}<span class="ovst ${cls}">${escapeHtml(label)}</span></div>
 <div class="mhost">${escapeHtml(w.host || w.instance || "-")}</div>
 ${w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` : bar("cpu", "CPU", w.cpu) + bar("memory", "Mem", w.memory) + bar("disk", "Disk", w.disk)}
-${why}<div class="mfoot"><span>${al ? `<b class="cr">${al} alert${al > 1 ? "s" : ""}</b>` : "ไม่มี alert"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
+${why}<div class="mfoot"><span>${av ? `<a class="mav ${av.cls}" href="${av.href}" title="${escapeHtml(av.tip)}">${av.pct}${av.state ? ` · ${escapeHtml(av.state)}` : ""}</a>` : "-"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
     }).join("")}</div>`;
 }
 /* ---------- Sunburst: วงใน = กลุ่ม (ทีละชั้น) → เครื่อง → วงนอก = sensor ของเครื่อง  สีตามสถานะแย่สุด ---------- */

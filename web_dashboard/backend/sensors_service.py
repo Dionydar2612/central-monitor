@@ -291,4 +291,67 @@ def get_detail(sensor_id, days=30):
     return {"sensor": sensor, "updated_at": data.get("updated_at"), "interval": (data.get("options") or {}).get("interval", 30),
             "days": days, "downtime_pct": round(down / (days * 86400) * 100, 4), "uptime_pct": round(100 - down / (days * 86400) * 100, 4),
             "last_up": last_up, "last_down": last_down, "incidents": history,
+            "availability": availability_stats(_avail_rows([i for i in rows if i.get("state") != "ongoing"], sensor, now), sensor, now)
+            if sensor.get("kind") == "availability" else None,
             "has_graph": sensor.get("kind") in ("cpu", "memory", "disk", "availability") or bool(sensor.get("query"))}
+
+
+# ------------------------------------------------------------------
+# Availability (Uptime / Downtime) ต่อเครื่อง: sensor <เครื่อง>:availability
+#   downtime = ช่วงที่ sensor availability เป็น down / error (incidents.json + ที่ยังเป็นอยู่)
+#   ตาราง WEB status (คอลัมน์ Availability) + หน้า sensor availability
+# ------------------------------------------------------------------
+
+AVAIL_WINDOWS = (("24h", 86400), ("7d", 7 * 86400), ("30d", 30 * 86400))
+
+
+def _avail_rows(incidents, sensor, now):
+    """ช่วง down ของ sensor availability 1 ตัว (ที่จบแล้ว + ที่ยังเป็นอยู่)"""
+    rows = [i for i in incidents if i.get("worst") in ("down", "error")]
+    inc = (sensor or {}).get("incident")
+    if inc and inc.get("start") and inc.get("worst") in ("down", "error"):
+        rows.append({"start": inc["start"], "end": None, "worst": inc.get("worst"), "state": "ongoing"})
+    return rows
+
+
+def _down_seconds(rows, since, now):
+    total = 0.0
+    for i in rows:
+        a, b = max(float(i.get("start") or now), since), min(float(i.get("end") or now), now)
+        if b > a:
+            total += b - a
+    return total
+
+
+def availability_stats(rows, sensor, now=None):
+    """สรุป Uptime / Downtime ของเครื่อง 1 เครื่อง (rows = _avail_rows)"""
+    now = now or time.time()
+    out = {"windows": {}}
+    for key, sec in AVAIL_WINDOWS:
+        down = _down_seconds(rows, now - sec, now)
+        out["windows"][key] = {"uptime_pct": round(100 - down / sec * 100, 3), "downtime": round(down),
+                               "outages": sum(1 for i in rows if float(i.get("end") or now) >= now - sec)}
+    status = (sensor or {}).get("status")
+    out.update({
+        "status": status,
+        "since": (sensor or {}).get("since"),                # สถานะนี้ตั้งแต่เมื่อไหร่ (Up for / Down for)
+        "uptime_24h": out["windows"]["24h"]["uptime_pct"],
+        "outages_24h": out["windows"]["24h"]["outages"],
+        "downtime_24h": out["windows"]["24h"]["downtime"],
+        "last_down": max((float(i.get("start") or 0) for i in rows), default=None) or None,
+        "longest": max((float(i.get("end") or now) - float(i.get("start") or now) for i in rows
+                        if float(i.get("end") or now) >= now - 30 * 86400), default=0),
+        "sensor_id": (sensor or {}).get("id"),
+    })
+    return out
+
+
+def availability_by_web():
+    """{เครื่อง: availability_stats}  ทุกเครื่องที่มี sensor availability"""
+    now = time.time()
+    sensors = {s.get("web"): s for s in load_sensors().get("sensors", []) if s.get("kind") == "availability"}
+    incs = {}
+    for i in _load_incidents():
+        if i.get("kind") == "availability" or str(i.get("id") or "").endswith(":availability"):
+            incs.setdefault(i.get("web"), []).append(i)
+    return {web: availability_stats(_avail_rows(incs.get(web, []), s, now), s, now) for web, s in sensors.items()}
