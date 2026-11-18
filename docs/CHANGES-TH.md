@@ -336,6 +336,10 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## Network & Security: แผนผังจัดใหม่ให้เป็นระเบียบ + มุมมองรายการ
+- แผนผัง: 1 คอลัมน์ต่อ Gateway (เรียงตาม IP) · สายหลักซ้ายคอลัมน์แตกเข้า switch ของแต่ละวง (ไม่มีเส้นอ้อม / ทับกรอบ) · Internet ต่อทุก gateway ผ่านสาย WAN ขอบขวา · กว้างเกินหน้า = ขึ้นแถวใหม่ · วงเรียงตาม network · เครื่องในวงเรียงตาม IP · วงที่ไม่รู้ gateway = คอลัมน์ "ไม่ทราบ Gateway"
+- มุมมอง "รายการ": ต้นไม้ Internet -> Gateway -> วง -> เครื่อง (IP, OS, ผลตรวจ, Firewall, ขาเข้า / ขาออก) + IP ที่ไม่ได้ monitor ของแต่ละวง · คลิกเครื่อง = รายละเอียด
+
 ## Network & Security: แผนผังแบบ topology
 - Internet (เมฆ) ── Gateway (router ของแต่ละ default gateway) ── switch ของแต่ละวง ── เครื่อง (ไอคอน server = Linux, PC = Windows, สีตามผลตรวจ) พร้อมชื่อ + IP
 - จัดกรอบตาม Subnet (ปริยาย) หรือ ตามกลุ่ม · IP ภายในที่คุยกับเครื่องเราแต่ไม่ได้ monitor แสดงเป็นไอคอนสีเทาในวงเดียวกัน (ไม่อยู่ในวงไหน = กรอบ "LAN อื่น")
