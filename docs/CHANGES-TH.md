@@ -336,6 +336,13 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## จัดลำดับเครื่อง / กลุ่มเอง + สไลด์ภาพรวมกลุ่ม
+- WEB status (ตาราง / ไทล์ / การ์ด): ปุ่ม "↕ จัดลำดับ" (operator ขึ้นไป) -> ลากเครื่องวางบนเครื่อง / ลากหัวกลุ่มวางบนกลุ่มชั้นเดียวกัน (ครึ่งบน = ก่อน, ครึ่งล่าง = หลัง) · "รีเซ็ตลำดับ" = กลับเป็นปกติ
+  · ลำดับใช้ร่วมกันทุกคน เก็บที่ data/state/ui_order.json (`GET / PUT /api/ui-order`, Activity log `ui.order`) ไม่แตะ puller.yaml
+  · กดหัวคอลัมน์เพื่อเรียงชั่วคราวยังใช้ได้ (กดซ้ำจนไม่เรียง = กลับเป็นลำดับที่จัดไว้) · ไทล์ / การ์ด: มีลำดับที่จัดไว้ = ใช้ลำดับนั้น ไม่งั้นเรียงตามความรุนแรงเหมือนเดิม
+- สไลด์: เลือก "ทีละกลุ่ม" (ปริยาย) / "ทีละเครื่อง"
+  · ทีละกลุ่ม: 1 สไลด์ต่อกลุ่ม (ตามลำดับกลุ่ม) = จำนวนเครื่องแยกสถานะ, CPU / Memory / Disk สูงสุดพร้อมชื่อเครื่อง, Availability ต่ำสุด 24h (ไม่ใช้ค่าเฉลี่ย), การ์ดย่อยทุกเครื่อง, log 5 รายการล่าสุดของทั้งกลุ่ม (ERROR ก่อนเสมอ พร้อมชื่อเครื่อง)
+
 ## agent (push) ส่งเข้า central ผ่านพอร์ตที่ 2 ได้ (เช่น 9182)
 - docker/.env: `CENTRAL_AGENT_BIND2=0.0.0.0` + `CENTRAL_AGENT_PORT2=9182` -> central-agent-gw รับทั้ง 4318 และ 9182 (ปริยาย 127.0.0.1:4319 = ไม่เปิดออกนอก)
 - Settings > เครื่อง (Windows, push) > การเชื่อมต่อ: "พอร์ตที่ส่งไป central" (ว่าง = 4318) -> puller.yaml `agent.port` · Make command / precheck ใส่ `-Port 9182` ให้เอง · เครื่องอื่นยังใช้ 4318 ได้เหมือนเดิม

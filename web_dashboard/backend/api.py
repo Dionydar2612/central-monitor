@@ -85,6 +85,7 @@ import notify_service
 import alert_rules_service
 import host_details
 import netsec_service
+import ui_order_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
 from settings import resolve_web_name
@@ -177,6 +178,8 @@ def _required_role(method, path):
     """role ขั้นต่ำของแต่ละเส้นทาง (ไม่ระบุ = viewer)"""
     if _PAUSE_PATH.match(path) or _NETSEC_REFRESH.match(path):
         return "operator"
+    if path == "/api/ui-order" and method != "GET":
+        return "operator"                          # ลากจัดลำดับเครื่อง / กลุ่ม
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
     if path in ("/settings", "/settings.html") or path.startswith("/api/alert-rules"):
@@ -217,6 +220,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)/pause$"), "check.pause", ("paused",)),
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
+    ("PUT", re.compile(r"^/api/ui-order$"), "ui.order", ()),
     ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
     ("POST", re.compile(r"^/api/sensors/unack$"), "sensor.unack", ("id",)),
     ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note")),
@@ -522,6 +526,20 @@ def notify_settings_test():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 502)
+
+
+@app.get("/api/ui-order")
+def ui_order_get():
+    """ลำดับเครื่อง / กลุ่มที่ลากจัดไว้ (ใช้ร่วมกันทุกคน)"""
+    return jsonify(ui_order_service.get_order())
+
+
+@app.put("/api/ui-order")
+def ui_order_put():
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    return jsonify(ui_order_service.set_order(body))
 
 
 @app.get("/network")

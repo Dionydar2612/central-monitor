@@ -958,7 +958,7 @@ function pillsHtml(counts) {
 const STATE_RANK = { DOWN: 4, PROBLEM: 3, WARNING: 2, HEALTHY: 1, PAUSED: 0 };
 function sortServers(list) {
     const { key, dir } = S.sort || {};
-    if (!key) return list;
+    if (!key) return byOrder(list);                 /* ไม่ได้กดเรียงคอลัมน์ = ลำดับที่จัดไว้ (ลากวาง) */
     const val = w => key === "state" ? STATE_RANK[w.state] ?? -1 : key === "web" || key === "os" || key === "host"
         ? String(w[key] || "").toLowerCase() : (hasValue(w[key]) ? Number(w[key]) : null);
     return [...list].sort((a, b) => {
@@ -1089,7 +1089,7 @@ function bySeverity(list) {
 }
 function osTag(w) { return w.os === "windows" ? `<span class="ostag" title="Windows">Win</span>` : `<span class="ostag lx" title="Linux">Linux</span>`; }
 function tilesHtml(list, cur) {
-    return `<div class="mtiles">${bySeverity(list).map(w => {
+    return `<div class="mtiles">${(hasOrder() ? byOrder(list) : bySeverity(list)).map(w => {
         const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", "na"];
         const v = k => hasValue(w[k]) && Number.isFinite(Number(w[k])) ? Math.round(Number(w[k])) + "%" : "-";
         const tip = `${w.web} · ${label}${w.problems && w.problems.length ? " · " + w.problems.join(", ") : ""}`;
@@ -1102,7 +1102,7 @@ function cardsHtml(list, cur) {
         const ok = hasValue(v) && Number.isFinite(Number(v)), n = ok ? Math.max(0, Math.min(100, Number(v))) : 0;
         return `<div class="mbar"><span>${name}</span><i><em class="${ok ? level(key, v) || "ok" : ""}" style="width:${n}%"></em></i><b>${ok ? Number(v).toFixed(0) + "%" : "-"}</b></div>`;
     };
-    return `<div class="mcards">${bySeverity(list).map(w => {
+    return `<div class="mcards">${(hasOrder() ? byOrder(list) : bySeverity(list)).map(w => {
         const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
         const av = availInfo(w);
         const btn = op ? `<button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button>` : "";
@@ -1114,17 +1114,83 @@ ${w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` 
 ${why}<div class="mfoot"><span>${av ? `<a class="mav ${av.cls}" href="${av.href}" title="${escapeHtml(av.tip)}">${av.pct}${av.state ? ` · ${escapeHtml(av.state)}` : ""}</a>` : "-"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
     }).join("")}</div>`;
 }
-/* ---------- สไลด์: ทีละเครื่อง (จอ NOC) เรียงตาม Priority (Settings > เครื่อง > ทั่วไป) -> ความรุนแรง -> ชื่อ
-   1 สไลด์ = สถานะ + CPU / Memory / Disk + Availability + Network + ปัญหา + log 5 รายการล่าสุด (ERROR ขึ้นก่อนเสมอ)
-   เลื่อนเองทุก SL.sec วินาที · ชี้เมาส์ค้าง / เปิดหน้าต่าง log = หยุดชั่วคราว · ← → เลื่อนเอง ---------- */
-const SL = { web: null, play: true, sec: 15, at: Date.now(), hover: false, logs: {}, timer: null };
-try { const v = JSON.parse(localStorage.getItem("cm.slide") || "{}"); if (v.sec) SL.sec = v.sec; if (v.play === false) SL.play = false; } catch (e) { /* ignore */ }
-function slSave() { try { localStorage.setItem("cm.slide", JSON.stringify({ sec: SL.sec, play: SL.play })); } catch (e) { /* ignore */ } }
+/* ---------- ลำดับที่ผู้ใช้จัดเอง (ลากวางในมุมมอง ตาราง / ไทล์ / การ์ด) ใช้ร่วมกันทุกคน: GET / PUT /api/ui-order
+   S.order = {machines: [ชื่อเครื่อง...], groups: [path กลุ่ม...]}  ไม่อยู่ในรายการ = ต่อท้ายตามลำดับเดิม ---------- */
+function orderIndex(list, key) { const i = list.indexOf(key); return i < 0 ? 1e6 : i; }
+function byOrder(list) {
+    const ms = (S.order && S.order.machines) || [];
+    if (!ms.length) return list;
+    return list.map((w, i) => [w, i]).sort((a, b) => orderIndex(ms, a[0].web) - orderIndex(ms, b[0].web) || a[1] - b[1]).map(x => x[0]);
+}
+function hasOrder() { return !!(S.order && S.order.machines && S.order.machines.length); }
+/* เรียงกลุ่มพี่น้อง: ลำดับที่จัดไว้ -> ชื่อ */
+function groupCmp(a, b) {
+    const gs = (S.order && S.order.groups) || [];
+    return orderIndex(gs, a.path) - orderIndex(gs, b.path) || a.name.localeCompare(b.name);
+}
+/* เรียง path กลุ่มทั้งเส้น (ใช้ในสไลด์ทีละกลุ่ม) "" = ไม่มีกลุ่ม อยู่ท้าย */
+function pathCmp(a, b) {
+    if (!a || !b) return a ? -1 : b ? 1 : 0;
+    const pa = a.split("/"), pb = b.split("/");
+    for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
+        const x = { name: pa[i], path: pa.slice(0, i + 1).join("/") }, y = { name: pb[i], path: pb.slice(0, i + 1).join("/") };
+        const c = groupCmp(x, y);
+        if (c) return c;
+    }
+    return pa.length - pb.length;
+}
+async function loadOrder() {
+    try { S.order = await apiGet("/api/ui-order"); } catch (e) { S.order = S.order || { machines: [], groups: [] }; }
+}
+async function saveOrder() {
+    try {
+        const r = await fetch("/api/ui-order", { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(S.order) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    } catch (e) { alert("บันทึกลำดับไม่สำเร็จ: " + e.message); }
+}
+/* ลากวาง: เครื่อง (data-web) วางบนเครื่อง / กลุ่ม (data-group) วางบนกลุ่มพี่น้อง */
+function moveIn(arr, item, target, after) {
+    const out = arr.filter(x => x !== item);
+    let i = out.indexOf(target);
+    if (i < 0) return out;
+    out.splice(after ? i + 1 : i, 0, item);
+    return out;
+}
+function dropMachine(src, dst, after) {
+    if (!src || !dst || src === dst) return;
+    const all = byOrder((S.webs || []).slice()).map(w => w.web);
+    S.order = { ...(S.order || {}), machines: moveIn(all, src, dst, after) };
+    saveOrder(); renderMachines();
+}
+function dropGroup(src, dst, after) {
+    if (!src || !dst || src === dst) return;
+    const parent = p => p.split("/").slice(0, -1).join("/");
+    if (parent(src) !== parent(dst)) return;                          /* ย้ายได้เฉพาะในชั้นเดียวกัน */
+    const paths = new Set();
+    (S.webs || []).forEach(w => String(w.group || "").split("/").filter(Boolean).forEach((_, i, a) => paths.add(a.slice(0, i + 1).join("/"))));
+    const sorted = [...paths].sort(pathCmp);
+    S.order = { ...(S.order || {}), groups: moveIn(sorted, src, dst, after) };
+    saveOrder(); renderMachines();
+}
+
+/* ---------- สไลด์ (จอ NOC): ทีละกลุ่ม (ภาพรวมของกลุ่ม) หรือ ทีละเครื่อง
+   ทีละเครื่อง: เรียงตาม Priority -> ความรุนแรง -> ชื่อ · ทีละกลุ่ม: ตามลำดับกลุ่ม (ลากจัดในมุมมองตาราง)
+   ทุกสไลด์มี log 5 รายการล่าสุด (ERROR ขึ้นก่อนเสมอ) · เลื่อนเองทุก SL.sec วินาที · ชี้เมาส์ค้าง / เปิดหน้าต่าง log = หยุด ---------- */
+const SL = { key: null, mode: "group", play: true, sec: 15, at: Date.now(), hover: false, logs: {}, timer: null, rt: null };
+try { const v = JSON.parse(localStorage.getItem("cm.slide") || "{}"); if (v.sec) SL.sec = v.sec; if (v.play === false) SL.play = false; if (v.mode) SL.mode = v.mode; } catch (e) { /* ignore */ }
+function slSave() { try { localStorage.setItem("cm.slide", JSON.stringify({ sec: SL.sec, play: SL.play, mode: SL.mode })); } catch (e) { /* ignore */ } }
 function stars(n) { n = Math.max(1, Math.min(5, Number(n) || 3)); return `<span class="prio" title="Priority ${n}/5">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>`; }
 function slideList() {
     const f = (S.ovq || "").trim().toLowerCase();
     return (S.webs || []).filter(w => matchesFilter(w, f)).sort((a, b) =>
         (Number(b.priority) || 3) - (Number(a.priority) || 3) || (SEVERITY[a.state] ?? 3) - (SEVERITY[b.state] ?? 3) || a.web.localeCompare(b.web));
+}
+function worstState(list) { return list.reduce((m, w) => (SEVERITY[w.state] ?? 3) < (SEVERITY[m] ?? 3) ? w.state : m, "PAUSED"); }
+function slideUnits() {
+    if (SL.mode === "machine") return slideList().map(w => ({ key: "m:" + w.web, kind: "machine", w, state: w.state, label: w.web }));
+    const f = (S.ovq || "").trim().toLowerCase(), by = new Map();
+    byOrder((S.webs || []).filter(w => matchesFilter(w, f))).forEach(w => { const g = w.group || ""; if (!by.has(g)) by.set(g, []); by.get(g).push(w); });
+    return [...by.keys()].sort(pathCmp).map(p => ({ key: "g:" + p, kind: "group", path: p, list: by.get(p), state: worstState(by.get(p)), label: p || "ไม่มีกลุ่ม" }));
 }
 async function slideLogs(web) {
     const c = SL.logs[web];
@@ -1132,11 +1198,16 @@ async function slideLogs(web) {
     SL.logs[web] = { ...(c || {}), busy: true, at: Date.now() };
     const one = lv => apiGet(`/api/problems?web=${encodeURIComponent(web)}&level=${lv}&size=5`).catch(() => []);
     const [err, warn] = await Promise.all([one("ERROR"), one("WARN")]);
+    SL.logs[web] = { err: Array.isArray(err) ? err : [], warn: Array.isArray(warn) ? warn : [], at: Date.now(), busy: false };
+    if (S.mview === "slide" && !SL.rt) SL.rt = setTimeout(() => { SL.rt = null; if (S.mview === "slide" && !S.dragging) renderMachines(); }, 300);
+}
+/* log ของหลายเครื่องรวมกัน: ERROR ทั้งหมดก่อน (ใหม่ -> เก่า) แล้วค่อย WARN ให้ครบ 5  null = ยังโหลดไม่ครบ */
+function mergedLogs(webs) {
     const by = (a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || ""));
-    /* ERROR ขึ้นก่อนเสมอ (ใหม่ -> เก่า) แล้วค่อยเติม WARN ให้ครบ 5 */
-    const rows = [...(Array.isArray(err) ? err : []).sort(by), ...(Array.isArray(warn) ? warn : []).sort(by)].slice(0, 5);
-    SL.logs[web] = { rows, at: Date.now(), busy: false };
-    if (S.mview === "slide" && SL.web === web) renderMachines();
+    let err = [], warn = [], ready = true;
+    webs.forEach(w => { slideLogs(w); const c = SL.logs[w]; if (!c || !c.err) { ready = false; return; } err = err.concat(c.err); warn = warn.concat(c.warn); });
+    if (!ready && !err.length && !warn.length) return null;
+    return [...err.sort(by), ...warn.sort(by)].slice(0, 5);
 }
 function slideGauge(w, key, name) {
     const v = w[key], t = (w.thresholds || {})[key] || {}, lv = level(key, v);
@@ -1144,39 +1215,78 @@ function slideGauge(w, key, name) {
                 status: !hasValue(v) ? "unknown" : lv === "cr" ? "error" : lv === "wr" ? "warning" : "ok" };
     return `<div class="slg">${window.CMGauge ? CMGauge.svg(g, { size: "lg" }) : ""}<b class="${lv || (hasValue(v) ? "ok" : "")}">${hasValue(v) ? Number(v).toFixed(1) + "%" : "-"}</b><small>${name}</small></div>`;
 }
-function slideHtml(list) {
-    if (!list.length) return `<div class="empty">ไม่มีเครื่องตามตัวกรอง</div>`;
-    let i = list.findIndex(w => w.web === SL.web);
-    if (i < 0) { i = 0; SL.web = list[0].web; SL.at = Date.now(); }
-    const w = list[i], [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
-    const av = availInfo(w), lg = SL.logs[w.web];
-    slideLogs(w.web);
+function logsHtml(rows, multi) {
+    SL.cur = rows || [];
+    return !rows ? `<div class="sllog-empty">กำลังโหลด log...</div>`
+        : !rows.length ? `<div class="sllog-empty ok">✓ ไม่มี ERROR / WARN</div>`
+        : rows.map((r, k) => `<button type="button" class="sllog${multi ? " multi" : ""} ${r.level === "ERROR" ? "cr" : "wr"}" data-sll="${k}"><span class="lv">${escapeHtml(r.level)}</span><time>${escapeHtml(formatTimestamp(r.timestamp))}</time>${multi ? `<b>${escapeHtml(r.web || "")}</b>` : ""}<em>${escapeHtml(r.type || "")}</em><span class="msg">${escapeHtml(String(r.message || "").slice(0, 300))}</span></button>`).join("");
+}
+function machineSlide(w) {
+    const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
+    const av = availInfo(w);
     const fact = (k, v, c) => `<div class="slf"><small>${k}</small><b class="${c || ""}">${v}</b></div>`;
     const net = hasValue(w.net) ? `${formatNumber(w.net)} MB/s` : "-";
     const ping = [hasValue(w.ping_ms) ? `${Math.round(w.ping_ms)} ms` : "", hasValue(w.packet_loss) ? `${Number(w.packet_loss).toFixed(0)}% loss` : ""].filter(Boolean).join(" · ");
     const probs = (w.problems || []).slice(0, 6);
-    const logs = !lg || !lg.rows ? `<div class="sllog-empty">กำลังโหลด log...</div>`
-        : !lg.rows.length ? `<div class="sllog-empty ok">✓ ไม่มี ERROR / WARN</div>`
-        : lg.rows.map((r, k) => `<button type="button" class="sllog ${r.level === "ERROR" ? "cr" : "wr"}" data-sll="${k}"><span class="lv">${escapeHtml(r.level)}</span><time>${escapeHtml(formatTimestamp(r.timestamp))}</time><em>${escapeHtml(r.type || "")}</em><span class="msg">${escapeHtml(String(r.message || "").slice(0, 300))}</span></button>`).join("");
-    const dots = list.length <= 40 ? `<div class="sldots">${list.map((x, k) => `<button type="button" class="${k === i ? "on " : ""}${(STATE_LABEL[x.state] || [])[1] || ""}" data-sli="${k}" title="${escapeHtml(x.web)}"></button>`).join("")}</div>` : "";
-    return `<div class="slw">
-<div class="slbar"><button type="button" class="svbtn" data-slgo="-1" title="ก่อนหน้า (←)">◀</button><button type="button" class="svbtn" data-slplay title="${SL.play ? "หยุด" : "เล่น"}">${SL.play ? "❚❚" : "▶"}</button><button type="button" class="svbtn" data-slgo="1" title="ถัดไป (→)">▶</button>
-<span class="slpos"><b>${i + 1}</b> / ${list.length}</span><select id="slSec" aria-label="เลื่อนทุก">${[10, 15, 30, 60].map(n => `<option value="${n}"${n === SL.sec ? " selected" : ""}>ทุก ${n} วินาที</option>`).join("")}</select>
-<span class="slprog"><i id="slProg"></i></span></div>
-<div class="slide ${cls}">
+    return `<div class="slide ${cls}">
 <div class="slhead"><div><button type="button" class="slname" data-web="${escapeHtml(w.web)}">${escapeHtml(w.web)}</button>${osTag(w)} ${stars(w.priority)}<div class="slsub">${escapeHtml([w.group || "", w.host || w.instance || ""].filter(Boolean).join(" · "))}</div></div><span class="ovst ${cls} big">${escapeHtml(label)}</span></div>
 <div class="slbody">
 <div class="slgs">${w.paused ? `<div class="empty">ไม่ได้ตรวจ (Paused)</div>` : slideGauge(w, "cpu", "CPU avg 5m") + slideGauge(w, "memory", "Memory") + slideGauge(w, "disk", "Disk")}</div>
 <div class="slfs">${fact("Availability 24h", av ? `<a href="${av.href}">${av.pct}</a>` : "-", av ? av.cls : "")}${fact(av && av.down ? "Down มาแล้ว" : "Up มาแล้ว", av && av.state ? escapeHtml(av.state.replace(/^(Up|Down) /, "")) : "-", av && av.down ? "cr" : "")}${fact("Down 24h", av ? `${av.outs} ครั้ง` : "-", av && av.outs ? "wr" : "")}${fact("Network", net)}${fact("Ping", ping || "-")}${fact("Last pull", w.paused ? "-" : pullHtml(w.last_pull))}</div>
 </div>
 ${probs.length ? `<div class="slprobs">${probs.map(p => `<span>${escapeHtml(p)}</span>`).join("")}</div>` : ""}
-<div class="sllogs"><div class="slh">Log ล่าสุด <small>ERROR ก่อนเสมอ</small></div>${logs}</div>
-</div>${dots}</div>`;
+<div class="sllogs"><div class="slh">Log ล่าสุด <small>ERROR ก่อนเสมอ</small></div>${logsHtml(mergedLogs([w.web]))}</div>
+</div>`;
+}
+/* สไลด์ภาพรวมกลุ่ม: จำนวนตามสถานะ · ค่าสูงสุด (ไม่ใช้ค่าเฉลี่ย) พร้อมชื่อเครื่อง · การ์ดย่อยทุกเครื่อง · log ของกลุ่ม */
+function groupSlide(u) {
+    const list = u.list, [, cls] = STATE_LABEL[u.state] || ["", ""];
+    const n = st => list.filter(w => w.state === st).length;
+    const top = (key, low) => {
+        const xs = list.filter(w => !w.paused && hasValue(w[key]));
+        if (!xs.length) return null;
+        return xs.reduce((m, w) => (low ? Number(w[key]) < Number(m[key]) : Number(w[key]) > Number(m[key])) ? w : m);
+    };
+    const peak = (k, name) => { const w = top(k); return w ? `<div class="slf"><small>${name} สูงสุด</small><b class="${level(k, w[k]) || "ok"}">${Number(w[k]).toFixed(1)}%</b><span>${escapeHtml(w.web)}</span></div>` : ""; };
+    const aw = top("availability", true);
+    const tile = (label, v, c) => `<div class="slt ${c}"><b>${v}</b><small>${label}</small></div>`;
+    const bar = (w, key, name) => {
+        const v = w[key], ok = hasValue(v), pct = ok ? Math.max(0, Math.min(100, Number(v))) : 0;
+        return `<div class="mbar"><span>${name}</span><i><em class="${ok ? level(key, v) || "ok" : ""}" style="width:${pct}%"></em></i><b>${ok ? Number(v).toFixed(0) + "%" : "-"}</b></div>`;
+    };
+    const mini = w => {
+        const [l, c] = STATE_LABEL[w.state] || [w.state || "-", ""], av = availInfo(w);
+        return `<div class="slmini ${c}"><div class="slmh"><button type="button" class="slname sm" data-web="${escapeHtml(w.web)}">${escapeHtml(w.web)}</button>${osTag(w)}<span class="ovst ${c}">${escapeHtml(l)}</span></div>`
+            + (w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` : bar(w, "cpu", "CPU") + bar(w, "memory", "Mem") + bar(w, "disk", "Disk"))
+            + `<div class="slmf">${av ? `<a class="mav ${av.cls}" href="${av.href}">${av.pct}</a>${av.state ? ` · ${escapeHtml(av.state)}` : ""}` : "-"}</div>`
+            + ((w.problems || []).length ? `<div class="mwhy">${escapeHtml(w.problems.slice(0, 2).join(" · "))}</div>` : "") + `</div>`;
+    };
+    const crumb = u.path ? u.path.split("/").map(escapeHtml).join(" <i>›</i> ") : "ไม่มีกลุ่ม";
+    return `<div class="slide ${cls}">
+<div class="slhead"><div><div class="slgname">${crumb}</div><div class="slsub">ภาพรวมกลุ่ม · ${list.length} เครื่อง</div></div><span class="ovst ${cls} big">${escapeHtml((STATE_LABEL[u.state] || ["-"])[0])}</span></div>
+<div class="sltiles">${tile("เครื่อง", list.length, "tot")}${tile("OK", n("HEALTHY"), "ok")}${tile("Warning", n("WARNING"), n("WARNING") ? "wr" : "")}${tile("Problem", n("PROBLEM"), n("PROBLEM") ? "cr" : "")}${tile("Down", n("DOWN"), n("DOWN") ? "cr" : "")}${tile("Paused", n("PAUSED"), "")}</div>
+<div class="slfs four">${peak("cpu", "CPU")}${peak("memory", "Memory")}${peak("disk", "Disk")}${aw ? `<div class="slf"><small>Availability ต่ำสุด 24h</small><b class="${availInfo(aw) ? availInfo(aw).cls : ""}">${Number(aw.availability).toFixed(2)}%</b><span>${escapeHtml(aw.web)}</span></div>` : ""}</div>
+<div class="slminis">${list.map(mini).join("")}</div>
+<div class="sllogs"><div class="slh">Log ล่าสุดของกลุ่ม <small>ERROR ก่อนเสมอ</small></div>${logsHtml(mergedLogs(list.map(w => w.web)), true)}</div>
+</div>`;
+}
+function slideHtml(units) {
+    const seg = `<span class="vseg slmode"><button type="button" data-slmode="group" class="${SL.mode !== "machine" ? "on" : ""}">ทีละกลุ่ม</button><button type="button" data-slmode="machine" class="${SL.mode === "machine" ? "on" : ""}">ทีละเครื่อง</button></span>`;
+    if (!units.length) return `<div class="slw"><div class="slbar">${seg}</div><div class="empty">ไม่มีเครื่องตามตัวกรอง</div></div>`;
+    let i = units.findIndex(u => u.key === SL.key);
+    if (i < 0) { i = 0; SL.key = units[0].key; SL.at = Date.now(); }
+    const u = units[i];
+    const dots = units.length <= 60 ? `<div class="sldots">${units.map((x, k) => `<button type="button" class="${k === i ? "on " : ""}${(STATE_LABEL[x.state] || [])[1] || ""}" data-sli="${k}" title="${escapeHtml(x.label)}"></button>`).join("")}</div>` : "";
+    return `<div class="slw">
+<div class="slbar">${seg}<button type="button" class="svbtn" data-slgo="-1" title="ก่อนหน้า (←)">◀</button><button type="button" class="svbtn" data-slplay title="${SL.play ? "หยุด" : "เล่น"}">${SL.play ? "❚❚" : "▶"}</button><button type="button" class="svbtn" data-slgo="1" title="ถัดไป (→)">▶</button>
+<span class="slpos"><b>${i + 1}</b> / ${units.length}</span><select id="slSec" aria-label="เลื่อนทุก">${[10, 15, 30, 60].map(n => `<option value="${n}"${n === SL.sec ? " selected" : ""}>ทุก ${n} วินาที</option>`).join("")}</select>
+<span class="slprog"><i id="slProg"></i></span></div>
+${u.kind === "group" ? groupSlide(u) : machineSlide(u.w)}${dots}</div>`;
 }
 function slideGo(d) {
-    const list = slideList(); if (!list.length) return;
-    const i = Math.max(0, list.findIndex(w => w.web === SL.web));
-    SL.web = list[(i + d + list.length) % list.length].web; SL.at = Date.now();
+    const units = slideUnits(); if (!units.length) return;
+    const i = Math.max(0, units.findIndex(u => u.key === SL.key));
+    SL.key = units[(i + d + units.length) % units.length].key; SL.at = Date.now();
     renderMachines();
 }
 function slideTick() {
@@ -1292,7 +1402,7 @@ function serversHtml(list, cur) {
 function groupHtml(n, cur, depth, forceOpen) {
     const open = forceOpen || !S.closed.has(n.path);
     const body = !open ? "" :
-        `<div class="gbody">${serversHtml(n.servers, cur)}${n.checks.length ? checkTables(n.checks) : ""}${[...n.kids.values()].sort((a, b) => a.name.localeCompare(b.name)).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
+        `<div class="gbody">${serversHtml(n.servers, cur)}${n.checks.length ? checkTables(n.checks) : ""}${[...n.kids.values()].sort(groupCmp).map(k => groupHtml(k, cur, depth + 1, forceOpen)).join("")}</div>`;
     const items = n.servers.length + n.checks.length;
     return `<div class="gnode" style="--d:${depth}"><div class="ghead" data-group="${escapeHtml(n.path)}" role="button" tabindex="0" aria-expanded="${open}"><i class="caret">${open ? "▾" : "▸"}</i><span class="gname">${escapeHtml(n.name)}</span>${items && !open ? `<span class="gsub">${items} item${items === 1 ? "" : "s"}</span>` : ""}<span class="gpills">${pillsHtml(n.counts)}</span></div>${body}</div>`;
 }
@@ -1327,6 +1437,7 @@ async function loadApps() {
 }
 
 function renderMachines(ov) {
+    if (S.dragging) { S.ov = ov || S.ov; S.pendingRender = true; return; }   /* กำลังลากอยู่: วาดทีหลัง */
     S.ov = ov || S.ov;
     ov = S.ov || {};
     const webs = Array.isArray(ov.servers) ? ov.servers : [];
@@ -1362,12 +1473,20 @@ function renderMachines(ov) {
 
     const f = (S.ovq || "").trim().toLowerCase();
     const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
-    const tops = [...tree.kids.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const tops = [...tree.kids.values()].sort(groupCmp);
     /* เครื่อง/check ที่ไม่ได้ตั้งกลุ่ม: แสดงตารางตรง ๆ ไม่มีหัวกลุ่ม (กลุ่มแสดงเฉพาะที่ตั้งชื่อไว้) */
     const loose = (tree.servers.length ? `<div class="gloose">${serversHtml(tree.servers, cur)}</div>` : "") +
         (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "");
     document.querySelectorAll("#ovView button").forEach(b => b.classList.toggle("on", b.dataset.view === S.mview));
     q("#ovExpand").hidden = q("#ovCollapse").hidden = ["problems", "sunburst", "slide"].includes(S.mview);
+    /* จัดลำดับ (ลากวาง): เฉพาะ ตาราง / ไทล์ / การ์ด และ operator ขึ้นไป */
+    const arrangeOk = canOperate() && ["table", "tiles", "cards"].includes(S.mview);
+    if (!arrangeOk) S.arrange = false;
+    q("#ovArrange").hidden = !arrangeOk;
+    q("#ovArrange").classList.toggle("on", !!S.arrange);
+    q("#ovArrange").textContent = S.arrange ? "✓ เสร็จ" : "↕ จัดลำดับ";
+    q("#ovOrderReset").hidden = !S.arrange;
+    q("#mach").classList.toggle("arranging", !!S.arrange);
     q("#mach").classList.remove("sbmode");
     if (S.mview === "sunburst" && webs.length) {
         const list = webs.filter(w => matchesFilter(w, f));
@@ -1377,7 +1496,7 @@ function renderMachines(ov) {
         return;
     }
     if (S.mview === "slide") {
-        q("#mach").innerHTML = webs.length ? slideHtml(slideList()) : `<div class="empty">No WEB configured - open Settings and add a target</div>`;
+        q("#mach").innerHTML = webs.length ? slideHtml(slideUnits()) : `<div class="empty">No WEB configured - open Settings and add a target</div>`;
         if (!SL.timer) SL.timer = setInterval(slideTick, 500);
         return;
     }
@@ -1392,6 +1511,7 @@ function renderMachines(ov) {
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
         : (tops.length || loose) ? loose + tops.map(n => groupHtml(n, cur, 0, !!f)).join("") : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
+    if (S.arrange) q("#mach").querySelectorAll("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]").forEach(n => { n.draggable = true; });
 }
 
 async function togglePause(btn) {
@@ -2573,6 +2693,40 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#mach").addEventListener("keydown", e => {
         if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-web],[data-group],[data-wm]")) { e.preventDefault(); e.target.click(); }
     });
+    /* ลากวางจัดลำดับ: เครื่องวางบนเครื่อง / กลุ่มวางบนกลุ่มชั้นเดียวกัน (ครึ่งบน = ก่อน, ครึ่งล่าง = หลัง) */
+    const dragEl = e => e.target.closest && e.target.closest("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]");
+    const clearDrop = () => q("#mach").querySelectorAll(".dropb, .dropa").forEach(n => n.classList.remove("dropb", "dropa"));
+    const after = (e, el) => { const r = el.getBoundingClientRect(); return el.matches(".mtile, .mcard") ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2; };
+    q("#mach").addEventListener("dragstart", e => {
+        const el = S.arrange && dragEl(e); if (!el) return;
+        S.dragging = el.dataset.web ? { kind: "web", id: el.dataset.web } : { kind: "group", id: el.dataset.group };
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", S.dragging.id); } catch (err) { /* ignore */ }
+        el.classList.add("dragsrc");
+    });
+    q("#mach").addEventListener("dragover", e => {
+        const el = S.dragging && dragEl(e); if (!el) return;
+        if ((S.dragging.kind === "web") !== !!el.dataset.web) return;
+        e.preventDefault(); clearDrop(); el.classList.add(after(e, el) ? "dropa" : "dropb");
+    });
+    q("#mach").addEventListener("drop", e => {
+        const el = S.dragging && dragEl(e), d = S.dragging; if (!el) return;
+        e.preventDefault(); clearDrop();
+        const aft = after(e, el);
+        S.dragging = null;
+        if (d.kind === "web" && el.dataset.web) dropMachine(d.id, el.dataset.web, aft);
+        else if (d.kind === "group" && el.dataset.group) dropGroup(d.id, el.dataset.group, aft);
+    });
+    q("#mach").addEventListener("dragend", () => {
+        clearDrop(); q("#mach").querySelectorAll(".dragsrc").forEach(n => n.classList.remove("dragsrc"));
+        if (S.dragging) { S.dragging = null; }
+        if (S.pendingRender) { S.pendingRender = false; renderMachines(); }
+    });
+    q("#ovArrange").addEventListener("click", () => { S.arrange = !S.arrange; renderMachines(); });
+    q("#ovOrderReset").addEventListener("click", async () => {
+        if (!confirm("ล้างลำดับที่จัดไว้ กลับเป็นลำดับปกติ?")) return;
+        S.order = { machines: [], groups: [] }; await saveOrder(); renderMachines();
+    });
     q("#mach").addEventListener("change", e => {
         if (e.target.id === "slSec") { SL.sec = Number(e.target.value) || 15; SL.at = Date.now(); slSave(); }
     });
@@ -2601,9 +2755,11 @@ document.addEventListener("DOMContentLoaded", () => {
         if (sg) { slideGo(Number(sg.dataset.slgo)); return; }
         if (e.target.closest("[data-slplay]")) { SL.play = !SL.play; SL.at = Date.now(); slSave(); renderMachines(); return; }
         const sd = e.target.closest("[data-sli]");
-        if (sd) { const l = slideList()[Number(sd.dataset.sli)]; if (l) { SL.web = l.web; SL.at = Date.now(); renderMachines(); } return; }
+        if (sd) { const l = slideUnits()[Number(sd.dataset.sli)]; if (l) { SL.key = l.key; SL.at = Date.now(); renderMachines(); } return; }
+        const sm = e.target.closest("[data-slmode]");
+        if (sm) { SL.mode = sm.dataset.slmode; SL.key = null; SL.at = Date.now(); slSave(); renderMachines(); return; }
         const sl = e.target.closest("[data-sll]");
-        if (sl) { const r = ((SL.logs[SL.web] || {}).rows || [])[Number(sl.dataset.sll)]; if (r) openLogDetail(r); return; }
+        if (sl) { const r = (SL.cur || [])[Number(sl.dataset.sll)]; if (r) openLogDetail(r); return; }
         const sbs = e.target.closest("[data-sbs]");                 /* Sunburst: วงนอก = sensor -> หน้า sensor */
         if (sbs) { location.href = "/sensor?id=" + encodeURIComponent(sbs.dataset.sbs); return; }
         const sbg = e.target.closest("[data-sbg]");
@@ -2674,6 +2830,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     $("logoutButton").addEventListener("click", logout);
     loadCurrentUser();
+    loadOrder().then(() => { if (S.ov) renderMachines(); });       /* ลำดับเครื่อง / กลุ่มที่จัดไว้ */
     loadAll();
     setInterval(loadAll, 10000);
     /* Apps & Web แสดงที่หน้าหลักเหมือนเดิม · Network & Security เปิดจากหน้า Settings */
