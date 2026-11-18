@@ -205,6 +205,7 @@ async function makeAgentCommand() {
     try {
         const d = await api("GET", `/api/targets/${encodeURIComponent(name)}/agent-setup${central ? "?central=" + encodeURIComponent(central) : ""}`);
         $("agCmd").value = d.command;
+        $("agPre").value = d.precheck || "";
         $("agPort").textContent = d.port;
         if (!$("agCentral").value) $("agCentral").value = d.central;
         const st = d.status || {};
@@ -318,7 +319,7 @@ function openForm(t) {
     fillAlertFields(t); formDefaults();
     document.querySelectorAll('#formCard .ftabs button[data-t="general"], #formCard .ftabs button[data-t="conn"]').forEach(b => { b.hidden = isOp(); });
     formTab(isOp() ? "alert" : "general");
-    $("agCmd").value = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
+    $("agCmd").value = ""; $("agPre").value = ""; $("agStatus").textContent = "บันทึกเครื่องก่อน แล้วคำสั่งติดตั้งจะขึ้นที่นี่"; $("agStatus").className = "";
     $("agCentral").value = agentCentralGuess();
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
     $("a_logs").value = t && t.agent ? (t.agent.logs || []).join("\n") : "";
@@ -873,6 +874,11 @@ async function logout() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    $("agPreCopy")?.addEventListener("click", async () => {
+        const t = $("agPre"); if (!t.value) return; t.select();
+        try { await navigator.clipboard.writeText(t.value); $("agPreCopy").textContent = "Copied"; } catch (e) { document.execCommand("copy"); }
+        setTimeout(() => { $("agPreCopy").textContent = "Copy precheck"; }, 1500);
+    });
     $("fa_sens_add")?.addEventListener("click", () => { const tr = sensRow("", {}); $("fa_sens").append(tr); tr.querySelector("input").focus(); });
     const dl = el("datalist", { id: "logNames" });
     ["application", "logapp", "loginuser", "journal"].forEach(v => dl.append(el("option", { value: v })));

@@ -52,3 +52,11 @@
       PowerShell ถูกบล็อก -> ติดตั้งด้วย cmd ล้วน (sc / netsh) ไม่มีแท็บ Software · บังคับแบบ cmd: install-pull.bat <IP> - nops
       ไม่มีอินเทอร์เน็ต: วาง windows_exporter-0.32.1-amd64.exe ไว้ข้างไฟล์ .bat
   ถอน: uninstall-pull.bat (คลิกขวา > Run as administrator)  หรือ uninstall-fluentbit.ps1
+
+ตรวจก่อนติดตั้ง (อ่านอย่างเดียว ไม่ติดตั้ง / ไม่หยุด / ไม่แก้อะไร)
+  PowerShell (Admin):  powershell -ExecutionPolicy Bypass -File .\precheck.ps1 -Central <IP central> [-Pull] [-Logs "C:\app\*.log"]
+  หรือคลิกขวา precheck.bat > Run as administrator (PowerShell ถูกบล็อก = ตรวจแบบ cmd เท่าที่ทำได้)
+  ตรวจ: สิทธิ์ Admin, พอร์ต 9182 ว่างไหม / ใครใช้, windows_exporter ตัวเดิม (จะถูกถอน/ปิด), cm-agent / task เดิม,
+        พื้นที่ disk, RAM, CPU, จำนวน process, Windows Firewall, WMI, ต่อ central ได้ไหม (push), ดาวน์โหลดตัวติดตั้งได้ไหม,
+        Event Log channel, ไฟล์ log ที่ Fluent Bit จะเปิดค้าง, ขนาด Security log, Antivirus
+  ผล [ OK ] / [WARN] / [FAIL]  exit code 0 / 1 / 2

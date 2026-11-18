@@ -91,13 +91,18 @@ def setup_info(target, central):
     unzip = ("$z=Get-ChildItem \"$env:USERPROFILE\\Downloads\\cm-agent-windows*.zip\" | Sort-Object LastWriteTime -Descending | "
              "Select-Object -First 1; if(-not $z){throw 'cm-agent-windows.zip not found in Downloads - click Download installer first'}; "
              "$d=\"$env:TEMP\\cm-agent\"; Expand-Archive $z.FullName $d -Force; ")
+    # ตรวจก่อนติดตั้ง (อ่านอย่างเดียว ไม่มี token): พอร์ตชน / windows_exporter เดิม / RAM / disk / ต่อ central / ไฟล์ log
+    pre = (unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\precheck.ps1\" "
+           f"-Central {central or '<IP-ของ-central>'}"
+           + (" -Pull" if agent.get("mode") == "pull" else (f" -Port {AGENT_PORT}" if str(AGENT_PORT) != "4318" else ""))
+           + (f' -Logs "{logs}"' if logs else "") + f' -Channels "{channels}"')
     if agent.get("mode") == "pull":
         # โหมด pull: ไม่ใช้ token / Fluent Bit · central = IP ที่ central ใช้ต่อเข้าเครื่องนี้ (firewall เปิดรับเฉพาะ IP นี้)
         # log: cm-logs.ps1 บนเครื่องเก็บ ERROR / WARN ไว้ให้ puller อ่านจาก windows_exporter (agent_logs.py)
         cmd = (unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\install-fluentbit.ps1\" -Pull "
                f"-Central {central or '<IP-ของ-central>'} -Name {target.get('name')}"
                + (f' -Logs "{logs}"' if logs else "") + f' -Channels "{channels}"')
-        return {"name": target.get("name"), "command": cmd, "mode": "pull", "exporter": agent.get("exporter"),
+        return {"name": target.get("name"), "command": cmd, "precheck": pre, "mode": "pull", "exporter": agent.get("exporter"),
                 "token_set": True, "port": 9182, "ca_available": True,
                 "package_available": os.path.isfile(os.path.join(AGENT_DIR, "windows", "install-fluentbit.ps1"))}
     parts = [
@@ -112,6 +117,7 @@ def setup_info(target, central):
     return {
         "name": target.get("name"),
         "command": " ".join(p for p in parts if p),
+        "precheck": pre,
         "token_set": bool(tok),
         "port": AGENT_PORT,
         "ca_available": os.path.isfile(AGENT_CA),
