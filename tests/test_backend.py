@@ -302,6 +302,9 @@ class Backend(unittest.TestCase):
         ck = {x["key"]: x["status"] for x in m["checks"]}
         self.assertEqual((ck["firewall"], ck["failed_logins"], ck["open_ports"], ck["public_inbound"]), ("error", "error", "warning", "warning"))
         self.assertEqual(m["connections"][0]["peer_web"], "ns-b")
+        # firewall อ่านไม่ได้ แต่ข้ออื่นผ่าน -> สีตามข้อที่รู้ผล (ไม่เป็นสีเทาทั้งเครื่อง)
+        self.assertEqual(netsec_service._worst({"available": True, "checks": [{"status": "unknown"}, {"status": "ok"}]}), "ok")
+        self.assertEqual(netsec_service._worst({"available": False, "checks": [{"status": "ok"}]}), "unknown")
         self.assertEqual(c.get("/api/netsec/nope").status_code, 404)
         self.assertEqual(c.post("/api/netsec/ns-a/refresh").status_code, 200)
 

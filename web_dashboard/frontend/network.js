@@ -77,7 +77,7 @@ function mapHtml() {
     };
     const node = m => {
         const [x, y] = pos[m.web], w = m.worst || "unknown";
-        const sub = [m.firewall === "inactive" ? "FW ปิด" : m.firewall === "unknown" ? "FW ?" : "", m.failed_logins >= 20 ? `login ✕${m.failed_logins}` : ""].filter(Boolean).join(" · ");
+        const sub = !m.available ? "ยังไม่มีข้อมูล" : [m.firewall === "inactive" ? "FW ปิด" : m.firewall === "unknown" ? "FW อ่านไม่ได้" : "", m.failed_logins >= 20 ? `login ✕${m.failed_logins}` : ""].filter(Boolean).join(" · ");
         return `<g class="nsN${sel === m.web ? " on" : ""}${sel && sel !== m.web ? " dim" : ""}" data-web="${esc(m.web)}" tabindex="0"><circle cx="${x}" cy="${y}" r="${r}" fill="${COL[w]}"/>`
             + `<text x="${x}" y="${y + 5}" text-anchor="middle" class="os">${m.os === "windows" ? "Win" : "Linux"}</text>`
             + `<text x="${x}" y="${y + r + 16}" text-anchor="middle" class="nm">${esc(m.web)}</text>`
@@ -91,7 +91,7 @@ function mapHtml() {
 ${Object.values(pairs).map(edge).join("")}
 ${virt("__inet", "Internet", `${inet} IP สาธารณะ`)}${virt("__lan", "LAN อื่น", `${lan} IP ที่ไม่ได้ monitor`)}
 ${ms.map(node).join("")}</svg>
-<div class="nslegend"><span><i style="background:${COL.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${COL.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${COL.error}"></i>มีปัญหา (เช่น firewall ปิด)</span><span><i style="background:${COL.unknown}"></i>ยังไม่มีข้อมูล</span><span>A → B = A ต่อเข้าพอร์ตของ B · ชี้ที่เส้นเพื่อดูรายละเอียด · คลิกเครื่องเพื่อดูทั้งหมด</span></div>`;
+<div class="nslegend"><span><i style="background:${COL.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${COL.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${COL.error}"></i>มีปัญหา (เช่น firewall ปิด)</span><span><i style="background:${COL.unknown}"></i>ยังไม่มีข้อมูล (คลิกดูสาเหตุ)</span><span>A → B = A ต่อเข้าพอร์ตของ B · ชี้ที่เส้นเพื่อดูรายละเอียด · คลิกเครื่องเพื่อดูทั้งหมด</span></div>`;
 }
 
 /* ---------------- ตารางทุกเครื่อง ---------------- */

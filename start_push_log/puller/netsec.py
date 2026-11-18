@@ -20,6 +20,7 @@ from collections import Counter
 MAX_ROWS = 400
 
 COMMAND = r"""
+echo @@ID; id -un; id -nG
 echo @@ADDR; ip -4 -o addr show 2>/dev/null
 echo @@ROUTE; ip -4 route show 2>/dev/null
 echo @@LISTEN; ss -H -tulnp 2>/dev/null || ss -H -tuln 2>/dev/null
@@ -27,7 +28,7 @@ echo @@CONN; ss -H -tunp state established 2>/dev/null || ss -H -tun state estab
 echo @@UFW; if command -v ufw >/dev/null 2>&1 || [ -x /usr/sbin/ufw ]; then (sudo -n ufw status verbose 2>/dev/null || /usr/sbin/ufw status verbose 2>&1) | head -n 400; else echo NOUFW; fi
 echo @@UFWCONF; cat /etc/ufw/ufw.conf /etc/default/ufw 2>/dev/null | grep -E '^(ENABLED|DEFAULT_[A-Z]+_POLICY)='
 echo @@FWD; if command -v firewall-cmd >/dev/null 2>&1; then (sudo -n firewall-cmd --state 2>&1 || firewall-cmd --state 2>&1); (sudo -n firewall-cmd --list-all 2>/dev/null || firewall-cmd --list-all 2>/dev/null) | head -n 80; fi
-echo @@IPT; (sudo -n iptables -S 2>/dev/null) | head -n 300
+echo @@IPT; (sudo -n iptables -S 2>&1 || echo "@@ERR") | head -n 300
 echo @@AUTH; (journalctl -q --no-pager --since '24 hours ago' -o short-iso -t sshd -t sshd-session 2>/dev/null || true) | grep -E 'Failed |Accepted |Invalid user' | tail -n 3000
 echo @@AUTHFILE; [ -r /var/log/auth.log ] && tail -n 5000 /var/log/auth.log | grep -E 'sshd.*(Failed |Accepted |Invalid user)' | tail -n 3000; [ -r /var/log/secure ] && tail -n 5000 /var/log/secure | grep -E 'sshd.*(Failed |Accepted |Invalid user)' | tail -n 3000
 true
@@ -37,7 +38,7 @@ true
 def _sections(output):
     out, cur = {}, None
     for line in str(output or "").splitlines():
-        if line.startswith("@@") and line[2:].strip().isupper():
+        if line.startswith("@@") and line[2:].strip().isupper() and line[2:].strip() != "ERR":
             cur = line[2:].strip()
             out[cur] = []
         elif cur:
@@ -169,8 +170,14 @@ def parse_ufw(lines, conf_lines):
     fw["defaults"] = {k: pol.get(clean.get(v, "").upper(), clean.get(v, "").lower())
                       for k, v in (("in", "DEFAULT_INPUT_POLICY"), ("out", "DEFAULT_OUTPUT_POLICY"), ("routed", "DEFAULT_FORWARD_POLICY"))
                       if clean.get(v)}
-    fw["note"] = ("อ่านรายการกฎไม่ได้ (ufw status ต้องใช้ root) · ให้ user ของ puller รัน 'sudo -n ufw status' ได้ "
-                  "(sudoers: <user> ALL=(root) NOPASSWD: /usr/sbin/ufw status *)")
+    err = next((l.strip() for l in lines if l.strip()), "")
+    if "root" in err.lower() or "password" in err.lower() or not err:
+        fw["note"] = ("อ่านรายการกฎไม่ได้ (ufw status ต้องใช้ root) · ให้ user ของ puller รัน 'sudo -n ufw status' ได้ "
+                      "(sudoers: <user> ALL=(root) NOPASSWD: /usr/sbin/ufw status *)")
+    else:
+        fw["note"] = f"ufw status ตอบว่า: {err[:200]}"
+    if fw["status"] == "unknown" and not conf_lines:
+        fw["note"] += " · และอ่าน /etc/ufw/ufw.conf ไม่ได้"
     return fw
 
 
@@ -200,6 +207,7 @@ def parse_iptables(lines):
     rules = [l for l in lines if l.startswith("-")]
     if not rules:
         return None
+    fw_rules = [l for l in rules if l.startswith("-A ")]
     fw = {"tool": "iptables", "status": "active", "defaults": {}, "rules": [], "note": ""}
     pol = {}
     for l in rules:
@@ -221,6 +229,10 @@ def parse_iptables(lines):
                             "from": src.group(1) if src else (dst.group(1) if dst else "Anywhere"), "comment": ""})
     pd = {"ACCEPT": "allow", "DROP": "deny", "REJECT": "reject"}
     fw["defaults"] = {"in": pd.get(pol.get("INPUT", ""), ""), "out": pd.get(pol.get("OUTPUT", ""), ""), "routed": pd.get(pol.get("FORWARD", ""), "")}
+    # ไม่มีกฎใน INPUT และค่าปริยายเป็น ACCEPT = ไม่ได้กั้นอะไร
+    if pol.get("INPUT", "ACCEPT") == "ACCEPT" and not any(l.startswith("-A INPUT") for l in fw_rules):
+        fw["status"] = "inactive"
+        fw["note"] = "iptables: ขาเข้า ACCEPT ทั้งหมด ไม่มีกฎกั้น"
     fw["rules"] = fw["rules"][:MAX_ROWS]
     return fw
 
@@ -253,20 +265,30 @@ def parse_auth(lines, source):
 
 def parse(output):
     sec = _sections(output)
+    ident = [l.strip() for l in sec.get("ID", []) if l.strip()]
+    user = ident[0] if ident else ""
+    groups = set((ident[1] if len(ident) > 1 else "").split())
     listening = parse_listen(sec.get("LISTEN", []))
     fw = parse_ufw(sec.get("UFW", []), sec.get("UFWCONF", []))
     if fw is None or (fw["status"] == "unknown" and not fw["defaults"]):
-        fw = parse_firewalld(sec.get("FWD", [])) or parse_iptables(sec.get("IPT", [])) or fw or {
-            "tool": "", "status": "unknown", "defaults": {}, "rules": [],
-            "note": "ไม่พบ ufw / firewalld และอ่าน iptables ไม่ได้ (ต้อง root: sudo -n iptables -S)"}
+        ipt_err = next((l.strip() for l in sec.get("IPT", []) if l.strip() and not l.startswith("-") and l.strip() != "@@ERR"), "")
+        why = [("ufw: " + fw["note"]) if fw else "ไม่ได้ติดตั้ง ufw",
+               "iptables: " + (ipt_err[:160] if ipt_err else f"sudo -n iptables -S ไม่ได้ (sudoers: {user or '<user>'} ALL=(root) NOPASSWD: /usr/sbin/iptables -S)")]
+        fw = parse_firewalld(sec.get("FWD", [])) or parse_iptables(sec.get("IPT", [])) or (dict(fw, note=" · ".join(why)) if fw else None) or {
+            "tool": "", "status": "unknown", "defaults": {}, "rules": [], "note": " · ".join(why)}
+    journal_ok = user == "root" or bool(groups & {"adm", "systemd-journal", "wheel", "root"})
     if sec.get("AUTH"):
         logins = parse_auth(sec["AUTH"], "journalctl 24h")
     elif sec.get("AUTHFILE"):
         logins = parse_auth(sec["AUTHFILE"], "auth.log (5000 บรรทัดล่าสุด)")
+    elif journal_ok:
+        logins = parse_auth([], "journalctl 24h")              # อ่านได้ แต่ 24 ชม. ไม่มีใคร login ผ่าน ssh
     else:
         logins = {"source": "", "failed": None, "invalid_users": None, "success": None, "failed_by": [], "recent_ok": [],
-                  "note": "อ่าน log ของ sshd ไม่ได้ (เพิ่ม user ของ puller เข้ากลุ่ม adm / systemd-journal)"}
-    return {"addrs": parse_addrs(sec.get("ADDR", [])), "routes": parse_routes(sec.get("ROUTE", [])),
+                  "note": f"อ่าน log ของ sshd ไม่ได้: user {user or '?'} อยู่กลุ่ม {', '.join(sorted(groups)) or '-'} "
+                          "(ต้องอยู่กลุ่ม adm หรือ systemd-journal: sudo usermod -aG adm,systemd-journal <user>)"}
+    return {"user": user, "groups": sorted(groups),
+            "addrs": parse_addrs(sec.get("ADDR", [])), "routes": parse_routes(sec.get("ROUTE", [])),
             "listening": listening, "connections": parse_connections(sec.get("CONN", []), listening),
             "firewall": fw, "logins": logins}
 

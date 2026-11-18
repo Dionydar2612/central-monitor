@@ -498,6 +498,21 @@ Anywhere                   DENY OUT    1.2.3.4
         self.assertEqual((fw["status"], fw["defaults"]["in"], fw["defaults"]["out"]), ("active", "deny", "allow"))
         self.assertIn("root", fw["note"])
 
+    def test_diagnostics(self):
+        """ไม่มี ufw + sudo iptables ไม่ได้ -> note บอกวิธีแก้ · อยู่กลุ่ม adm แต่ 24 ชม. ไม่มี ssh login = 0 (ไม่ใช่ อ่านไม่ได้)"""
+        out = "@@ID\ncp\ncp adm sudo\n@@UFW\nNOUFW\n@@IPT\nsudo: a password is required\n@@ERR\n@@AUTH\n@@AUTHFILE\n"
+        d = netsec.parse(out)
+        self.assertEqual(d["firewall"]["status"], "unknown")
+        self.assertIn("ไม่ได้ติดตั้ง ufw", d["firewall"]["note"])
+        self.assertIn("password", d["firewall"]["note"])
+        self.assertEqual(d["logins"]["failed"], 0)
+        d = netsec.parse("@@ID\ncp\ncp\n@@AUTH\n")
+        self.assertIsNone(d["logins"]["failed"])
+        self.assertIn("adm", d["logins"]["note"])
+        # iptables อ่านได้แต่ไม่มีกฎกั้นขาเข้า = ปิด
+        fw = netsec.parse("@@UFW\nNOUFW\n@@IPT\n-P INPUT ACCEPT\n-P OUTPUT ACCEPT\n")["firewall"]
+        self.assertEqual((fw["tool"], fw["status"]), ("iptables", "inactive"))
+
     def test_iptables(self):
         out = "@@UFW\nNOUFW\n@@IPT\n-P INPUT DROP\n-P OUTPUT ACCEPT\n-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT\n"
         fw = netsec.parse(out)["firewall"]

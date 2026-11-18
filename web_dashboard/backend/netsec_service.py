@@ -79,9 +79,24 @@ def _win(web):
                   "recent_ok": sorted([{"time": v, "user": l.get("user"), "ip": l.get("ip"), "type": l.get("type")} for l, v in q("cm_login_ok")],
                                       key=lambda x: -x["time"])}
     has = conns or routes or fw or logins
+    note = ""
+    if not has:
+        # บอกสาเหตุให้ชัด: textfile ใช้ได้ไหม (มีข้อมูล Software ไหม) / windows_exporter ไม่ยอมอ่านไฟล์ / ยังไม่เคยมีข้อมูลเลย
+        err = prom_vector(f'windows_textfile_scrape_error{{cm_web="{web}"}}')
+        files = [l.get("file") for l, v in prom_vector(f'windows_textfile_mtime_seconds{{cm_web="{web}"}}')]
+        if err and err[0][1] == 1:
+            note = ("windows_exporter อ่านไฟล์ใน textfile ไม่ได้ (windows_textfile_scrape_error = 1) · "
+                    "ใช้ cm-netsec.ps1 จาก zip ชุดล่าสุด แล้วดู log: C:\\ProgramData\\central-monitor-agent\\windows_exporter.log")
+        elif files and not any("cm_netsec" in str(f) for f in files):
+            note = (f"เครื่องนี้ส่ง textfile มาแล้ว ({', '.join(sorted(str(f) for f in files if f))}) แต่ยังไม่มี cm_netsec.prom · "
+                    "ตรวจว่ามี scheduled task CentralMonitorNetSec และรันสำเร็จ (Get-ScheduledTaskInfo CentralMonitorNetSec)")
+        elif prom_vector(f'up{{cm_web="{web}"}}') or prom_vector(f'{{__name__=~"windows_cpu_time.*",cm_web="{web}"}}'):
+            note = ("มี metrics ของเครื่องนี้แต่ไม่มีข้อมูล Network & Security · ติดตั้ง cm-netsec.ps1 (zip ชุดล่าสุด) "
+                    "แล้วรอ ~5 นาที · ตรวจบนเครื่อง: curl.exe -s http://127.0.0.1:9182/metrics | findstr cm_fw_profile")
+        else:
+            note = "ไม่มีข้อมูลจากเครื่องนี้เลย (agent / windows_exporter ไม่ได้ส่งมา)"
     return {"addrs": addrs, "routes": routes, "listening": ls, "connections": sorted(conns, key=lambda c: -c["count"]),
-            "firewall": fw, "logins": logins, "source": "windows", "available": bool(has),
-            "note": "" if has else "ยังไม่มีข้อมูลจากเครื่องนี้ · ติดตั้ง agent ใหม่จาก zip ชุดล่าสุด (มี cm-netsec.ps1) แล้วรอ ~5 นาที"}
+            "firewall": fw, "logins": logins, "source": "windows", "available": bool(has), "note": note}
 
 
 def _int(v):
@@ -165,7 +180,16 @@ def _summary(d):
             "listening": len([x for x in d.get("listening") or [] if not x.get("local_only")]),
             "firewall": fw.get("status") or "unknown", "fw_tool": fw.get("tool") or "", "default_in": (fw.get("defaults") or {}).get("in") or "",
             "failed_logins": lg.get("failed"), "routes": len(d.get("routes") or []),
-            "worst": max((x["status"] for x in d.get("checks") or []), key=lambda s: {"ok": 0, "unknown": 1, "warning": 2, "error": 3}.get(s, 0), default="unknown")}
+            "worst": _worst(d)}
+
+
+def _worst(d):
+    """ผลตรวจแย่สุด ไม่นับข้อที่ "ไม่ทราบ" (เช่นอ่านกฎ firewall ไม่ได้) ถ้ามีข้ออื่นที่รู้ผล · ไม่มีข้อมูลเลย = unknown"""
+    if not d.get("available"):
+        return "unknown"
+    rank = {"ok": 0, "warning": 2, "error": 3}
+    known = [x["status"] for x in d.get("checks") or [] if x["status"] in rank]
+    return max(known, key=rank.get) if known else "unknown"
 
 
 def _ip_index(targets, snaps=None):
