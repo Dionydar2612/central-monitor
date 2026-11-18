@@ -370,10 +370,24 @@ def parse_probe(out):
                     continue
                 for n in str(c.get("Names") or "").split(","):
                     if n:
-                        res["containers"][n.strip().lstrip("/")] = {"state": str(c.get("State") or "").lower(),
-                                                                    "status": c.get("Status") or "", "image": c.get("Image") or ""}
+                        res["containers"][n.strip().lstrip("/")] = {
+                            "state": str(c.get("State") or "").lower(), "status": c.get("Status") or "", "image": c.get("Image") or "",
+                            # รายละเอียดเพิ่มสำหรับหน้า Apps & Web (ไม่ใช้ตัดสินสถานะ)
+                            "id": str(c.get("ID") or "")[:12], "ports": c.get("Ports") or "", "created": c.get("CreatedAt") or "",
+                            "running_for": c.get("RunningFor") or "", "networks": c.get("Networks") or "",
+                            "mounts": c.get("Mounts") or "", "command": str(c.get("Command") or "")[:200]}
             elif not res["containers"]:
                 res["docker_error"] = line.strip()[:200]
+        elif part == "DSTATS" and line.startswith("{"):
+            # docker stats --no-stream: CPU / RAM / Network / Disk I/O / จำนวน process ของแต่ละ container
+            try:
+                c = json.loads(line)
+            except ValueError:
+                continue
+            n = str(c.get("Name") or "").lstrip("/")
+            if n:
+                res.setdefault("stats", {})[n] = {"cpu": c.get("CPUPerc"), "mem": c.get("MemUsage"), "mem_pct": c.get("MemPerc"),
+                                                 "net": c.get("NetIO"), "block": c.get("BlockIO"), "pids": c.get("PIDs")}
         elif part == "HTTP" and "\t" in line:
             url, _, rest = line.partition("\t")
             bits = rest.split()
@@ -396,6 +410,7 @@ def linux_probe(target, rules, runner=None):
     cmd = []
     if want_docker:
         cmd.append("echo '##DOCKER'; (docker ps -a --format '{{json .}}' 2>&1 || sudo -n docker ps -a --format '{{json .}}' 2>&1) | head -500")
+        cmd.append("echo '##DSTATS'; (docker stats --no-stream --format '{{json .}}' 2>/dev/null || sudo -n docker stats --no-stream --format '{{json .}}' 2>/dev/null) | head -500")
     if urls:
         cmd.append("echo '##HTTP'")
         for u in urls:
@@ -472,7 +487,7 @@ def _state(rule, target, labels, query, windows=True, rules=None):
             found = None
             for lb, _v in query(q) or []:
                 if str(lb.get("name") or "").lower() == cname.lower():
-                    found = {"state": str(lb.get("state") or "").lower(), "status": lb.get("status") or ""}
+                    found = {"state": str(lb.get("state") or "").lower(), "status": lb.get("status") or "", "image": lb.get("image") or ""}
                     break
             if found is None and not query(f"cm_docker_up{{{labels}}} == 1"):
                 return None                  # เครื่องนี้ไม่มี docker / อ่านไม่ได้
@@ -482,8 +497,10 @@ def _state(rule, target, labels, query, windows=True, rules=None):
                 return None
             q = "ssh: docker ps -a"
             found = p["containers"].get(cname) or next((v for k, v in p["containers"].items() if k.lower() == cname.lower()), None)
+            if found is not None:
+                found = dict(found, stats=(p.get("stats") or {}).get(cname))
         bad, st = _container_state(found)
-        return bad, f"{cname}: {st}", None, "", q
+        return bad, f"{cname}: {st}", None, "", q, {"container": found or {}}
     if m == "http_local":
         url = normalize_url(rule.get("url"))
         if not url:

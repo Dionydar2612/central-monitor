@@ -144,7 +144,145 @@ def detail(rule_id, web, range_key="24h"):
     except Exception:
         out["max_ms"] = None
     out["incidents"] = [i for i in sensors_service.get_incidents(hours=24 * 30, web=item["web"]) if i.get("id") == item.get("id")][:50]
+    try:
+        out.update(_more(item, sel, range_key))
+    except Exception as e:
+        print(f"[APPS] more {rule_id}: {e!r}")
     return out
+
+
+# ---------------------------------------------------------------------------
+# รายละเอียดเพิ่ม (หน้าต่างรายละเอียดใน /apps): ข้อมูลการตรวจ + ข้อมูลเฉพาะประเภท + เหตุการณ์ล่าสุด
+#   facts  = [[หัวข้อ, ค่า], ...]   tables = [{"title", "head": [...], "rows": [[...], ...]}]
+# ---------------------------------------------------------------------------
+
+def _bytes(v):
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "-"
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or u == "TB":
+            return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
+        n /= 1024
+
+
+def _more(item, sel, range_key):
+    from clients import prom_value, prom_vector
+    import re as _re
+    import time as _t
+    sensors = sensors_service.load_sensors()
+    sn = next((x for x in sensors.get("sensors", []) if x.get("id") == item.get("id")), {}) or {}
+    d = sn.get("details") or {}
+    web, m = item["web"], item["metric"]
+    target = next((t for t in targets_service.list_targets() if t.get("name") == web), {}) or {}
+    win = str(target.get("type") or "ssh") == "agent"
+    lab = f'cm_web="{web}"'
+    facts, tables = [], []
+
+    # --- การตรวจ (ทุกประเภท) ---
+    checks = prom_value(f"count_over_time(cm_app_up{{{sel}}}[{range_key}])")
+    good = prom_value(f"sum_over_time(cm_app_up{{{sel}}}[{range_key}])")
+    if checks:
+        facts.append([f"ตรวจ ({range_key})", f"{int(checks)} ครั้ง · ไม่ผ่าน {int(checks - (good or 0))} ครั้ง"])
+    upd = sensors.get("updated_at")
+    if upd:
+        facts.append(["ตรวจล่าสุด", f"{max(0, int(_t.time() - float(upd)))} วินาทีที่แล้ว (ทุก {(sensors.get('options') or {}).get('interval', 30)} วินาที)"])
+    facts.append(["วิธีตรวจ", {"http_url": "central เรียก URL", "tcp_port": "central ต่อพอร์ต", "http_local": "เครื่องเรียก localhost",
+                               "port_listen": "พอร์ตที่เครื่องเปิดรับ", "docker": "docker ps บนเครื่อง", "process": "process บนเครื่อง",
+                               "service": "service บนเครื่อง"}.get(m, m) + (" (agent)" if win else " (SSH)")])
+    if sn.get("query"):
+        facts.append(["ที่มา", str(sn["query"])[:160]])
+    if sn.get("priority"):
+        facts.append(["Priority", "★" * int(sn["priority"])])
+
+    # --- เฉพาะประเภท ---
+    if m == "docker":
+        c = d.get("container") or {}
+        if win and not c:
+            for lb, _v in prom_vector(f"cm_docker_container{{{lab}}}"):
+                if str(lb.get("name") or "").lower() == str(item["what"]).lower():
+                    c = {"image": lb.get("image"), "state": lb.get("state"), "status": lb.get("status")}
+        for k, label in (("image", "Image"), ("state", "State"), ("status", "Status"), ("id", "Container ID"),
+                         ("running_for", "สร้างเมื่อ"), ("ports", "Ports"), ("networks", "Networks"), ("mounts", "Mounts"),
+                         ("command", "Command")):
+            if c.get(k):
+                facts.append([label, str(c[k])])
+        st = c.get("stats") or {}
+        if st:
+            tables.append({"title": "การใช้ทรัพยากร (ตอนตรวจล่าสุด)", "head": ["CPU", "RAM", "RAM %", "Network I/O", "Disk I/O", "Process"],
+                           "rows": [[st.get("cpu") or "-", st.get("mem") or "-", st.get("mem_pct") or "-", st.get("net") or "-",
+                                     st.get("block") or "-", st.get("pids") or "-"]]})
+    elif m == "process" and win:
+        base = str(item["what"])
+        base = base[:-4] if base.lower().endswith(".exe") else base
+        # PromQL string ไม่รับ \. -> ใช้ [.] แทนอักษรพิเศษ
+        rx = "(?i)" + "".join(ch if ch.isalnum() or ch in " _" else f"[{ch}]" for ch in base) + "([.]exe)?"
+        ps = f'{lab},process=~"{rx}"'
+        cores = prom_value(f'count(count by(core) ({{__name__=~"windows_cpu_time(_seconds)?_total",{lab}}}))') or 1
+        cpu = prom_value(f'sum(rate({{__name__=~"windows_process_cpu_time(_seconds)?_total",{ps}}}[5m])) * 100 / {cores}')
+        mem = prom_value(f"sum(windows_process_working_set_private_bytes{{{ps}}})")
+        if cpu is not None:
+            facts.append(["CPU (5 นาที)", f"{cpu:.1f} %"])
+        if mem is not None:
+            facts.append(["RAM (private)", _bytes(mem)])
+        rows = []
+        for lb, v in sorted(prom_vector(f"windows_process_working_set_private_bytes{{{ps}}}"), key=lambda x: -x[1])[:20]:
+            rows.append([lb.get("process") or "-", lb.get("process_id") or "-", _bytes(v)])
+        if rows:
+            tables.append({"title": f"Process ที่ทำงานอยู่ ({len(rows)})", "head": ["ชื่อ", "PID", "RAM"], "rows": rows})
+    elif m == "service":
+        svc = str(item["what"])
+        if win:
+            q = lambda metric: [lb for lb, v in prom_vector(f'{metric}{{{lab}}}') if str(lb.get("name") or lb.get("service") or "").lower() == svc.lower()]
+            info = q("windows_service_info")
+            if info:
+                for k, label in (("display_name", "ชื่อที่แสดง"), ("run_as", "รันในนาม"), ("path_name", "Path"), ("process", "Process")):
+                    if info[0].get(k):
+                        facts.append([label, info[0][k]])
+            mode = [lb for lb, v in prom_vector(f'windows_service_start_mode{{{lab}}} == 1') if str(lb.get("name") or "").lower() == svc.lower()]
+            if mode:
+                facts.append(["Start mode", mode[0].get("start_mode")])
+        else:
+            import system_state
+            snap = system_state.load_system_snapshot(web)
+            hit = next((x for x in snap.get("services") or [] if str(x.get("name") or x.get("unit") or "").lower().startswith(svc.lower())), None)
+            if hit:
+                for k, v in hit.items():
+                    if v not in (None, "") and k != "name":
+                        facts.append([k, str(v)])
+    if m in ("port_listen", "tcp_port", "http_local", "http_url"):
+        import netsec_service
+        port = None
+        mt = _re.search(r":(\d+)", str(item["what"]))
+        if mt:
+            port = int(mt.group(1))
+        elif m in ("http_url", "http_local"):
+            port = 443 if str(item["what"]).startswith("https") else 80
+        ns = netsec_service.get_machine(web) if port else None
+        if ns:
+            who = [x for x in ns.get("listening") or [] if x.get("port") == port]
+            if who:
+                facts.append(["เปิดรับโดย", ", ".join(sorted({f"{x.get('process') or '?'} ({x.get('address')})" for x in who}))])
+            conns = [c for c in ns.get("connections") or [] if c.get("dir") == "in" and c.get("port") == port]
+            if conns:
+                tables.append({"title": f"ใครต่อเข้าพอร์ต {port} อยู่", "head": ["ต้นทาง", "เครื่อง", "จำนวน"],
+                               "rows": [[c.get("peer"), c.get("peer_web") or ("IP สาธารณะ" if c.get("external") else "-"), c.get("count")] for c in conns[:20]]})
+    if m in ("http_url", "http_local"):
+        mn = prom_value(f"min_over_time(cm_app_response_ms{{{sel}}}[{range_key}])")
+        if mn is not None:
+            facts.append([f"เร็วสุด ({range_key})", f"{round(mn)} ms"])
+        if item.get("ssl_days_left") is not None:
+            facts.append(["SSL เหลือ", f"{item['ssl_days_left']} วัน"])
+
+    # --- เหตุการณ์ล่าสุดของรายการนี้ (System log) ---
+    import audit_service
+    ev = [e for e in audit_service.read_entries("system", limit=200, query=item.get("id") or "") if e.get("sid") == item.get("id")][:10]
+    if ev:
+        tables.append({"title": "เหตุการณ์ล่าสุด", "head": ["เวลา", "จาก → เป็น", "ข้อความ"], "time_col": 0,
+                       "rows": [[e.get("time"), f"{e.get('from') or '-'} → {e.get('to') or e.get('level')}",
+                                 str(e.get("message") or "").split(" · ", 1)[-1][:200]] for e in ev]})
+    return {"facts": facts, "tables": tables}
 
 
 def bulk_add(data):

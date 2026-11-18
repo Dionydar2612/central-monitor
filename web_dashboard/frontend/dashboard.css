@@ -1613,3 +1613,15 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .nsnote{background:rgba(245,165,36,.12);color:#8a5a00;border-radius:8px;padding:8px 12px;font-size:13px;margin:8px 0}
 .nsaddr{font-size:13px;margin-top:12px;color:var(--mut)}
 .ovst.na{background:var(--chip);color:var(--mut)}
+
+/* Settings: ทางเข้าหน้า Apps & Web / Network & Security */
+.sttools{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:16px;padding:14px}
+.sttools a{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;text-decoration:none;color:var(--ink);background:var(--chip)}
+.sttools a:hover{border-color:var(--blue)}.sttools b{font-size:15px}.sttools small{color:var(--mut);font-size:12.5px}
+
+/* Apps & Web: รายละเอียดเพิ่มในหน้าต่าง */
+.apFacts{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 16px;margin-bottom:6px}
+.apFacts div{min-width:0}.apFacts small{display:block;color:var(--mut);font-size:12px}.apFacts span{font-size:13.5px;font-weight:600;overflow-wrap:anywhere}
+.nsfix{display:flex;flex-direction:column;gap:6px;border:1px solid rgba(31,123,255,.35);background:rgba(31,123,255,.06);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13px}
+.nsfix a.svbtn{align-self:flex-start;text-decoration:none}
+.nscmd{display:flex;gap:8px;align-items:flex-start}.nscmd code{flex:1;min-width:0;display:block;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto}

@@ -179,9 +179,16 @@ function renderDetail() {
 <span class="nsmeta">${d.collected_at ? `เก็บเมื่อ ${esc(ago(d.collected_at))} ที่แล้ว` : d.source === "windows" ? "อัปเดตทุก 5 นาที" : ""}${canOp && d.os !== "windows" ? ` <button type="button" class="svbtn sm" id="nsRefresh">ดึงใหม่</button>` : ""} <a class="svbtn sm" href="/?web=${encodeURIComponent(d.web)}">หน้าเครื่อง</a> <button type="button" class="svbtn sm" id="nsClose">ปิด</button></span></div>
 <div class="nsnet">${[["Traffic", o.net != null ? Number(o.net).toFixed(2) + " MB/s" : "-"], ["Ping", o.ping_ms != null ? Math.round(o.ping_ms) + " ms" : "-"], ["Packet loss", o.packet_loss != null ? Number(o.packet_loss).toFixed(1) + "%" : "-"], ["Availability 24h", o.availability != null ? Number(o.availability).toFixed(2) + "%" : "-"], ["ขาเข้า", `${d.summary.in} (${d.summary.peers_in} IP)`], ["ขาออก", `${d.summary.out} (${d.summary.peers_out} IP)`]].map(([k, v]) => `<div><small>${k}</small><b>${esc(v)}</b></div>`).join("")}</div>
 ${d.note ? `<div class="nsnote">${esc(d.note)}</div>` : ""}
+${d.fix ? `<div class="nsfix"><b>วิธีแก้ (ขั้นตอนเดียว)</b><span>${esc(d.fix.text)}</span>${d.fix.command ? `<div class="nscmd"><code id="nsFixCmd">${esc(d.fix.command)}</code><button type="button" class="svbtn sm" id="nsCopy">คัดลอก</button></div>` : ""}${d.fix.link ? `<a class="svbtn sm" href="${esc(d.fix.link)}">ไปที่ Settings</a>` : ""}</div>` : ""}
 <div class="vseg nstabs">${TABS.map(([k, l]) => `<button type="button" data-tab="${k}" class="${N.tab === k ? "on" : ""}">${l}</button>`).join("")}</div>
 <div class="nsbody">${detailBody(d)}</div>`;
     $("nsClose").onclick = () => selectWeb(null);
+    const cp = $("nsCopy");
+    if (cp) cp.onclick = async () => {
+        const t = $("nsFixCmd").textContent;
+        try { await navigator.clipboard.writeText(t); cp.textContent = "คัดลอกแล้ว"; }
+        catch (e) { const r = document.createRange(); r.selectNodeContents($("nsFixCmd")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); cp.textContent = "กด Ctrl+C"; }
+    };
     const rf = $("nsRefresh");
     if (rf) rf.onclick = async () => {
         rf.disabled = true; rf.textContent = "กำลังดึง...";

@@ -130,6 +130,10 @@ async function loadDetail() {
     ].map(([k, v]) => `<div><small>${k}</small>${v}</div>`).join("");
     $("adChart").innerHTML = chartSvg(d.series || {}, D.range);
     $("adMsg").textContent = x.message || "";
+    $("adFacts").innerHTML = (d.facts || []).map(([k, v]) => `<div><small>${esc(k)}</small><span>${esc(v)}</span></div>`).join("")
+        || `<div class="apMsgLine">ไม่มีข้อมูลเพิ่ม</div>`;
+    $("adTables").innerHTML = (d.tables || []).map(t => `<h3 class="apH3">${esc(t.title)}</h3><div class="tblw"><table class="ptbl"><thead><tr>${t.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${
+        t.rows.map(r => `<tr>${r.map((c, i) => `<td>${i === t.time_col && typeof c === "number" ? esc(new Date(c * 1000).toLocaleString("en-GB")) : esc(c ?? "-")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`).join("");
     const inc = d.incidents || [];
     $("adInc").innerHTML = inc.length ? `<div class="tblw"><table class="ptbl"><thead><tr><th>เริ่ม</th><th>จบ</th><th>นาน</th><th>ระดับ</th></tr></thead><tbody>${
         inc.map(i => `<tr><td>${esc(new Date(i.start * 1000).toLocaleString("en-GB"))}</td><td>${i.end ? esc(new Date(i.end * 1000).toLocaleString("en-GB")) : "<b>ยังไม่หาย</b>"}</td>`
@@ -143,7 +147,7 @@ async function loadDetail() {
 }
 function openDetail(rule, web) {
     D.rule = rule; D.web = web; D.data = null;
-    $("adStats").innerHTML = ""; $("adChart").innerHTML = `<div class="apEmpty">กำลังโหลด...</div>`; $("adInc").innerHTML = ""; $("adMsg").textContent = "";
+    $("adStats").innerHTML = ""; $("adFacts").innerHTML = ""; $("adTables").innerHTML = ""; $("adChart").innerHTML = `<div class="apEmpty">กำลังโหลด...</div>`; $("adInc").innerHTML = ""; $("adMsg").textContent = "";
     $("apDetail").hidden = false;
     try { history.replaceState(null, "", `/apps?open=${encodeURIComponent(rule)}&web=${encodeURIComponent(web || "")}`); } catch (e) { /* ignore */ }
     loadDetail();

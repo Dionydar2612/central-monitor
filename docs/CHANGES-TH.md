@@ -336,6 +336,17 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## Apps & Web / Network & Security ย้ายไปเปิดจาก Settings + รายละเอียด Apps เพิ่ม + วิธีแก้ขั้นตอนเดียว
+- หน้าหลักไม่แสดงแถบ Apps & Web / ไทล์ Apps & Web / ปุ่ม Network & Security แล้ว · เปิดจากการ์ดบนสุดของหน้า Settings
+- หน้าต่างรายละเอียดใน /apps: ตรวจกี่ครั้ง / ไม่ผ่านกี่ครั้งในช่วงที่เลือก, ตรวจล่าสุด, วิธีตรวจ, ที่มา, Priority
+  · Docker: Image, State, Status, Container ID, สร้างเมื่อ, Ports, Networks, Mounts, Command + CPU / RAM / Network I/O / Disk I/O / จำนวน process (Linux: docker stats ผ่าน SSH)
+  · โปรแกรม (Windows): CPU 5 นาที, RAM, ตาราง process (PID / RAM) · Service: ชื่อที่แสดง, รันในนาม, Path, Start mode (Windows) / ข้อมูลจาก systemctl (Linux)
+  · พอร์ต / เว็บ: โปรแกรมที่เปิดรับพอร์ตนั้น + ใครต่อเข้าพอร์ตนั้นอยู่ (จาก Network & Security) · เว็บ: เร็วสุดในช่วง, SSL เหลือกี่วัน
+  · เหตุการณ์ล่าสุดของรายการนี้จาก System log
+- Network & Security: กล่อง "วิธีแก้ (ขั้นตอนเดียว)" เมื่ออ่านข้อมูลไม่ได้
+  · Linux: คำสั่งเดียว (ปุ่มคัดลอก) สร้าง /etc/sudoers.d/central-monitor ให้ user ของ puller รันได้เฉพาะ iptables -S / ufw status / firewall-cmd --state / --list-all (หา path จริงเอง, ตรวจด้วย visudo ผิด = ลบทิ้ง) + เพิ่มเข้ากลุ่ม adm / systemd-journal
+  · Windows ไม่มีข้อมูล: รันคำสั่งติดตั้งของเครื่องซ้ำ 1 ครั้ง (ติดตั้ง cm-netsec.ps1 + task ให้เอง)
+
 ## หน้า Network & Security (/network)
 - ปุ่ม "Network & Security" ที่หัวหน้า Dashboard / Status & Logs
 - ไทล์: จำนวนเครื่อง, Firewall ปิด, Login ไม่สำเร็จ 24h, การเชื่อมต่อขาเข้า / ขาออก, IP สาธารณะที่คุยกับเครื่องเรา

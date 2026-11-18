@@ -305,6 +305,13 @@ class Backend(unittest.TestCase):
         # firewall อ่านไม่ได้ แต่ข้ออื่นผ่าน -> สีตามข้อที่รู้ผล (ไม่เป็นสีเทาทั้งเครื่อง)
         self.assertEqual(netsec_service._worst({"available": True, "checks": [{"status": "unknown"}, {"status": "ok"}]}), "ok")
         self.assertEqual(netsec_service._worst({"available": False, "checks": [{"status": "ok"}]}), "unknown")
+        # วิธีแก้ขั้นตอนเดียว: Linux อ่าน firewall ไม่ได้ -> คำสั่ง sudoers ของ user นั้น · Windows ไม่มีข้อมูล -> รันคำสั่งติดตั้งซ้ำ
+        f = netsec_service._fix({"web": "ns-a", "available": True, "firewall": {"status": "unknown", "note": "sudo: a password is required"},
+                                 "logins": {"failed": 0}}, {"ssh": {"user": "cp"}}, False)
+        self.assertIn("U=cp;", f["command"])
+        self.assertIn("visudo -cf", f["command"])
+        self.assertIsNone(netsec_service._fix({"available": True, "firewall": {"status": "active"}, "logins": {"failed": 0}}, {}, False))
+        self.assertEqual(netsec_service._fix({"available": False}, {}, True)["kind"], "windows")
         self.assertEqual(c.get("/api/netsec/nope").status_code, 404)
         self.assertEqual(c.post("/api/netsec/ns-a/refresh").status_code, 200)
 
