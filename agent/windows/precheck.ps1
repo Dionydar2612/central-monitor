@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS  ตรวจเครื่อง Windows ก่อนติดตั้ง Central Monitor Agent - อ่านอย่างเดียว ไม่ติดตั้ง / ไม่หยุด / ไม่แก้อะไร
 .EXAMPLE   powershell -ExecutionPolicy Bypass -File .\precheck.ps1 -Central 172.27.2.22
            powershell -ExecutionPolicy Bypass -File .\precheck.ps1 -Central 172.27.2.22 -Pull
@@ -133,7 +133,7 @@ if ($sec -and $sec.FileSize -gt 1GB) { Res WARN "Security log ใหญ่ ($([m
 
 # ---------------- โปรแกรมป้องกันไวรัส
 $av = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct
-if ($av) { Res INFO "Antivirus" "$((($av | ForEach-Object displayName) | Select-Object -Unique) -join ', ') · ถ้าบล็อก fluent-bit.exe / windows_exporter.exe / สคริปต์ PowerShell ให้ยกเว้นโฟลเดอร์ central-monitor-agent" }
+if ($av) { Res INFO "Antivirus" "$((($av | ForEach-Object displayName) | Select-Object -Unique) -join ', ') - if it blocks fluent-bit.exe / windows_exporter.exe / PowerShell scripts, exclude the central-monitor-agent folders" }
 
 # ---------------- สรุป
 $fail = @($R | Where-Object Level -eq "FAIL").Count
