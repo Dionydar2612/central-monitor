@@ -108,6 +108,7 @@ function flowModel() {
 }
 function mapHtml() {
     const md = flowModel(), sel = N.web;
+    N.flow = md;
     const NW = 196, NH = 54, GX = 120, GY = 24, PAD = 20;
     const ncol = md.cols.length;
     const colH = c => c.length * NH + Math.max(0, c.length - 1) * GY;
@@ -139,7 +140,7 @@ function mapHtml() {
         const ports = [...e.ports].sort((p, q) => p - q);
         const tip = `${nodeName(md.nodes[e.from])} → ${nodeName(md.nodes[e.to])} · พอร์ต ${ports.join(", ")} · ${e.count} การเชื่อมต่อ`
             + (e.procs.size ? ` · ${[...e.procs].slice(0, 4).join(", ")}` : "") + (e.peers.size ? ` · ${[...e.peers].slice(0, 8).join(", ")}${e.peers.size > 8 ? " ..." : ""}` : "");
-        edgesSvg += `<g class="fe ${e.kind}${on ? " on" : ""}${dim ? " dim" : ""}${backward ? " back" : ""}"><path d="${d}" style="stroke-width:${w.toFixed(1)}px" marker-end="url(#fA${e.kind}${on ? "o" : ""})"><title>${esc(tip)}</title></path></g>`;
+        edgesSvg += `<g class="fe ${e.kind}${on ? " on" : ""}${dim ? " dim" : ""}${backward ? " back" : ""}${N.pop === "e:" + k ? " pick" : ""}" data-edge="${esc(k)}"><path class="hit" d="${d}"/><path d="${d}" style="stroke-width:${w.toFixed(1)}px" marker-end="url(#fA${e.kind}${on ? "o" : ""})"><title>${esc(tip)} · คลิกเพื่อดูรายละเอียด</title></path></g>`;
         /* ป้ายพอร์ตใกล้ปลายทาง (อ่านได้ว่าเข้าพอร์ตไหนของใคร) */
         const lab = ports.slice(0, 3).map(p => ":" + p).join(" ") + (ports.length > 3 ? ` +${ports.length - 3}` : "");
         if (!backward && (!sel || on)) labels += `<text class="fl${on ? " on" : ""}" x="${x2 - 14}" y="${y2 - 4}" text-anchor="end">${esc(lab)}</text>`;
@@ -148,10 +149,10 @@ function mapHtml() {
         const p = pos[n.id], on = sel === n.id, dim = sel && !on && !md.edges.some(e => touches(e) && (e.from === n.id || e.to === n.id));
         if (n.kind === "x") {
             const peers = new Set(); (n.dir === "in" ? n.ins : n.outs).concat(n.dir === "in" ? n.outs : n.ins).forEach(e => e.peers.forEach(x => peers.add(x)));
-            return `<g class="fn x ${n.pub ? "pub" : "lan"}${dim ? " dim" : ""}"><rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="27"/>`
+            return `<g class="fn x ${n.pub ? "pub" : "lan"}${dim ? " dim" : ""}${N.pop === "x:" + n.id ? " pick" : ""}" data-ext="${esc(n.id)}" tabindex="0"><rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="27"/>`
                 + `<text x="${p.x + NW / 2}" y="${p.y + 23}" text-anchor="middle" class="nm">${n.pub ? "🌐 Internet" : "LAN อื่น"}</text>`
                 + `<text x="${p.x + NW / 2}" y="${p.y + 40}" text-anchor="middle" class="ip">${n.dir === "in" ? "ต่อเข้ามา" : "ต่อออกไป"} · ${peers.size} IP</text>`
-                + `<title>${esc([...peers].slice(0, 20).join(", "))}</title></g>`;
+                + `<title>${esc([...peers].slice(0, 20).join(", "))} · คลิกเพื่อดูว่ามี IP อะไรบ้าง</title></g>`;
         }
         return machineNode(n.m, p.x, p.y, NW, NH, on, dim);
     };
@@ -167,12 +168,53 @@ function mapHtml() {
     const heads = md.cols.length > 1 ? `<text x="${PAD}" y="22" class="fh">เริ่มเชื่อมต่อ →</text><text x="${W - PAD}" y="22" text-anchor="end" class="fh">→ ปลายทาง</text>` : "";
     const marker = (id, c) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`;
     return `<div class="tbar"><label class="st-check"><input type="checkbox" data-ext ${N.showExt !== false ? "checked" : ""}> แสดง Internet / LAN อื่น</label>
-<span class="st-mut">ลูกศร A → B = A ต่อเข้าพอร์ตของ B · เส้นหนา = เชื่อมต่อมาก · คลิกเครื่องเพื่อไฮไลต์และดูรายละเอียด${sel ? ` · <a href="#" data-clear>ยกเลิกเลือก</a>` : ""}</span></div>
+<span class="st-mut">ลูกศร A → B = A ต่อเข้าพอร์ตของ B · เส้นหนา = เชื่อมต่อมาก · คลิกเครื่อง = ไฮไลต์ + รายละเอียด · คลิกเส้น / Internet / LAN อื่น = ดูว่ามี IP / พอร์ต / โปรแกรมอะไร${sel ? ` · <a href="#" data-clear>ยกเลิกเลือก</a>` : ""}</span></div>
 <div class="topow"><svg class="flow" viewBox="0 0 ${W} ${H + 10}" role="img" aria-label="แผนผังการเชื่อมต่อ">
 <defs>${marker("fAm", "#7c8aa5")}${marker("fAmo", "#1f7bff")}${marker("fApub", "#e08a00")}${marker("fApubo", "#e08a00")}${marker("fAlan", "#9aa6bd")}${marker("fAlano", "#1f7bff")}</defs>
 ${heads}${edgesSvg}${nodesSvg}${labels}${loneSvg}</svg></div>
-<div class="nslegend"><span><i style="background:${STC.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${STC.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${STC.error}"></i>มีปัญหา</span><span><i style="background:${STC.unknown}"></i>ไม่มีข้อมูล</span><span><b style="color:#7c8aa5">━</b> ระหว่างเครื่อง</span><span><b style="color:#e08a00">━</b> Internet</span><span><b style="color:#9aa6bd">┅</b> LAN อื่น</span></div>`;
+<div class="nslegend"><span><i style="background:${STC.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${STC.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${STC.error}"></i>มีปัญหา</span><span><i style="background:${STC.unknown}"></i>ไม่มีข้อมูล</span><span><b style="color:#7c8aa5">━</b> ระหว่างเครื่อง</span><span><b style="color:#e08a00">━</b> Internet</span><span><b style="color:#9aa6bd">┅</b> LAN อื่น</span></div>${popHtml()}`;
 }
+/* ---------------- คลิกเส้น / Internet / LAN อื่น = มีอะไรอยู่ข้างใน ---------------- */
+const PORT_NAME = { 20: "FTP data", 21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 67: "DHCP", 80: "HTTP", 88: "Kerberos", 110: "POP3",
+    123: "NTP", 135: "RPC", 137: "NetBIOS", 139: "NetBIOS", 143: "IMAP", 161: "SNMP", 389: "LDAP", 443: "HTTPS", 445: "SMB (แชร์ไฟล์)", 465: "SMTPS",
+    514: "Syslog", 587: "SMTP", 636: "LDAPS", 993: "IMAPS", 995: "POP3S", 1433: "SQL Server", 1521: "Oracle", 2049: "NFS", 2375: "Docker", 2376: "Docker",
+    3000: "Grafana", 3306: "MySQL", 3389: "Remote Desktop", 4318: "Central agent (OTLP)", 5432: "PostgreSQL", 5601: "Kibana / Dashboards", 5672: "RabbitMQ",
+    5985: "WinRM", 5986: "WinRM", 6379: "Redis", 8080: "HTTP", 8443: "HTTPS", 9090: "Prometheus", 9093: "Alertmanager", 9100: "node_exporter",
+    9182: "windows_exporter", 9200: "OpenSearch / Elasticsearch", 9300: "OpenSearch", 11211: "Memcached", 27017: "MongoDB" };
+const portTxt = p => p == null ? "-" : `${p}${PORT_NAME[p] ? ` <small class="st-mut">${PORT_NAME[p]}</small>` : ""}`;
+function popHtml() {
+    if (!N.pop || !N.flow) return "";
+    const head = (title, sub) => `<div class="nspop" id="nsPop"><div class="top"><div><b>${title}</b>${sub ? `<div class="st-mut">${sub}</div>` : ""}</div><button type="button" class="svbtn sm" data-popclose>ปิด</button></div>`;
+    const webLink = w => `<a href="#" data-goweb="${esc(w)}">${esc(w)}</a>`;
+    if (N.pop.startsWith("x:")) {
+        const id = N.pop.slice(2), pub = id.startsWith("inet"), dir = id.endsWith("-in") ? "in" : "out";
+        const rows = N.d.external.filter(x => !!x.public === pub && x.dir === dir).sort((a, b) => ipNum(a.peer) - ipNum(b.peer) || b.count - a.count);
+        const ips = new Set(rows.map(x => x.peer));
+        const ports = {}; rows.forEach(x => { ports[x.port] = (ports[x.port] || 0) + x.count; });
+        const top = Object.entries(ports).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p, c]) => `<span class="nschip">${portTxt(Number(p))} · ${c}</span>`).join("");
+        return head(`${pub ? "🌐 Internet" : "LAN อื่น (ไม่ได้ monitor)"} · ${dir === "in" ? "ต่อเข้ามาหาเครื่องเรา" : "เครื่องเราต่อออกไป"}`,
+                `${ips.size} IP · ${rows.reduce((a, x) => a + x.count, 0)} การเชื่อมต่อ ณ เวลาที่เก็บข้อมูล`)
+            + (top ? `<div class="nschips">พอร์ตที่ใช้: ${top}</div>` : "")
+            + `<div class="tblw"><table class="st-tbl nstbl"><thead><tr><th>IP ${dir === "in" ? "ต้นทาง" : "ปลายทาง"}</th><th>${dir === "in" ? "ต่อเข้าเครื่อง" : "จากเครื่อง"}</th><th>พอร์ต</th><th>โปรแกรมบนเครื่องเรา</th><th>จำนวน</th></tr></thead><tbody>`
+            + rows.map(x => `<tr><td><code>${esc(x.peer)}</code></td><td>${webLink(x.web)}</td><td>${portTxt(x.port)}</td><td>${esc((x.procs || []).join(", ") || "-")}</td><td>${x.count}</td></tr>`).join("")
+            + `</tbody></table></div></div>`;
+    }
+    const k = N.pop.slice(2), e = N.flow.edges.find(x => x.from + "→" + x.to === k);
+    if (!e) return "";
+    const nf = N.flow.nodes[e.from], nt = N.flow.nodes[e.to];
+    let rows;
+    if (e.kind === "m") {
+        rows = N.d.edges.filter(x => x.from === e.from && x.to === e.to).map(x => `<tr><td>${webLink(x.from)}</td><td>${webLink(x.to)}</td><td>${portTxt(x.port)}</td><td>${esc((x.procs || []).join(", ") || "-")}</td><td>${x.count}</td></tr>`);
+    } else {
+        const web = nf.kind === "m" ? e.from : e.to, dir = nf.kind === "m" ? "out" : "in";
+        rows = N.d.external.filter(x => x.web === web && x.dir === dir && !!x.public === (e.kind === "pub")).sort((a, b) => ipNum(a.peer) - ipNum(b.peer))
+            .map(x => dir === "in" ? `<tr><td><code>${esc(x.peer)}</code></td><td>${webLink(web)}</td><td>${portTxt(x.port)}</td><td>${esc((x.procs || []).join(", ") || "-")}</td><td>${x.count}</td></tr>`
+                : `<tr><td>${webLink(web)}</td><td><code>${esc(x.peer)}</code></td><td>${portTxt(x.port)}</td><td>${esc((x.procs || []).join(", ") || "-")}</td><td>${x.count}</td></tr>`);
+    }
+    return head(`${esc(nodeName(nf))} → ${esc(nodeName(nt))}`, `${e.count} การเชื่อมต่อ · พอร์ต ${[...e.ports].sort((a, b) => a - b).map(p => p + (PORT_NAME[p] ? ` (${PORT_NAME[p]})` : "")).join(", ")}`)
+        + `<div class="tblw"><table class="st-tbl nstbl"><thead><tr><th>ต้นทาง</th><th>ปลายทาง</th><th>พอร์ตปลายทาง</th><th>โปรแกรม</th><th>จำนวน</th></tr></thead><tbody>${rows.join("")}</tbody></table></div></div>`;
+}
+
 function nodeName(n) { return n.kind === "m" ? n.m.web : `${n.pub ? "Internet" : "LAN อื่น"} (${n.dir === "in" ? "ต่อเข้ามา" : "ต่อออกไป"})`; }
 function machineNode(m, x, y, w, h, on, dim) {
     const c = m.available ? STC[m.worst] || STC.unknown : STC.unknown;
@@ -312,6 +354,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("nsMain").addEventListener("click", e => {
         if (e.target.closest("[data-clear]")) { e.preventDefault(); selectWeb(N.web); return; }
         if (e.target.matches("[data-ext]")) { N.showExt = e.target.checked; renderMain(); return; }
+        if (e.target.closest("[data-popclose]")) { N.pop = null; renderMain(); return; }
+        const gw = e.target.closest("[data-goweb]");
+        if (gw) { e.preventDefault(); N.pop = null; if (N.web !== gw.dataset.goweb) selectWeb(gw.dataset.goweb); else renderMain(); return; }
+        const xe = e.target.closest("[data-ext]");
+        if (xe) { N.pop = N.pop === "x:" + xe.dataset.ext ? null : "x:" + xe.dataset.ext; renderMain(); setTimeout(() => $("nsPop") && $("nsPop").scrollIntoView({ behavior: "smooth", block: "nearest" }), 30); return; }
+        const ed = e.target.closest("[data-edge]");
+        if (ed) { N.pop = N.pop === "e:" + ed.dataset.edge ? null : "e:" + ed.dataset.edge; renderMain(); setTimeout(() => $("nsPop") && $("nsPop").scrollIntoView({ behavior: "smooth", block: "nearest" }), 30); return; }
         const n = e.target.closest("[data-web]"); if (n) selectWeb(n.dataset.web);
     });
     $("nsMain").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.dataset.web) selectWeb(e.target.dataset.web); });
