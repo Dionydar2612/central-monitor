@@ -336,6 +336,10 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## Apps & Web กลับมาที่หน้าหลัก · Network & Security แสดงเฉพาะที่ดึงได้
+- หน้าหลักแสดงแถบ / ไทล์ Apps & Web เหมือนเดิม (ยังเปิดจาก Settings ได้ด้วย) · Network & Security เปิดจาก Settings
+- Network & Security: เอากล่อง "วิธีแก้" / คำสั่ง และข้อความสาเหตุยาว ๆ ออก · ส่วนที่ดึงไม่ได้แสดงสั้น ๆ ว่า "ดึงข้อมูลไม่ได้" / "ไม่สามารถดึงข้อมูล ... ได้" / "ไม่มีข้อมูล" · การ์ดผลตรวจแสดงเฉพาะข้อที่รู้ผล
+
 ## ตรวจเครื่อง Windows ก่อนติดตั้ง agent (precheck)
 - `agent/windows/precheck.ps1` / `precheck.bat` (อยู่ใน zip ชุดติดตั้ง) อ่านอย่างเดียว: ไม่ติดตั้ง ไม่หยุด ไม่แก้ service / ไฟล์ / firewall
 - ตรวจ: Admin, พอร์ต 9182 ว่างไหม (ใครใช้อยู่), windows_exporter ตัวเดิม (MSI / service ที่ตัวติดตั้งจะถอน / ปิด), cm-agent / cm-exporter / task เดิม, Fluent Bit ตัวอื่น, disk / RAM / CPU / จำนวน process, Windows Update ปิดไหม, Windows Firewall (pull), WMI, ต่อ central:4318 ได้ไหม (push), ดาวน์โหลด github / packages.fluentbit.io ได้ไหม (หรือมีไฟล์ข้างสคริปต์), Event Log channel, ไฟล์ log (Fluent Bit เปิดค้าง -> โปรแกรมที่หมุนไฟล์ด้วย rename อาจ error), Security log ใหญ่, Antivirus

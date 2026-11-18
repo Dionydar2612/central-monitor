@@ -24,7 +24,7 @@ function ago(v) {
     return s < 90 ? `${Math.round(s)} วินาที` : s < 5400 ? `${Math.round(s / 60)} นาที` : s < 172800 ? `${Math.round(s / 3600)} ชม.` : `${Math.round(s / 86400)} วัน`;
 }
 function fmtTime(v) { const t = typeof v === "number" ? v * 1000 : Date.parse(v); return Number.isFinite(t) ? new Date(t).toLocaleString("en-GB") : esc(v || "-"); }
-const fwText = s => ({ active: "เปิด", inactive: "ปิด", unknown: "ไม่ทราบ" }[s] || s || "-");
+const fwText = s => ({ active: "เปิด", inactive: "ปิด", unknown: "ดึงข้อมูลไม่ได้" }[s] || s || "-");
 const fwCls = s => s === "active" ? "ok" : s === "inactive" ? "cr" : "na";
 const pill = (txt, cls) => `<span class="ovst ${cls}">${esc(txt)}</span>`;
 const match = (...v) => !N.q || v.some(x => String(x ?? "").toLowerCase().includes(N.q));
@@ -34,7 +34,7 @@ function renderTiles() {
     const t = N.d.totals || {};
     const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${n ?? "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
     $("nsTiles").innerHTML = tile("เครื่อง", t.machines, "tot", `${N.d.edges.length} เส้นเชื่อมระหว่างเครื่อง`)
-        + tile("Firewall ปิด", t.fw_off, t.fw_off ? "dn" : "up", t.fw_unknown ? `อ่านไม่ได้ ${t.fw_unknown} เครื่อง` : "ทุกเครื่องอ่านได้")
+        + tile("Firewall ปิด", t.fw_off, t.fw_off ? "dn" : "up", t.fw_unknown ? `ดึงข้อมูลไม่ได้ ${t.fw_unknown} เครื่อง` : "ดึงข้อมูลได้ทุกเครื่อง")
         + tile("Login ไม่สำเร็จ 24h", t.failed_logins, t.failed_logins >= 100 ? "dn" : t.failed_logins >= 20 ? "nok" : "up", "SSH / Windows logon")
         + tile("ขาเข้า", t.conn_in, "tot", "การเชื่อมต่อที่ค้างอยู่")
         + tile("ขาออก", t.conn_out, "tot", "การเชื่อมต่อที่ค้างอยู่")
@@ -77,12 +77,12 @@ function mapHtml() {
     };
     const node = m => {
         const [x, y] = pos[m.web], w = m.worst || "unknown";
-        const sub = !m.available ? "ยังไม่มีข้อมูล" : [m.firewall === "inactive" ? "FW ปิด" : m.firewall === "unknown" ? "FW อ่านไม่ได้" : "", m.failed_logins >= 20 ? `login ✕${m.failed_logins}` : ""].filter(Boolean).join(" · ");
+        const sub = !m.available ? "ไม่มีข้อมูล" : [m.firewall === "inactive" ? "FW ปิด" : "", m.failed_logins >= 20 ? `login ✕${m.failed_logins}` : ""].filter(Boolean).join(" · ");
         return `<g class="nsN${sel === m.web ? " on" : ""}${sel && sel !== m.web ? " dim" : ""}" data-web="${esc(m.web)}" tabindex="0"><circle cx="${x}" cy="${y}" r="${r}" fill="${COL[w]}"/>`
             + `<text x="${x}" y="${y + 5}" text-anchor="middle" class="os">${m.os === "windows" ? "Win" : "Linux"}</text>`
             + `<text x="${x}" y="${y + r + 16}" text-anchor="middle" class="nm">${esc(m.web)}</text>`
             + (sub ? `<text x="${x}" y="${y + r + 30}" text-anchor="middle" class="sb">${esc(sub)}</text>` : "")
-            + `<title>${esc(`${m.web} ${m.host || ""} · Firewall ${fwText(m.firewall)} · ขาเข้า ${m.in} · ขาออก ${m.out}${m.available ? "" : " · ยังไม่มีข้อมูล"}`)}</title></g>`;
+            + `<title>${esc(`${m.web} ${m.host || ""} · Firewall ${fwText(m.firewall)} · ขาเข้า ${m.in} · ขาออก ${m.out}${m.available ? "" : " · ไม่มีข้อมูล"}`)}</title></g>`;
     };
     const virt = (k, label, sub) => `<g class="nsV"><rect x="${pos[k][0] - 62}" y="${pos[k][1] - 24}" width="124" height="48" rx="24"/><text x="${pos[k][0]}" y="${pos[k][1] - 2}" text-anchor="middle" class="nm">${label}</text><text x="${pos[k][0]}" y="${pos[k][1] + 14}" text-anchor="middle" class="sb">${sub}</text></g>`;
     const ext = N.d.external, inet = new Set(ext.filter(x => x.public).map(x => x.peer)).size, lan = new Set(ext.filter(x => !x.public).map(x => x.peer)).size;
@@ -91,7 +91,7 @@ function mapHtml() {
 ${Object.values(pairs).map(edge).join("")}
 ${virt("__inet", "Internet", `${inet} IP สาธารณะ`)}${virt("__lan", "LAN อื่น", `${lan} IP ที่ไม่ได้ monitor`)}
 ${ms.map(node).join("")}</svg>
-<div class="nslegend"><span><i style="background:${COL.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${COL.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${COL.error}"></i>มีปัญหา (เช่น firewall ปิด)</span><span><i style="background:${COL.unknown}"></i>ยังไม่มีข้อมูล (คลิกดูสาเหตุ)</span><span>A → B = A ต่อเข้าพอร์ตของ B · ชี้ที่เส้นเพื่อดูรายละเอียด · คลิกเครื่องเพื่อดูทั้งหมด</span></div>`;
+<div class="nslegend"><span><i style="background:${COL.ok}"></i>ผ่านทุกข้อ</span><span><i style="background:${COL.warning}"></i>มีข้อควรระวัง</span><span><i style="background:${COL.error}"></i>มีปัญหา (เช่น firewall ปิด)</span><span><i style="background:${COL.unknown}"></i>ไม่มีข้อมูล</span><span>A → B = A ต่อเข้าพอร์ตของ B · ชี้ที่เส้นเพื่อดูรายละเอียด · คลิกเครื่องเพื่อดูทั้งหมด</span></div>`;
 }
 
 /* ---------------- ตารางทุกเครื่อง ---------------- */
@@ -103,9 +103,9 @@ function tableHtml() {
             const o = ov[m.web] || {}, [wl, wc] = ST[m.worst] || ST.unknown;
             const fl = m.failed_logins;
             return `<tr data-web="${esc(m.web)}" tabindex="0"><td><b>${esc(m.web)}</b> <span class="ostag${m.os === "windows" ? "" : " lx"}">${m.os === "windows" ? "Win" : "Linux"}</span><small class="nssub">${esc([m.group, m.host].filter(Boolean).join(" · "))}</small></td>`
-                + `<td>${m.available ? pill(wl, wc) : `<span class="st-mut">ยังไม่มีข้อมูล</span>`}</td><td>${pill(fwText(m.firewall), fwCls(m.firewall))} <small class="st-mut">${esc(m.fw_tool)}</small></td>`
+                + `<td>${m.available ? pill(wl, wc) : `<span class="st-mut">ไม่มีข้อมูล</span>`}</td><td>${!m.available ? "-" : m.firewall === "unknown" ? `<span class="st-mut">ดึงข้อมูลไม่ได้</span>` : `${pill(fwText(m.firewall), fwCls(m.firewall))} <small class="st-mut">${esc(m.fw_tool)}</small>`}</td>`
                 + `<td>${esc(m.default_in || "-")}</td><td>${m.listening}</td><td>${m.in} <small class="st-mut">(${m.peers_in} IP)</small></td><td>${m.out} <small class="st-mut">(${m.peers_out} IP)</small></td>`
-                + `<td class="ovv ${fl == null ? "" : fl >= 100 ? "cr" : fl >= 20 ? "wr" : "ok"}">${fl ?? "-"}</td>`
+                + `<td class="ovv ${fl == null ? "" : fl >= 100 ? "cr" : fl >= 20 ? "wr" : "ok"}">${fl ?? (m.available ? `<span class="st-mut" style="font-weight:400">ดึงข้อมูลไม่ได้</span>` : "-")}</td>`
                 + `<td>${o.net != null ? Number(o.net).toFixed(2) + " MB/s" : "-"}</td><td>${o.ping_ms != null ? Math.round(o.ping_ms) + " ms" : "-"}${o.packet_loss != null ? ` · ${Number(o.packet_loss).toFixed(0)}%` : ""}</td>`
                 + `<td>${o.availability != null ? Number(o.availability).toFixed(2) + "%" : "-"}</td></tr>`;
         }).join("") + `</tbody></table></div>`;
@@ -132,7 +132,8 @@ function tbl(head, rows, empty) {
 }
 function detailBody(d) {
     if (N.tab === "checks") {
-        return `<div class="nschecks">${(d.checks || []).map(c => { const [, cls] = ST[c.status] || ST.unknown;
+        if (!d.available) return `<div class="empty">ไม่มีข้อมูลจากเครื่องนี้</div>`;
+        return `<div class="nschecks">${(d.checks || []).filter(c => c.status !== "unknown").map(c => { const [, cls] = ST[c.status] || ST.unknown;
             return `<div class="nsck ${cls}"><b>${c.status === "ok" ? "✓" : c.status === "unknown" ? "?" : "!"} ${esc(c.title)}</b><span>${esc(c.detail)}</span></div>`; }).join("") || `<div class="empty">ไม่มีข้อมูล</div>`}</div>`
             + (d.addrs && d.addrs.length ? `<div class="nsaddr">IP ของเครื่อง: ${d.addrs.map(a => `<code>${esc(a.ip)}/${a.prefix}</code> <small class="st-mut">${esc(a.if || "")}</small>`).join(" · ")}</div>` : "");
     }
@@ -144,13 +145,13 @@ function detailBody(d) {
     }
     if (N.tab === "fw") {
         const fw = d.firewall;
-        if (!fw) return `<div class="empty">อ่าน firewall ไม่ได้</div>`;
+        if (!fw || fw.status === "unknown") return `<div class="empty">ไม่สามารถดึงข้อมูล Firewall ของเครื่องนี้ได้</div>`;
         const df = fw.defaults || {};
         const prof = fw.profiles ? `<div class="nsaddr">Profiles: ${fw.profiles.map(p => `<b>${esc(p.profile)}</b> ${p.enabled ? "เปิด" : "ปิด"} (in ${esc(p.in)} / out ${esc(p.out)})`).join(" · ")}</div>` : "";
         const rows = (fw.rules || []).filter(r => match(r.to, r.from, r.action, r.comment, r.program)).map(r => `<tr><td>${pill(r.action, /ALLOW/.test(r.action) ? "ok" : /LIMIT/.test(r.action) ? "wr" : "cr")}</td><td>${r.dir === "in" ? "⬅ เข้า" : r.dir === "out" ? "➡ ออก" : esc(r.dir)}</td><td><code>${esc(r.to)}</code></td><td>${esc(r.from)}</td><td>${esc([r.comment, r.program].filter(Boolean).join(" · ") || "-")}</td></tr>`);
         return `<div class="nsfw"><div>${pill(`Firewall ${fwText(fw.status)}`, fwCls(fw.status))} <span class="st-mut">${esc(fw.tool)}</span></div><div>ขาเข้าปริยาย <b>${esc(df.in || "-")}</b></div><div>ขาออกปริยาย <b>${esc(df.out || "-")}</b></div>${df.routed ? `<div>Forward <b>${esc(df.routed)}</b></div>` : ""}</div>`
-            + (fw.note ? `<div class="nsnote">${esc(fw.note)}</div>` : "") + prof
-            + tbl(["Action", "ทิศทาง", "พอร์ต / ปลายทาง", "จาก", "ชื่อ / หมายเหตุ"], rows, "ไม่มีกฎ (หรืออ่านรายการกฎไม่ได้)");
+            + prof
+            + tbl(["Action", "ทิศทาง", "พอร์ต / ปลายทาง", "จาก", "ชื่อ / หมายเหตุ"], rows, (fw.rules || []).length ? "ไม่มีกฎที่ตรงคำค้น" : fw.note ? "ไม่สามารถดึงรายการกฎได้" : "ไม่มีกฎ");
     }
     if (N.tab === "route") {
         return tbl(["ปลายทาง", "Gateway", "Interface", "Metric"], (d.routes || []).filter(r => match(r.dest, r.gw, r.if)).map(r =>
@@ -161,9 +162,8 @@ function detailBody(d) {
             `<tr><td><b>${esc(x.port)}</b></td><td>${esc(x.proto)}</td><td><code>${esc(x.address)}</code></td><td>${esc(x.process || "-")}</td><td>${x.local_only ? "เฉพาะในเครื่อง" : pill("เครือข่าย", "wr")}</td></tr>`), "ไม่มีข้อมูล");
     }
     const lg = d.logins;
-    if (!lg) return `<div class="empty">ไม่มีข้อมูล login</div>`;
+    if (!lg || lg.failed == null) return `<div class="empty">${d.available ? "ไม่สามารถดึงข้อมูล Login ของเครื่องนี้ได้" : "ไม่มีข้อมูล"}</div>`;
     return `<div class="nsfw"><div>ไม่สำเร็จ <b class="${lg.failed >= 100 ? "cr" : lg.failed >= 20 ? "wr" : ""}">${lg.failed ?? "-"}</b></div>${lg.invalid_users != null ? `<div>user ไม่มีจริง <b>${lg.invalid_users}</b></div>` : ""}${lg.success != null ? `<div>สำเร็จ <b>${lg.success}</b></div>` : ""}<div class="st-mut">${esc(lg.source || "")}</div></div>`
-        + (lg.note ? `<div class="nsnote">${esc(lg.note)}</div>` : "")
         + `<div class="nsh">ไม่สำเร็จ แยกตามต้นทาง</div>` + tbl(["IP ต้นทาง", "User", "ครั้ง"], (lg.failed_by || []).map(x => `<tr><td><code>${esc(x.ip)}</code></td><td>${esc(x.user)}</td><td>${x.count}</td></tr>`), "ไม่มี")
         + `<div class="nsh">เข้าสำเร็จล่าสุด</div>` + tbl(["เวลา", "User", "จาก", "วิธี"], (lg.recent_ok || []).map(x => `<tr><td>${fmtTime(x.time)}</td><td>${esc(x.user)}</td><td><code>${esc(x.ip || "-")}</code></td><td>${esc(x.type)}</td></tr>`), "ไม่มี");
 }
@@ -178,17 +178,10 @@ function renderDetail() {
     box.innerHTML = `<div class="top"><h2>${esc(d.web)} <span class="ostag${d.os === "windows" ? "" : " lx"}">${d.os === "windows" ? "Win" : "Linux"}</span> <small class="st-mut">${esc([d.group, d.host].filter(Boolean).join(" · "))}</small></h2>
 <span class="nsmeta">${d.collected_at ? `เก็บเมื่อ ${esc(ago(d.collected_at))} ที่แล้ว` : d.source === "windows" ? "อัปเดตทุก 5 นาที" : ""}${canOp && d.os !== "windows" ? ` <button type="button" class="svbtn sm" id="nsRefresh">ดึงใหม่</button>` : ""} <a class="svbtn sm" href="/?web=${encodeURIComponent(d.web)}">หน้าเครื่อง</a> <button type="button" class="svbtn sm" id="nsClose">ปิด</button></span></div>
 <div class="nsnet">${[["Traffic", o.net != null ? Number(o.net).toFixed(2) + " MB/s" : "-"], ["Ping", o.ping_ms != null ? Math.round(o.ping_ms) + " ms" : "-"], ["Packet loss", o.packet_loss != null ? Number(o.packet_loss).toFixed(1) + "%" : "-"], ["Availability 24h", o.availability != null ? Number(o.availability).toFixed(2) + "%" : "-"], ["ขาเข้า", `${d.summary.in} (${d.summary.peers_in} IP)`], ["ขาออก", `${d.summary.out} (${d.summary.peers_out} IP)`]].map(([k, v]) => `<div><small>${k}</small><b>${esc(v)}</b></div>`).join("")}</div>
-${d.note ? `<div class="nsnote">${esc(d.note)}</div>` : ""}
-${d.fix ? `<div class="nsfix"><b>วิธีแก้ (ขั้นตอนเดียว)</b><span>${esc(d.fix.text)}</span>${d.fix.command ? `<div class="nscmd"><code id="nsFixCmd">${esc(d.fix.command)}</code><button type="button" class="svbtn sm" id="nsCopy">คัดลอก</button></div>` : ""}${d.fix.link ? `<a class="svbtn sm" href="${esc(d.fix.link)}">ไปที่ Settings</a>` : ""}</div>` : ""}
+${!d.available ? `<div class="nsnote">ไม่สามารถดึงข้อมูล Network &amp; Security ของเครื่องนี้ได้</div>` : ""}
 <div class="vseg nstabs">${TABS.map(([k, l]) => `<button type="button" data-tab="${k}" class="${N.tab === k ? "on" : ""}">${l}</button>`).join("")}</div>
 <div class="nsbody">${detailBody(d)}</div>`;
     $("nsClose").onclick = () => selectWeb(null);
-    const cp = $("nsCopy");
-    if (cp) cp.onclick = async () => {
-        const t = $("nsFixCmd").textContent;
-        try { await navigator.clipboard.writeText(t); cp.textContent = "คัดลอกแล้ว"; }
-        catch (e) { const r = document.createRange(); r.selectNodeContents($("nsFixCmd")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); cp.textContent = "กด Ctrl+C"; }
-    };
     const rf = $("nsRefresh");
     if (rf) rf.onclick = async () => {
         rf.disabled = true; rf.textContent = "กำลังดึง...";

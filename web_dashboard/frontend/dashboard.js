@@ -1357,7 +1357,7 @@ function renderMachines(ov) {
         tile("Critical", ov.problem || 0, "dn", "≥ error threshold") +
         tile("Paused", ov.paused || 0, "ps", "not monitored") +
         (SHOW_CHECKS ? tile("Web checks", realChecks.length, "chk", realChecks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "") +
-        "";
+        (wms.length ? `<a class="ovtilelink" href="/apps">${tile("Apps & Web", wms.length, wb("down") ? "dn" : wb("warning") ? "nok" : "up", `${wb("up")} up · ${wb("warning")} warn · ${wb("down")} down`)}</a>` : "");
     q("#ovTiles").classList.add("many");
 
     const f = (S.ovq || "").trim().toLowerCase();
@@ -2676,5 +2676,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadCurrentUser();
     loadAll();
     setInterval(loadAll, 10000);
-    /* Apps & Web / Network & Security ไม่แสดงที่หน้าหลัก (ผู้ใช้ขอ) เปิดจากหน้า Settings */
+    /* Apps & Web แสดงที่หน้าหลักเหมือนเดิม · Network & Security เปิดจากหน้า Settings */
+    loadApps();
+    setInterval(() => { if (!document.hidden) loadApps(); }, 30000);
 });

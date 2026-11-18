@@ -168,42 +168,7 @@ def get_machine(web):
         c["external"] = bool(c.get("peer")) and not _private(c["peer"])
     d["checks"] = _checks(d, target)
     d["summary"] = _summary(d)
-    d["fix"] = _fix(d, target, win)
     return d
-
-
-# คำสั่งเดียวแก้ "อ่านไม่ได้" ของ Linux: sudoers (อ่านอย่างเดียว) + กลุ่มที่อ่าน log ของ sshd ได้
-#   หา path จริงของคำสั่งบนเครื่องเอง (iptables อยู่ /usr/sbin หรือ /sbin) ไม่มีคำสั่งไหนก็ข้าม
-#   ตรวจ sudoers ด้วย visudo ก่อนใช้ ผิด = ลบทิ้ง ไม่ทำให้ sudo ของเครื่องเสีย
-LINUX_FIX = ("sudo sh -c 'U={user}; L=\"\"; "
-             "for c in \"iptables -S\" \"ufw status\" \"ufw status *\" \"firewall-cmd --state\" \"firewall-cmd --list-all\"; do "
-             "p=$(command -v ${{c%% *}}) && L=\"$L${{L:+, }}$p ${{c#* }}\"; done; "
-             "echo \"$U ALL=(root) NOPASSWD: $L\" > /etc/sudoers.d/central-monitor && chmod 440 /etc/sudoers.d/central-monitor && "
-             "if visudo -cf /etc/sudoers.d/central-monitor >/dev/null; then echo sudoers OK; else rm -f /etc/sudoers.d/central-monitor; echo sudoers FAILED; fi; "
-             "for g in adm systemd-journal; do getent group $g >/dev/null && usermod -aG $g $U; done; echo groups: $(id -nG $U)'")
-
-
-def _fix(d, target, win):
-    """วิธีแก้แบบขั้นตอนเดียว เมื่ออ่านข้อมูลบางส่วนไม่ได้  None = ไม่ต้องแก้"""
-    if win:
-        if d.get("available"):
-            return None
-        return {"kind": "windows", "text": "รันคำสั่งติดตั้งของเครื่องนี้ซ้ำ 1 ครั้ง (Settings > เครื่อง > แก้ไข > การเชื่อมต่อ > Download installer + Make command) "
-                                            "ใน PowerShell แบบ Run as Administrator · สคริปต์ติดตั้ง cm-netsec.ps1 / scheduled task ให้เอง ไม่ต้องทำทีละขั้น",
-                "link": "/settings"}
-    fw = d.get("firewall") or {}
-    lg = d.get("logins") or {}
-    need = []
-    if fw.get("status") == "unknown" or (fw.get("note") and ("sudo" in fw["note"] or "root" in fw["note"])):
-        need.append("อ่าน firewall")
-    if lg.get("failed") is None and d.get("available"):
-        need.append("อ่าน log ของ sshd")
-    if not need:
-        return None
-    user = str(((target.get("ssh") or {}).get("user")) or d.get("user") or "<user>")
-    return {"kind": "linux", "text": f"ให้ user {user} {' และ '.join(need)} ได้ (อ่านอย่างเดียว): วางคำสั่งนี้บนเครื่อง {d.get('web')} ครั้งเดียว "
-                                     "(ถามรหัส sudo 1 ครั้ง) แล้วกด ดึงใหม่",
-            "command": LINUX_FIX.format(user=user)}
 
 
 def _summary(d):
