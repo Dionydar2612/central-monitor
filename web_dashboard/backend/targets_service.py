@@ -408,6 +408,18 @@ def validate_agent_target(data, existing_names, editing=None):
     if mode not in ("push", "pull"):
         errors["agent.mode"] = "เลือก push หรือ pull"
         mode = "push"
+    # พอร์ตของ central ที่เครื่องนี้ส่งไป (โหมด push) ว่าง = CENTRAL_AGENT_PORT (4318)
+    aport = agent.get("port")
+    if aport in (None, "") or mode == "pull":
+        aport = None
+    else:
+        try:
+            aport = int(aport)
+            if not 1 <= aport <= 65535:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors["agent.port"] = "พอร์ต 1-65535 (ว่าง = ค่าปริยาย 4318)"
+            aport = None
     if mode == "pull":
         if not exporter and host:
             exporter = f"{host}:9182"
@@ -427,7 +439,8 @@ def validate_agent_target(data, existing_names, editing=None):
         raise ValidationError(errors)
     return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "priority": priority, "paused": paused,
             "thresholds": thresholds, "alert": alert, "critical_services": crit,
-            "agent": {"logs": logs, "channels": channels, "mode": mode, **({"exporter": exporter} if mode == "pull" else {})}}
+            "agent": {"logs": logs, "channels": channels, "mode": mode, **({"exporter": exporter} if mode == "pull" else {}),
+                      **({"port": aport} if aport else {})}}
 
 
 def is_agent(t):
@@ -591,6 +604,8 @@ def _agent_node(t):
     if t["agent"].get("mode") == "pull":
         a["mode"] = "pull"
         a["exporter"] = t["agent"]["exporter"]
+    if t["agent"].get("port"):
+        a["port"] = int(t["agent"]["port"])
     return a
 
 
@@ -882,7 +897,8 @@ def _view(t):
                 "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
                 "alert": t.get("alert") or {},
                 "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"],
-                          "mode": "pull" if agent.get("mode") == "pull" else "push", "exporter": agent.get("exporter") or ""},
+                          "mode": "pull" if agent.get("mode") == "pull" else "push", "exporter": agent.get("exporter") or "",
+                          "port": agent.get("port") or ""},
                 "critical_services": t.get("critical_services"),
                 "watch_services": t.get("watch_services") or []}
     ssh = t.get("ssh") or {}

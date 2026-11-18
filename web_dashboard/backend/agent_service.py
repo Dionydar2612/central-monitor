@@ -87,6 +87,7 @@ def setup_info(target, central):
     logs = ";".join(agent.get("logs") or [])
     channels = ",".join(agent.get("channels") or ["System", "Application"])
     tok = token()
+    port = str(agent.get("port") or AGENT_PORT)        # พอร์ตเฉพาะเครื่อง (เช่น 9182 = CENTRAL_AGENT_PORT2) หรือค่าปริยาย
     # ไม่ต้องแตกไฟล์เอง: หา zip ล่าสุดใน Downloads -> แตกไปที่ %TEMP%\cm-agent -> รันสคริปต์
     unzip = ("$z=Get-ChildItem \"$env:USERPROFILE\\Downloads\\cm-agent-windows*.zip\" | Sort-Object LastWriteTime -Descending | "
              "Select-Object -First 1; if(-not $z){throw 'cm-agent-windows.zip not found in Downloads - click Download installer first'}; "
@@ -94,7 +95,7 @@ def setup_info(target, central):
     # ตรวจก่อนติดตั้ง (อ่านอย่างเดียว ไม่มี token): พอร์ตชน / windows_exporter เดิม / RAM / disk / ต่อ central / ไฟล์ log
     pre = (unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\precheck.ps1\" "
            f"-Central {central or '<IP-ของ-central>'}"
-           + (" -Pull" if agent.get("mode") == "pull" else (f" -Port {AGENT_PORT}" if str(AGENT_PORT) != "4318" else ""))
+           + (" -Pull" if agent.get("mode") == "pull" else (f" -Port {port}" if port != "4318" else ""))
            + (f' -Logs "{logs}"' if logs else "") + f' -Channels "{channels}"')
     if agent.get("mode") == "pull":
         # โหมด pull: ไม่ใช้ token / Fluent Bit · central = IP ที่ central ใช้ต่อเข้าเครื่องนี้ (firewall เปิดรับเฉพาะ IP นี้)
@@ -108,7 +109,7 @@ def setup_info(target, central):
     parts = [
         unzip + "powershell -ExecutionPolicy Bypass -File \"$d\\install-fluentbit.ps1\"",
         f"-Central {central or '<IP-ของ-central>'}",
-        f"-Port {AGENT_PORT}" if str(AGENT_PORT) != "4318" else "",
+        f"-Port {port}" if port != "4318" else "",
         f"-Token {tok or '<CENTRAL_AGENT_TOKEN>'}",
         f"-Name {target.get('name')}",
         f'-Logs "{logs}"' if logs else "",
@@ -119,7 +120,7 @@ def setup_info(target, central):
         "command": " ".join(p for p in parts if p),
         "precheck": pre,
         "token_set": bool(tok),
-        "port": AGENT_PORT,
+        "port": port,
         "ca_available": os.path.isfile(AGENT_CA),
         "package_available": os.path.isfile(os.path.join(AGENT_DIR, "windows", "install-fluentbit.ps1")),
     }

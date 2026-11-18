@@ -324,6 +324,7 @@ function openForm(t) {
     $("a_channels").value = t && t.agent ? (t.agent.channels || []).join(", ") : "System, Application";
     $("a_logs").value = t && t.agent ? (t.agent.logs || []).join("\n") : "";
     $("a_exporter").value = t && t.agent ? (t.agent.exporter || "") : "";
+    $("a_port").value = t && t.agent ? (t.agent.port || "") : "";
     setMode(t && t.agent ? t.agent.mode : "push");
     $("a_crit").value = t && Array.isArray(t.critical_services) ? (t.critical_services.length ? t.critical_services.join(", ") : "-") : "";
     if (t && t.type === "agent") {
@@ -410,6 +411,7 @@ function readForm() {
                 channels: $("a_channels").value.split(",").map(s => s.trim()).filter(Boolean),
                 mode: $("a_mode").value,
                 exporter: $("a_exporter").value.trim(),
+                port: $("a_port").value.trim(),
             },
         };
     }

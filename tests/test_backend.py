@@ -514,6 +514,16 @@ class Backend(unittest.TestCase):
         self.assertIn("precheck.ps1", info["precheck"])
         self.assertIn("-Pull", info["precheck"])
         self.assertNotIn("-Token", info["precheck"])          # ตรวจก่อนติดตั้งไม่มี token
+        # พอร์ตเฉพาะเครื่อง (push) เช่น 9182 -> คำสั่งติดตั้ง / precheck ใส่ -Port 9182
+        r = c.post("/api/targets", json={"name": "win-p9182", "type": "agent", "agent": {"mode": "push", "port": 9182, "logs": [], "channels": ["System"]}})
+        self.assertEqual(r.status_code, 201, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-p9182"][0]
+        self.assertEqual(t["agent"]["port"], 9182)
+        info2 = agent_service.setup_info(agent_service.agent_target("win-p9182"), "172.27.2.22")
+        self.assertIn("-Port 9182", info2["command"])
+        self.assertIn("-Port 9182", info2["precheck"])
+        bad = c.post("/api/targets", json={"name": "win-bad", "type": "agent", "agent": {"port": 70000}}).json
+        self.assertIn("agent.port", bad["fields"])
         self.assertNotIn("-Token", info["command"])
         # เปลี่ยนกลับเป็น push -> ไม่อยู่ในรายการให้ Prometheus ดึง
         r = c.put("/api/targets/win-pull", json={"type": "agent", "host": "192.168.181.101",

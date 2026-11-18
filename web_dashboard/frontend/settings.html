@@ -94,6 +94,7 @@
 <option value="push">Windows ส่งมาเอง (agent · มี log + metrics) — แนะนำ</option>
 <option value="pull">central ดึงจาก Windows (pull · เฉพาะ metrics)</option></select>
 <small id="a_mode_hint">Windows ต้องต่อไปหา central ได้ (HTTPS พอร์ตของ agent gateway)</small><div class="st-err"></div></div>
+<div class="st-f push-only" data-f="agent.port" hidden><label for="a_port">พอร์ตที่ส่งไป central</label><input id="a_port" type="number" min="1" max="65535" inputmode="numeric" placeholder="ว่าง = 4318"><small>ใช้เมื่อ firewall ไม่เปิด 4318 เช่น 9182 (ต้องตั้ง CENTRAL_AGENT_PORT2=9182 + CENTRAL_AGENT_BIND2=0.0.0.0 ใน docker/.env แล้ว cm-update)</small><div class="st-err"></div></div>
 <div class="st-f pull-only" data-f="agent.exporter" hidden><label for="a_exporter">windows_exporter (IP:พอร์ต ที่ central ใช้ต่อเข้าเครื่องนี้)</label><input id="a_exporter" autocomplete="off" placeholder="เช่น 192.168.181.101:9182 (ว่าง = Host:9182)"><small>central ต้องต่อเข้าพอร์ตนี้ได้ · สคริปต์เปิด Windows Firewall ให้เฉพาะ IP ของ central</small><div class="st-err"></div></div>
 </div></div>
 <div class="fsec">

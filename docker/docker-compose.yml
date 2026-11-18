@@ -213,6 +213,9 @@ services:
       - "host.docker.internal:host-gateway"   # Prometheus บน host (โหมด external)
     ports:
       - "${CENTRAL_AGENT_BIND:-0.0.0.0}:${CENTRAL_AGENT_PORT:-4318}:4318"
+      # พอร์ตที่ 2 (ไม่บังคับ) สำหรับวงที่ firewall เปิดให้แค่บางพอร์ต เช่น CENTRAL_AGENT_PORT2=9182 + CENTRAL_AGENT_BIND2=0.0.0.0
+      #   ปริยาย 127.0.0.1:4319 = ใช้ได้เฉพาะในเครื่อง central (ไม่เปิดออกนอก) · เครื่องที่ใช้พอร์ตนี้ ตั้งใน Settings > เครื่อง > การเชื่อมต่อ
+      - "${CENTRAL_AGENT_BIND2:-127.0.0.1}:${CENTRAL_AGENT_PORT2:-4319}:4318"
     volumes:
       - ../start_push_log/otel/agent-gateway.yaml:/etc/otelcol/config.yaml:ro
       - agent-tls:/run/agent-tls:ro

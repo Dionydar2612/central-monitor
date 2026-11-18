@@ -336,6 +336,10 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## agent (push) ส่งเข้า central ผ่านพอร์ตที่ 2 ได้ (เช่น 9182)
+- docker/.env: `CENTRAL_AGENT_BIND2=0.0.0.0` + `CENTRAL_AGENT_PORT2=9182` -> central-agent-gw รับทั้ง 4318 และ 9182 (ปริยาย 127.0.0.1:4319 = ไม่เปิดออกนอก)
+- Settings > เครื่อง (Windows, push) > การเชื่อมต่อ: "พอร์ตที่ส่งไป central" (ว่าง = 4318) -> puller.yaml `agent.port` · Make command / precheck ใส่ `-Port 9182` ให้เอง · เครื่องอื่นยังใช้ 4318 ได้เหมือนเดิม
+
 ## Apps & Web กลับมาที่หน้าหลัก · Network & Security แสดงเฉพาะที่ดึงได้
 - หน้าหลักแสดงแถบ / ไทล์ Apps & Web เหมือนเดิม (ยังเปิดจาก Settings ได้ด้วย) · Network & Security เปิดจาก Settings
 - Network & Security: เอากล่อง "วิธีแก้" / คำสั่ง และข้อความสาเหตุยาว ๆ ออก · ส่วนที่ดึงไม่ได้แสดงสั้น ๆ ว่า "ดึงข้อมูลไม่ได้" / "ไม่สามารถดึงข้อมูล ... ได้" / "ไม่มีข้อมูล" · การ์ดผลตรวจแสดงเฉพาะข้อที่รู้ผล
