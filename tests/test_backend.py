@@ -306,6 +306,12 @@ class Backend(unittest.TestCase):
         self.assertEqual(netsec_service._worst({"available": True, "checks": [{"status": "unknown"}, {"status": "ok"}]}), "ok")
         self.assertEqual(netsec_service._worst({"available": False, "checks": [{"status": "ok"}]}), "unknown")
         self.assertEqual(c.get("/api/netsec/nope").status_code, 404)
+        # แผนผังเครือข่าย: IP หลัก / subnet / gateway (ไม่มีข้อมูลการ์ด = ใช้ Host + /24)
+        mm = {m["web"]: m for m in d["machines"]}
+        self.assertEqual((mm["ns-a"]["ip"], mm["ns-a"]["subnet"], mm["ns-a"]["gateway"]), ("10.9.0.1", "10.9.0.0/24", "10.9.0.254"))
+        p = netsec_service._primary({"routes": [{"dest": "0.0.0.0/0", "gw": "172.20.208.1"}],
+                                     "addrs": [{"ip": "172.17.0.1", "prefix": 16, "if": "docker0"}, {"ip": "172.20.219.241", "prefix": 20, "if": "eth0"}]}, "x")
+        self.assertEqual((p["ip"], p["subnet"]), ("172.20.219.241", "172.20.208.0/20"))
         self.assertEqual(c.post("/api/netsec/ns-a/refresh").status_code, 200)
 
     def test_move_machine_and_group(self):

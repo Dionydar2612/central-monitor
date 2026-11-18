@@ -205,6 +205,42 @@ def _ip_index(targets, snaps=None):
     return idx
 
 
+_VIRTUAL_IF = ("lo", "docker", "br-", "veth", "virbr", "cni", "flannel", "cali", "tun", "tap", "isatap", "teredo", "loopback")
+
+
+def _primary(d, host):
+    """IP หลัก / subnet / gateway ของเครื่อง (ใช้วาดแผนผังเครือข่าย)
+    เลือก IPv4 ที่อยู่วงเดียวกับ default gateway ก่อน -> ตรงกับ Host ใน Settings -> การ์ดจริงตัวแรก (ไม่นับ docker / bridge / loopback)
+    ไม่มีข้อมูลจากเครื่อง: ใช้ Host (ถ้าเป็น IP) + /24"""
+    gw = next((r.get("gw") for r in d.get("routes") or [] if r.get("dest") in ("0.0.0.0/0", "default") and r.get("gw")), "") or ""
+    addrs = [a for a in d.get("addrs") or [] if a.get("ip") and not str(a["ip"]).startswith(("127.", "169.254."))
+             and not str(a.get("if") or "").lower().startswith(_VIRTUAL_IF)]
+    pick = None
+    try:
+        g = ipaddress.ip_address(gw) if gw else None
+        for a in addrs:
+            if g and g in ipaddress.ip_network(f"{a['ip']}/{a.get('prefix') or 24}", strict=False):
+                pick = a
+                break
+    except ValueError:
+        pick = None
+    if not pick and host:
+        pick = next((a for a in addrs if a["ip"] == host), None)
+    if not pick and addrs:
+        pick = addrs[0]
+    if not pick:
+        try:
+            ipaddress.ip_address(str(host or ""))
+            pick = {"ip": str(host), "prefix": 24, "if": ""}
+        except ValueError:
+            return {"ip": "", "subnet": "", "gateway": gw}
+    try:
+        net = str(ipaddress.ip_network(f"{pick['ip']}/{pick.get('prefix') or 24}", strict=False))
+    except ValueError:
+        net = ""
+    return {"ip": pick["ip"], "subnet": net, "gateway": gw, "iface": pick.get("if") or ""}
+
+
 def get_overview():
     """ทุกเครื่อง: สรุป + เส้น ใครต่อหาใคร (เครื่องที่ monitor) + ปลายทางภายนอกที่ต่อบ่อย"""
     now = time.time()
@@ -222,7 +258,7 @@ def get_overview():
         d.update(web=name, os="windows" if agent_service.is_agent(t) else "linux")
         d["checks"] = _checks(d, t)
         machines.append({"web": name, "os": d["os"], "host": t.get("host"), "group": t.get("group") or "",
-                         "available": d.get("available"), **_summary(d)})
+                         "available": d.get("available"), **_summary(d), **_primary(d, t.get("host"))})
         for c in d.get("connections") or []:
             peer = idx.get(c.get("peer"))
             if peer == name:

@@ -336,6 +336,12 @@
 - puller.yaml: `targets[].alert.disabled_sensors: [net_latency, packet_loss]` · ชื่อ = ส่วนหลัง `<เครื่อง>:` ของ sensor id, ชนิด (kind) หรือขึ้นต้นแล้วตามด้วย `*` (เช่น `bottleneck:*`)
 - API `POST /api/targets/<เครื่อง>/sensor-toggle` {sensor, disabled} (operator ขึ้นไป, Activity log `target.sensor_toggle`) · puller `sensor_monitor.sensor_disabled` / `_apply_disabled`
 
+## Network & Security: แผนผังแบบ topology
+- Internet (เมฆ) ── Gateway (router ของแต่ละ default gateway) ── switch ของแต่ละวง ── เครื่อง (ไอคอน server = Linux, PC = Windows, สีตามผลตรวจ) พร้อมชื่อ + IP
+- จัดกรอบตาม Subnet (ปริยาย) หรือ ตามกลุ่ม · IP ภายในที่คุยกับเครื่องเราแต่ไม่ได้ monitor แสดงเป็นไอคอนสีเทาในวงเดียวกัน (ไม่อยู่ในวงไหน = กรอบ "LAN อื่น")
+- คลิกเครื่อง = เส้นการเชื่อมต่อของเครื่องนั้น (เครื่องอื่น / IP ที่ไม่ได้ monitor / Internet) + รายละเอียด · ติ๊ก "แสดงเส้นการเชื่อมต่อระหว่างเครื่องทั้งหมด" ได้
+- backend: `/api/netsec` machines[] เพิ่ม ip / subnet / gateway / iface (เลือกการ์ดที่อยู่วงเดียวกับ default gateway ไม่นับ docker / bridge / loopback · ไม่มีข้อมูล = Host + /24)
+
 ## เครื่องที่ไม่มีกลุ่ม กับกลุ่ม สลับลำดับกันได้
 - ทุกชั้น (รวมชั้นบนสุด) เครื่องกับกลุ่มเรียงปนกันได้อิสระ เช่น กลุ่ม Intellex อยู่บนสุด แล้วค่อยเครื่องที่ไม่มีกลุ่ม หรือเครื่องคั่นระหว่างกลุ่ม (เครื่องที่ติดกันรวมเป็นตาราง / ไทล์ / การ์ดเดียว)
 - ลากกลุ่มไปวางบนแถวเครื่องได้ (ก่อน / หลังเครื่องนั้น อยู่ชั้นเดียวกับเครื่อง) · ลากเครื่องไปขอบบนของหัวกลุ่ม = ไปอยู่ก่อนกลุ่มนั้น
