@@ -24,6 +24,7 @@ from settings import STATE_DIR
 
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
 INCIDENTS_FILE = os.path.join(STATE_DIR, "incidents.json")      # <- puller/sensor_monitor.py
+PAUSES_FILE = os.path.join(STATE_DIR, "pauses.json")            # <- puller/sensor_monitor.py ช่วงที่เครื่องถูก Pause
 ACKS_FILE = os.path.join(STATE_DIR, "acks.json")
 ACK_LOCK = os.path.join(STATE_DIR, ".acks.lock")
 STATUSES = ("down", "error", "warning", "unknown", "paused", "ok")
@@ -283,6 +284,10 @@ def get_detail(sensor_id, days=30):
         a, b = max(a, since), min(b, now)
         if b > a:
             down += b - a
+    span = days * 86400
+    pauses = _pause_rows(sensor.get("web"), sensor, now) if sensor.get("kind") == "availability" else []
+    if pauses:                                  # Pause ไม่นับเป็นทั้ง uptime และ downtime
+        span = max(span - min(_down_seconds(pauses, since, now), span), 0)
     status = sensor.get("status")
     last_up = now if status in ("ok", "warning") else (max((float(i["end"]) for i in rows if i.get("end")), default=None))
     history = sorted(rows, key=lambda i: -(i.get("start") or 0))[:100]
@@ -290,9 +295,9 @@ def get_detail(sensor_id, days=30):
         i["duration"] = (i.get("end") or now) - (i.get("start") or now)
         i.setdefault("state", "recovered")
     return {"sensor": sensor, "updated_at": data.get("updated_at"), "interval": (data.get("options") or {}).get("interval", 30), "confirm_checks": (data.get("options") or {}).get("confirm_checks", 2),
-            "days": days, "downtime_pct": round(down / (days * 86400) * 100, 4), "uptime_pct": round(100 - down / (days * 86400) * 100, 4),
+            "days": days, "downtime_pct": round(min(down, span) / span * 100, 4) if span else None, "uptime_pct": round(100 - min(down, span) / span * 100, 4) if span else None,
             "last_up": last_up, "last_down": last_down, "incidents": history,
-            "availability": availability_stats(_avail_rows([i for i in rows if i.get("state") != "ongoing"], sensor, now), sensor, now)
+            "availability": availability_stats(_avail_rows([i for i in rows if i.get("state") != "ongoing"], sensor, now), sensor, now, pauses)
             if sensor.get("kind") == "availability" else None,
             "has_graph": sensor.get("kind") in ("cpu", "memory", "disk", "availability") or bool(sensor.get("query"))}
 
@@ -315,6 +320,24 @@ def _avail_rows(incidents, sensor, now):
     return rows
 
 
+def _load_pauses(web=None):
+    try:
+        with open(PAUSES_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [p for p in (data if isinstance(data, list) else []) if web is None or p.get("web") == web]
+
+
+def _pause_rows(web, sensor, now):
+    """ช่วง Pause ของเครื่อง (ที่จบแล้ว + ที่ยัง Pause อยู่)"""
+    rows = _load_pauses(web)
+    if (sensor or {}).get("status") == "paused":
+        rows.append({"web": web, "start": (sensor or {}).get("since") or now, "end": None,
+                     "reason": str((sensor or {}).get("message") or "").removeprefix("Paused: ")})
+    return rows
+
+
 def _down_seconds(rows, since, now):
     total = 0.0
     for i in rows:
@@ -324,13 +347,18 @@ def _down_seconds(rows, since, now):
     return total
 
 
-def availability_stats(rows, sensor, now=None):
-    """สรุป Uptime / Downtime ของเครื่อง 1 เครื่อง (rows = _avail_rows)"""
+def availability_stats(rows, sensor, now=None, pauses=None):
+    """สรุป Uptime / Downtime ของเครื่อง 1 เครื่อง (rows = _avail_rows, pauses = _pause_rows)
+    ช่วงที่ Pause ไม่นับทั้ง uptime และ downtime: uptime % = 100 - down / (ช่วงเวลา - เวลาที่ Pause)"""
     now = now or time.time()
+    pauses = pauses or []
     out = {"windows": {}}
     for key, sec in AVAIL_WINDOWS:
         down = _down_seconds(rows, now - sec, now)
-        out["windows"][key] = {"uptime_pct": round(100 - down / sec * 100, 3), "downtime": round(down),
+        paused = min(_down_seconds(pauses, now - sec, now), sec)
+        base = sec - paused
+        out["windows"][key] = {"uptime_pct": round(100 - min(down, base) / base * 100, 3) if base > 0 else None,
+                               "downtime": round(down), "paused": round(paused),
                                "outages": sum(1 for i in rows if float(i.get("end") or now) >= now - sec)}
     status = (sensor or {}).get("status")
     out.update({
@@ -339,6 +367,9 @@ def availability_stats(rows, sensor, now=None):
         "uptime_24h": out["windows"]["24h"]["uptime_pct"],
         "outages_24h": out["windows"]["24h"]["outages"],
         "downtime_24h": out["windows"]["24h"]["downtime"],
+        "paused_24h": out["windows"]["24h"]["paused"],
+        "pauses": sorted(({"start": p.get("start"), "end": p.get("end"), "reason": p.get("reason") or ""} for p in pauses
+                          if float(p.get("end") or now) >= now - 30 * 86400), key=lambda p: -float(p.get("start") or 0))[:50],
         "last_down": max((float(i.get("start") or 0) for i in rows), default=None) or None,
         "longest": max((float(i.get("end") or now) - float(i.get("start") or now) for i in rows
                         if float(i.get("end") or now) >= now - 30 * 86400), default=0),
@@ -355,4 +386,13 @@ def availability_by_web():
     for i in _load_incidents():
         if i.get("kind") == "availability" or str(i.get("id") or "").endswith(":availability"):
             incs.setdefault(i.get("web"), []).append(i)
-    return {web: availability_stats(_avail_rows(incs.get(web, []), s, now), s, now) for web, s in sensors.items()}
+    pauses = {}
+    for p in _load_pauses():
+        pauses.setdefault(p.get("web"), []).append(p)
+    out = {}
+    for web, s in sensors.items():
+        prs = pauses.get(web, [])
+        if s.get("status") == "paused":
+            prs = prs + [{"web": web, "start": s.get("since") or now, "end": None}]
+        out[web] = availability_stats(_avail_rows(incs.get(web, []), s, now), s, now, prs)
+    return out

@@ -94,6 +94,24 @@ def clean_priority(value, errors):
     return v
 
 
+def clean_pause(data, paused, errors):
+    """เหตุผลที่ Pause (บังคับเมื่อ Pause) -> {reason, at, by} หรือ None"""
+    if not paused:
+        return None
+    reason = str(data.get("pause_reason") or "").strip()[:200]
+    if not reason:
+        errors["pause_reason"] = "ใส่เหตุผลที่ Pause (เช่น ปิดซ่อมบำรุง, ย้ายเครื่อง)"
+        return None
+    try:
+        at = float(data.get("paused_at")) if data.get("paused_at") not in (None, "") else time.time()
+    except (TypeError, ValueError):
+        at = time.time()
+    out = {"reason": reason, "at": int(at)}
+    if data.get("paused_by"):
+        out["by"] = str(data["paused_by"])[:60]
+    return out
+
+
 def clean_group(value, errors, field="group"):
     """"  TQ / IT " -> "TQ/IT"  ว่าง -> ""  ผิดรูปแบบ -> ใส่ errors"""
     if value in (None, ""):
@@ -431,13 +449,14 @@ def validate_agent_target(data, existing_names, editing=None):
     group = clean_group(data.get("group"), errors)
     priority = clean_priority(data.get("priority"), errors)
     paused = bool(data.get("paused", False))
+    pause = clean_pause(data, paused, errors)
     thresholds = clean_thresholds(data.get("thresholds"), errors)
     alert = clean_alert(data.get("alert"), errors)
     crit = data.get("critical_services")
     crit = clean_services(crit, errors) if crit not in (None, "") else None
     if errors:
         raise ValidationError(errors)
-    return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "priority": priority, "paused": paused,
+    return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "priority": priority, "paused": paused, "pause": pause,
             "thresholds": thresholds, "alert": alert, "critical_services": crit,
             "agent": {"logs": logs, "channels": channels, "mode": mode, **({"exporter": exporter} if mode == "pull" else {}),
                       **({"port": aport} if aport else {})}}
@@ -531,6 +550,7 @@ def validate_target(data, existing_names, editing=None):
     group = clean_group(data.get("group"), errors)
     priority = clean_priority(data.get("priority"), errors)
     paused = bool(data.get("paused", False))
+    pause = clean_pause(data, paused, errors)
     thresholds = clean_thresholds(data.get("thresholds"), errors)
     alert = clean_alert(data.get("alert"), errors)
 
@@ -543,6 +563,7 @@ def validate_target(data, existing_names, editing=None):
         "group": group,
         "priority": priority,
         "paused": paused,
+        "pause": pause,
         "thresholds": thresholds,
         "alert": alert,
         "prometheus": {"job": job, "instance": instance,
@@ -623,6 +644,8 @@ def _to_node(t):
             node["priority"] = t["priority"]
         if t.get("paused"):
             node["paused"] = True
+            if t.get("pause"):
+                node["pause"] = _flow(t["pause"])
         if t.get("thresholds"):
             node["thresholds"] = _thresholds_node(t["thresholds"])
         if t.get("alert"):
@@ -640,6 +663,8 @@ def _to_node(t):
         node["priority"] = t["priority"]
     if t.get("paused"):
         node["paused"] = True
+        if t.get("pause"):
+            node["pause"] = _flow(t["pause"])
     if t.get("thresholds"):
         node["thresholds"] = _thresholds_node(t["thresholds"])
     if t.get("alert"):
@@ -658,7 +683,7 @@ def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
     if is_agent(t) or is_agent(node):
         for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent", "critical_services",
-                    "group", "priority", "paused", "thresholds", "alert"):
+                    "group", "priority", "paused", "pause", "thresholds", "alert"):
             if key in node:
                 del node[key]
         for k, v in _to_node(t).items():
@@ -669,6 +694,7 @@ def _apply(node, t):
     _set_or_drop(node, "group", t.get("group") or None)
     _set_or_drop(node, "priority", t["priority"] if t.get("priority") and t["priority"] != PRIORITY_DEFAULT else None)
     _set_or_drop(node, "paused", True if t.get("paused") else None)
+    _set_or_drop(node, "pause", _flow(t["pause"]) if t.get("paused") and t.get("pause") else None)
     _set_or_drop(node, "thresholds", _thresholds_node(t["thresholds"]) if t.get("thresholds") else None)
     _set_or_drop(node, "alert", _flow(t["alert"]) if t.get("alert") else None)
     for key in ("prometheus", "ssh"):
@@ -881,6 +907,11 @@ def public_key():
 # การทำงานหลัก (ถูกเรียกจาก api.py)
 # ------------------------------------------------------------------
 
+def _pause_view(t):
+    p = t.get("pause") if isinstance(t.get("pause"), dict) and t.get("paused") else {}
+    return {"pause_reason": p.get("reason") or "", "paused_at": p.get("at"), "paused_by": p.get("by") or ""}
+
+
 def _prio(t):
     try:
         v = int(t.get("priority") or PRIORITY_DEFAULT)
@@ -894,7 +925,7 @@ def _view(t):
     if is_agent(t):
         agent = t.get("agent") or {}
         return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
-                "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), "thresholds": t.get("thresholds") or {},
+                "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t), "thresholds": t.get("thresholds") or {},
                 "alert": t.get("alert") or {},
                 "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"],
                           "mode": "pull" if agent.get("mode") == "pull" else "push", "exporter": agent.get("exporter") or "",
@@ -910,6 +941,7 @@ def _view(t):
         "group": t.get("group") or "",
         "priority": _prio(t),
         "paused": bool(t.get("paused")),
+        **_pause_view(t),
         "thresholds": t.get("thresholds") or {},
         "alert": t.get("alert") or {},
         "prometheus": t.get("prometheus") or {},
@@ -924,6 +956,33 @@ def list_targets():
     y = _yaml()
     doc = _load_doc(y)
     return [_view(t) for t in (doc.get("targets") or []) if isinstance(t, dict)]
+
+
+def log_status(name):
+    """สถานะของ log แต่ละรายการของเครื่อง (จาก checkpoints.json ของ puller) ไม่มีเครื่อง -> None
+    -> [{name, path, type, files, last_pull, offset}]  files = จำนวนไฟล์ที่ puller เคยดึง (wildcard ได้หลายไฟล์)"""
+    import fnmatch
+    doc = _load_doc(_yaml())
+    t = next((x for x in (doc.get("targets") or []) if isinstance(x, dict) and x.get("name") == name), None)
+    if t is None:
+        return None
+    try:
+        with open(os.path.join(settings.STATE_DIR, "checkpoints.json")) as f:
+            state = json.load(f)
+        state = state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        state = {}
+    out = []
+    for src in t.get("logs") or []:
+        if not isinstance(src, dict):
+            continue
+        lname, path = str(src.get("name") or ""), str(src.get("path") or "")
+        rows = [v for k, v in state.items() if isinstance(v, dict) and k.startswith(f"{name}::{lname}::")
+                and (v.get("path") == path or fnmatch.fnmatchcase(str(v.get("path") or k.split("::", 2)[2]), path))]
+        times = sorted(str(v.get("updated_at")) for v in rows if v.get("updated_at"))
+        out.append({"name": lname, "path": path, "type": str(src.get("type") or ""), "files": len(rows),
+                    "last_pull": times[-1] if times else None, "offset": sum(int(v.get("offset") or 0) for v in rows)})
+    return {"name": name, "agent": is_agent(t), "logs": out}
 
 
 def _confirm_host_key(t, payload):
@@ -1065,8 +1124,12 @@ def move_group(src, parent):
     return {"from": src, "to": dst, "machines": moved}
 
 
-def set_paused(name, paused):
-    """Pause / Resume เครื่อง (puller ข้ามเครื่องที่ pause: ไม่ดึง log ไม่เก็บสถานะ) ไม่มีเครื่อง -> None"""
+def set_paused(name, paused, reason=None, user=None):
+    """Pause / Resume เครื่อง (puller ข้ามเครื่องที่ pause: ไม่ดึง log ไม่เก็บสถานะ) ไม่มีเครื่อง -> None
+    Pause ต้องมีเหตุผล (เก็บใน targets[].pause {reason, at, by}) · Resume = ลบทิ้ง"""
+    reason = str(reason or "").strip()[:200]
+    if paused and not reason:
+        raise ValidationError({"reason": "ใส่เหตุผลที่ Pause (เช่น ปิดซ่อมบำรุง, ย้ายเครื่อง)"})
     y = _yaml()
     with _locked():
         doc = _load_doc(y)
@@ -1074,10 +1137,12 @@ def set_paused(name, paused):
         if node is None:
             return None
         _set_or_drop(node, "paused", True if paused else None)
+        info = {"reason": reason, "at": int(time.time()), **({"by": str(user)[:60]} if user else {})} if paused else None
+        _set_or_drop(node, "pause", _flow(info) if info else None)
         _write_doc(y, doc)
         if not paused:
             request_pull(name)          # resume -> ดึงทันที
-    return {"name": name, "paused": bool(paused)}
+    return {"name": name, "paused": bool(paused), "reason": reason if paused else ""}
 
 
 def delete_target(name):

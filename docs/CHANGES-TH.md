@@ -1,3 +1,11 @@
+# เพิ่มเติม (18 พ.ย. 2026): เหตุผลที่ Pause · Pause ไม่นับ downtime · ตรวจ log ใน Settings
+- Pause เครื่องต้องใส่เหตุผล (ปุ่ม Pause หน้าแรก / Settings / ช่อง "เหตุผลที่ Pause" ในฟอร์ม) เก็บใน puller.yaml `targets[].pause: {reason, at, by}` · แสดงในตาราง / การ์ด / สไลด์ / Settings · ลง Activity log
+- Availability: ช่วงที่ Pause ไม่นับเป็นทั้ง uptime และ downtime (ตัดออกจากตัวหาร) · puller บันทึกช่วง Pause ตอน Resume ลง `data/state/pauses.json` · หน้า sensor Availability แสดงเวลา Pause + ตารางช่วง Pause พร้อมเหตุผล
+  (เดิม: ช่วง Pause ถูกนับเป็น uptime)
+- Settings > Log: หัวคอลัมน์ "ชนิด log (parser)" / path / "ชื่อเรียก" · ใต้แต่ละแถวบอกดึงล่าสุดเมื่อไหร่ / กี่ไฟล์ · ปุ่ม **ตรวจ log** ให้ puller SSH ไปดูว่ามีโฟลเดอร์ / มีไฟล์ตรง path / อ่านได้ไหม (`GET /api/targets/<เครื่อง>/log-status?check=1` -> puller `/log-check` ตรวจเฉพาะ path ที่บันทึกใน puller.yaml)
+
+---
+
 # เพิ่มเติม (10 พ.ย. 2026): กฎแจ้งเตือนที่สร้างเอง (Custom alert rules) + ส่ง Teams ต่อกฎ
 - Settings > **Custom alert rules**: เลือกค่าที่ดู (หรือเขียน PromQL) · เครื่อง / กลุ่ม / OS · ≥ / ≤ · warning / error · นานกี่นาที · ส่ง Teams ไหม · ข้อความของกฎ · Preview กับเครื่องตอนนี้
 - เอา Apps & Web ออกจากตาราง WEB status ในหน้าแรก (ดูที่แถบ Apps & Web / หน้า /apps)

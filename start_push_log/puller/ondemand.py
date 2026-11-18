@@ -25,12 +25,18 @@ ondemand.py - ดึง log ระดับ INFO "สด" จากเครื�
             "memory_top": [{pid, name, memory, rss_mb}]}
         วัดสด ณ ตอนที่ขอ (CPU ต่อ core 1 วินาที + 10 process ที่ใช้ RAM สูงสุด) แสดงแล้วไม่เก็บ
         หน้าเว็บเรียกทุก ~60 วินาทีขณะเปิดหน้า (central-api cache ไว้ 20 วินาที)
+
+    GET /log-check?target=web-01
+        -> {"logs":[{name, path, ok, problem, files:[{path, size, mtime, readable}]}], "error"}
+        ตรวจ log ที่ตั้งไว้ใน puller.yaml ของเครื่องนั้น (ปุ่ม "ตรวจ" ใน Settings > Log)
+        ว่าโฟลเดอร์มีจริง / มีไฟล์ตรง pattern / อ่านได้ (SSH ครั้งเดียว อ่านอย่างเดียว ไม่เปิดไฟล์)
 """
 
 import hmac
 import json
 import os
 import re
+import shlex
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -197,6 +203,92 @@ def fetch_processes(target):
     }
 
 
+LOG_CHECK_MAX_FILES = 50
+
+
+def log_check_command(logs):
+    """คำสั่งเดียวตรวจทุก log (path มาจาก puller.yaml เท่านั้น + shlex.quote ทุกค่า)"""
+    parts = []
+    for i, src in enumerate(logs):
+        path = str(src.get("path") or "")
+        parts.append(f"echo '@@L {i}'")
+        if journal.is_journal(path):
+            try:
+                cmd = journal.build_command(path, lines=1)
+            except ValueError:
+                parts.append("echo '@@BADUNIT'")
+                continue
+            parts.append("if command -v journalctl >/dev/null 2>&1; then "
+                         f"n=$( ({cmd}) 2>/dev/null | wc -l); echo \"@@J $n\"; else echo '@@NOJOURNAL'; fi")
+            continue
+        d, pat = os.path.dirname(path) or ".", os.path.basename(path)
+        qd, qp = shlex.quote(d), shlex.quote(pat)
+        parts.append(f"if [ ! -d {qd} ]; then echo '@@NODIR'; elif [ ! -r {qd} ] || [ ! -x {qd} ]; then echo '@@NOACCESS'; "
+                     f"else find {qd} -maxdepth 1 -type f -name {qp} \\( -readable -printf 'R %s %T@ %p\\n' -o -printf 'N %s %T@ %p\\n' \\) "
+                     f"2>/dev/null | head -n {LOG_CHECK_MAX_FILES}; fi")
+    return "; ".join(parts) + "; true"
+
+
+_PROBLEM = {
+    "@@NODIR": "ไม่พบโฟลเดอร์",
+    "@@NOACCESS": "ไม่มีสิทธิ์เข้าโฟลเดอร์ (เพิ่ม user ที่ดึง log เข้ากลุ่มที่อ่านได้ เช่น adm)",
+    "@@NOJOURNAL": "เครื่องนี้ไม่มี journalctl",
+    "@@BADUNIT": "ชื่อ unit ไม่ถูกต้อง",
+}
+
+
+def parse_log_check(logs, output):
+    """ผลของ log_check_command -> [{name, path, ok, problem, files}]"""
+    out = [{"name": s.get("name"), "path": s.get("path"), "ok": False, "problem": "", "files": []} for s in logs]
+    cur = None
+    for line in output.splitlines():
+        line = line.rstrip("\r")
+        if line.startswith("@@L "):
+            try:
+                cur = out[int(line[4:])]
+            except (ValueError, IndexError):
+                cur = None
+            continue
+        if cur is None or not line.strip():
+            continue
+        if line in _PROBLEM:
+            cur["problem"] = _PROBLEM[line]
+        elif line.startswith("@@J "):
+            n = int(line[4:].strip() or 0) if line[4:].strip().isdigit() else 0
+            cur["journal_entries"] = n
+            if not n:
+                cur["problem"] = "อ่าน journal ไม่ได้หรือยังไม่มี log (เพิ่ม user เข้ากลุ่ม systemd-journal / adm)"
+        else:
+            bits = line.split(" ", 3)
+            if len(bits) == 4:
+                try:
+                    cur["files"].append({"readable": bits[0] == "R", "size": int(bits[1]),
+                                         "mtime": int(float(bits[2])), "path": bits[3]})
+                except ValueError:
+                    pass
+    for r in out:
+        if r["problem"]:
+            continue
+        if "journal_entries" in r:
+            r["ok"] = True
+        elif not r["files"]:
+            r["problem"] = "ไม่พบไฟล์ที่ตรงกับ path"
+        elif not any(f["readable"] for f in r["files"]):
+            r["problem"] = "พบไฟล์แต่อ่านไม่ได้ (สิทธิ์ไฟล์)"
+        else:
+            r["ok"] = True
+            if not all(f["readable"] for f in r["files"]):
+                r["problem"] = "บางไฟล์อ่านไม่ได้"
+    return out
+
+
+def check_logs(target):
+    logs = [s for s in target.get("logs") or [] if s.get("path")]
+    if not logs:
+        return {"logs": []}
+    return {"logs": parse_log_check(logs, run_ssh(target, log_check_command(logs)))}
+
+
 def _num(params, key):
     try:
         value = params.get(key, [""])[0]
@@ -218,7 +310,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
 
-        if url.path not in ("/info-logs", "/processes", "/rule-preview"):
+        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check"):
             return self._send(404, {"error": "not found"})
 
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
@@ -241,6 +333,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "unknown target"})
         if str(target.get("type") or "ssh") == "agent":
             return self._send(400, {"error": f"{name} เป็นเครื่อง Windows (agent) ไม่มี SSH - ดึงสดไม่ได้"})
+
+        if url.path == "/log-check":
+            try:
+                return self._send(200, check_logs(target))
+            except Exception as e:
+                print(f"[ONDEMAND] log-check target={name} error={e}")
+                return self._send(502, {"error": f"SSH {name}: {e}"})
 
         if url.path == "/processes":
             try:

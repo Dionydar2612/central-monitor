@@ -69,7 +69,7 @@ function renderTable() {
                 el("td", {}, "-"),
                 el("td", {}, `${(t.agent.channels || []).length} event log · ${n} file`),
                 el("td", {}, t.agent.mode === "pull" ? `central ดึง ${t.agent.exporter || ""}` : "Fluent Bit"),
-                el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
+                el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
                 el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("agCentral").focus(); }, "Install command")))));
             return;
         }
@@ -82,7 +82,7 @@ function renderTable() {
             el("td", {}, t.ssh.user || "-"),
             el("td", {}, String(t.logs.length)),
             el("td", { class: t.host_key_known ? "ok" : "wr" }, t.host_key_known ? "✓ known" : "⚠ missing"),
-            el("td", { class: t.paused ? "wr" : "ok" }, t.paused ? "⏸ Paused" : "Active"),
+            el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
             el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("dp_pass").focus(); }, "Deploy key")))));
     });
 }
@@ -97,9 +97,26 @@ function rowActions(t, extraFn, extraLabel) {
     return out;
 }
 
+/* Pause ต้องมีเหตุผล · ช่วงที่ Pause ไม่นับเป็น downtime */
+function setPauseFields(t) {
+    $("f_paused").checked = !!(t && t.paused);
+    $("f_pause_reason").value = (t && t.pause_reason) || "";
+    $("f_paused").dataset.at = (t && t.paused_at) || "";
+    $("f_paused").dataset.by = (t && t.paused_by) || "";
+    $("f_pause_reason").closest(".st-f").hidden = !$("f_paused").checked;
+}
+function pauseFields() {
+    if (!$("f_paused").checked) return {};
+    return { pause_reason: $("f_pause_reason").value.trim(), paused_at: Number($("f_paused").dataset.at) || null, paused_by: $("f_paused").dataset.by || "" };
+}
 async function pauseTarget(t) {
+    let reason = "";
+    if (!t.paused) {
+        reason = (prompt(`Pause ${t.name}\nเหตุผล (จำเป็น) เช่น ปิดซ่อมบำรุง / ย้ายเครื่อง\nช่วงที่ Pause ไม่นับเป็น downtime`) || "").trim();
+        if (!reason) return;
+    }
     try {
-        await api("PUT", `/api/targets/${encodeURIComponent(t.name)}/pause`, { paused: !t.paused });
+        await api("PUT", `/api/targets/${encodeURIComponent(t.name)}/pause`, { paused: !t.paused, reason });
         say("listMsg", `${t.name}: ${t.paused ? "Resumed (ดึงทันที)" : "Paused (หยุดดึง log / สถานะ)"}`, "ok");
         await loadTargets();
     } catch (e) { if (e.message !== "auth") say("listMsg", "เปลี่ยนสถานะไม่สำเร็จ: " + e.message, "bad"); }
@@ -162,11 +179,48 @@ function logRow(item) {
         if (list) i.setAttribute("list", list);
         return el("div", { class: "st-f " + cls }, el("label", {}, label), i, el("div", { class: "st-err" }));
     };
-    return el("div", { class: "st-logrow" },
-        mk("n", "name", "name", item.name, "application", "logNames"),
+    const row = el("div", { class: "st-logrow" },
+        mk("n", "ชนิด log (parser)", "name", item.name, "application", "logNames"),
         mk("p", "path", "path", item.path, "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
-        mk("t", "type", "type", item.type || "application", "application"),
-        el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"));
+        mk("t", "ชื่อเรียก", "type", item.type || "application", "application"),
+        el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"),
+        el("div", { class: "st-logst" }));
+    row.dataset.saved = item.path ? `${item.name}\u0000${item.path}` : "";
+    return row;
+}
+
+/* สถานะของแต่ละ log: ดึงล่าสุดเมื่อไหร่ (checkpoints) + ตรวจสด (puller SSH ไปดูว่ามีไฟล์ / อ่านได้ไหม) */
+function logStatusText(r) {
+    const c = r.check, out = [];
+    if (c) {
+        if (c.ok && c.journal_entries != null) out.push(["ok", "✓ อ่าน journal ได้"]);
+        else if (c.ok) out.push(["ok", `✓ พบ ${c.files.length} ไฟล์ อ่านได้ ${c.files.filter(f => f.readable).length}`
+            + ` · ${c.files.slice(0, 3).map(f => f.path.split("/").pop() + " " + fmtBytes(f.size)).join(", ")}${c.files.length > 3 ? " …" : ""}`]);
+        if (c.problem) out.push([c.ok ? "wr" : "bad", (c.ok ? "! " : "✕ ") + c.problem]);
+    }
+    out.push(r.last_pull ? ["", `ดึงล่าสุด ${new Date(r.last_pull).toLocaleString()} · ${r.files} ไฟล์`]
+        : c && !c.ok ? ["", "ยังไม่เคยดึง"] : ["wr", "ยังไม่เคยดึง (รอรอบถัดไป ~2 นาที)"]);
+    return out;
+}
+function fmtBytes(n) { n = Number(n) || 0; return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(0) + " KB" : n + " B"; }
+async function loadLogStatus(check) {
+    const name = S.editing;
+    if (!name || $("f_type").value === "agent") return;
+    const btn = $("logCheck");
+    if (check) { btn.disabled = true; btn.textContent = "กำลังตรวจ…"; }
+    try {
+        const d = await api("GET", `/api/targets/${encodeURIComponent(name)}/log-status${check ? "?check=1" : ""}`);
+        if (S.editing !== name) return;
+        const map = new Map((d.logs || []).map(r => [`${r.name}\u0000${r.path}`, r]));
+        [...$("logs").children].forEach(row => {
+            const box = row.querySelector(".st-logst"), r = map.get(row.dataset.saved);
+            box.textContent = "";
+            if (!row.dataset.saved) { box.append(el("span", { class: "wr" }, "ยังไม่ได้บันทึก — กด Save แล้วกดตรวจ")); return; }
+            if (r) logStatusText(r).forEach(([cls, txt]) => box.append(el("span", { class: cls }, txt)));
+        });
+        say("logsErr", d.check_error || "");
+    } catch (e) { if (e.message !== "auth") say("logsErr", "ตรวจไม่ได้: " + e.message); }
+    finally { btn.disabled = false; btn.textContent = "ตรวจ log"; }
 }
 
 /* ชนิดเครื่อง: ssh = แสดงช่อง SSH/Prometheus/log path แบบ Linux · agent = ช่อง Windows + คำสั่งติดตั้ง */
@@ -331,7 +385,7 @@ function openForm(t) {
         $("formTitle").textContent = `Edit target: ${t.name}`;
         $("f_name").value = t.name; $("f_name").disabled = true;
         $("f_prio").value = String(t.priority || 3);
-        $("f_group").value = t.group || ""; $("f_paused").checked = !!t.paused; $("f_host").value = t.host || ""; $("f_group")._gpPaint?.();
+        $("f_group").value = t.group || ""; setPauseFields(t); $("f_host").value = t.host || ""; $("f_group")._gpPaint?.();
         TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => { $(`th_${k}_${lv}`).value = t.thresholds && t.thresholds[k] ? (t.thresholds[k][lv] ?? "") : ""; }));
         clearErrors(); say("formMsg", "");
         if (isOp()) $("formTitle").textContent = `การแจ้งเตือน / Log: ${t.name}`;
@@ -343,7 +397,7 @@ function openForm(t) {
     $("formTitle").textContent = t ? `Edit target: ${t.name}` : "Add target";
     $("f_name").value = t ? t.name : ""; $("f_name").disabled = !!t;
     $("f_group").value = t ? (t.group || "") : ""; $("f_group")._gpPaint?.();
-    $("f_paused").checked = !!(t && t.paused);
+    setPauseFields(t);
     $("f_prio").value = String((t && t.priority) || 3);
     TH_KINDS.forEach(k => ["warning", "error"].forEach(lv => {
         const v = t && t.thresholds && t.thresholds[k] ? t.thresholds[k][lv] : "";
@@ -358,6 +412,7 @@ function openForm(t) {
     $("f_mpath").value = t && t.prometheus ? (t.prometheus.metrics_path || "") : "";
     const logs = $("logs"); logs.textContent = "";
     (t && t.logs.length ? t.logs : [null]).forEach(l => logs.append(logRow(l)));
+    if (t && t.type !== "agent") loadLogStatus(false);
     clearErrors(); say("formMsg", ""); say("deployMsg", "");
     $("dp_admin").value = ""; $("dp_pass").value = "";
     $("hkKeys").textContent = "";
@@ -400,7 +455,7 @@ function readForm() {
             name: $("f_name").value.trim(),
             group: $("f_group").value.trim(),
             priority: Number($("f_prio").value) || 3,
-            paused: $("f_paused").checked,
+            paused: $("f_paused").checked, ...pauseFields(),
             host: $("f_host").value.trim(),
             thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
             alert: readAlertFields(),
@@ -424,7 +479,7 @@ function readForm() {
         name: $("f_name").value.trim(),
         group: $("f_group").value.trim(),
         priority: Number($("f_prio").value) || 3,
-        paused: $("f_paused").checked,
+        paused: $("f_paused").checked, ...pauseFields(),
         thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
         alert: readAlertFields(),
         host: $("f_host").value.trim(),
@@ -876,6 +931,11 @@ async function logout() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    $("f_paused")?.addEventListener("change", () => {
+        const box = $("f_pause_reason").closest(".st-f");
+        box.hidden = !$("f_paused").checked;
+        if ($("f_paused").checked) { $("f_paused").dataset.at = ""; $("f_pause_reason").focus(); }
+    });
     $("agPreCopy")?.addEventListener("click", async () => {
         const t = $("agPre"); if (!t.value) return; t.select();
         try { await navigator.clipboard.writeText(t.value); $("agPreCopy").textContent = "Copied"; } catch (e) { document.execCommand("copy"); }
@@ -888,6 +948,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("addBtn").onclick = () => openForm(null);
     $("cancelBtn").onclick = closeForm;
     $("saveBtn").onclick = save;
+    $("logCheck").onclick = () => loadLogStatus(true);
     $("addLog").onclick = () => $("logs").append(logRow(null));
     $("addJournal").onclick = () => $("logs").append(logRow({ name: "journal", path: "journal", type: "system" }));
     $("scanBtn").onclick = scanHostKey;

@@ -258,6 +258,61 @@ class SensorPriority(unittest.TestCase):
         self.assertEqual([e["sid"] for e in got4["notify"]], ["w:b", "w:a"])
 
 
+class PauseRecord(unittest.TestCase):
+    """Resume -> บันทึกช่วงที่ Pause ลง pauses.json (หน้าเว็บตัดช่วงนี้ออกจาก uptime / downtime)"""
+
+    def test_resume_records_pause(self):
+        sm = sensor_monitor
+        written = {}
+        raw = {"id": "w:availability", "web": "w", "group": "", "host": "h", "kind": "availability", "name": "Availability",
+               "status": "ok", "unit": "", "message": "Up", "confirm": 1, "priority": 3}
+        prev = {"w:availability": dict(raw, status="paused", since=1000.0, message="Paused: ปิดซ่อมบำรุง", incident=None)}
+        saved = {k: getattr(sm, k) for k in ("load_config", "_target_sensors", "_write", "_read", "append_events", "_save_incidents",
+                                             "_app_metrics", "_software")}
+        saved_n = (sm.notify.sensor_events, sm.notify.maybe_summary)
+        try:
+            sm.load_config = lambda: {"targets": [{"name": "w"}]}
+            sm._target_sensors = lambda t, th, i, c, p, o: [dict(raw)]
+            sm._write = lambda path, data: written.__setitem__(path, data)
+            sm._read = lambda path, default: default
+            sm.append_events = lambda ev: None
+            sm._save_incidents = lambda *a: None
+            sm._app_metrics = lambda s: None
+            sm._software = lambda t, c: None
+            sm.notify.sensor_events = lambda ev, c: None
+            sm.notify.maybe_summary = lambda *a, **k: None
+            sm.run_once(prev)
+        finally:
+            for k, v in saved.items():
+                setattr(sm, k, v)
+            sm.notify.sensor_events, sm.notify.maybe_summary = saved_n
+        rows = written.get(sm.PAUSES_FILE)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["web"], rows[0]["start"], rows[0]["reason"]), ("w", 1000.0, "ปิดซ่อมบำรุง"))
+
+
+class LogCheck(unittest.TestCase):
+    """ปุ่ม "ตรวจ log": คำสั่งปลอดภัย (quote) + แปลผล"""
+
+    def test_command_and_parse(self):
+        import ondemand
+        logs = [{"name": "application", "path": "/opt/a b/x_*.log"}, {"name": "x", "path": "/nope/a.log"},
+                {"name": "y", "path": "/var/log/s.log"}, {"name": "j", "path": "journal:ssh"}, {"name": "z", "path": "/etc/p'; rm -rf /"}]
+        cmd = ondemand.log_check_command(logs)
+        self.assertIn("'/opt/a b'", cmd)
+        self.assertIn("'x_*.log'", cmd)
+        self.assertNotIn("; rm -rf /;", cmd)
+        out = "\n".join(["@@L 0", "R 120 1700000000.5 /opt/a b/x_1.log", "N 5 1700000001 /opt/a b/x_2.log",
+                         "@@L 1", "@@NODIR", "@@L 2", "N 9 1700000000 /var/log/s.log", "@@L 3", "@@J 1", "@@L 4"])
+        r = ondemand.parse_log_check(logs, out)
+        self.assertEqual([x["ok"] for x in r], [True, False, False, True, False])
+        self.assertEqual(r[0]["problem"], "บางไฟล์อ่านไม่ได้")
+        self.assertEqual(len(r[0]["files"]), 2)
+        self.assertEqual(r[1]["problem"], "ไม่พบโฟลเดอร์")
+        self.assertIn("อ่านไม่ได้", r[2]["problem"])
+        self.assertEqual(r[4]["problem"], "ไม่พบไฟล์ที่ตรงกับ path")
+
+
 class WindowsPullTargets(unittest.TestCase):
     """prometheus_targets: เครื่อง Windows โหมด pull อยู่ใน web-nodes.json (label cm_web) / push ไม่อยู่"""
 

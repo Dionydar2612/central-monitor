@@ -51,6 +51,7 @@
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
 <div class="st-f" data-f="priority"><label for="f_prio">Priority (ความสำคัญ)</label><select id="f_prio"><option value="5">★★★★★ สำคัญสุด</option><option value="4">★★★★☆ สูง</option><option value="3" selected>★★★☆☆ ปกติ</option><option value="2">★★☆☆☆ ต่ำ</option><option value="1">★☆☆☆☆ ต่ำสุด</option></select><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
+<div class="st-f" data-f="pause_reason" hidden><label for="f_pause_reason">เหตุผลที่ Pause</label><input id="f_pause_reason" maxlength="200" placeholder="เช่น ปิดซ่อมบำรุง / ย้ายเครื่อง" autocomplete="off"><div class="st-err"></div></div>
 </div></div>
 <div class="fsec"><div class="fsec-h">กลุ่ม</div>
 <div class="st-f" data-f="group"><label for="f_group">กลุ่ม (group)</label><input id="f_group" autocomplete="off" list="groupList" placeholder="เช่น TQ/IT"><small>คั่นชั้นด้วย / (ซ้อนได้ 10 ชั้น) · คลิกกลุ่มด้านล่างเพื่อเลือก หรือ “+ ย่อย” เพื่อสร้างกลุ่มย่อยใต้กลุ่มนั้น · เว้นว่าง = Ungrouped</small><span class="gcrumb" id="f_group_crumb"></span><div class="gpick" id="f_group_pick"></div><div class="st-err"></div></div>
@@ -125,10 +126,12 @@
 <div class="st-h3">Log files ที่ต้องการดึง</div>
 <div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
 journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>
+<div class="st-loghead"><span>ชนิด log (parser)</span><span>path</span><span>ชื่อเรียก</span><span></span></div>
 <div id="logs"></div>
 <div class="st-err" id="logsErr" style="color:#e5484d;font-size:12px;margin-top:6px"></div>
 <button class="st-btn sm" id="addLog" style="margin-top:10px">+ Add log file</button>
 <button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
+<button class="st-btn sm" id="logCheck" type="button" style="margin-top:10px">ตรวจ log</button>
 </div></div>
 <!-- Windows (agent): เครื่องส่งข้อมูลเองผ่าน Fluent Bit -> central-agent-gw :4318 -->
 <div class="agent-only" hidden><div class="fsec"><div class="fsec-h">Log ของเครื่อง Windows</div>

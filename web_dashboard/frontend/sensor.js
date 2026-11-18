@@ -34,13 +34,19 @@ function availHtml(a) {
     const lbl = { "24h": "24 ชั่วโมง", "7d": "7 วัน", "30d": "30 วัน" };
     const cls = p => p >= 99.9 ? "ok" : p >= 99 ? "wr" : "cr";
     const down = a.status === "down" || a.status === "error";
-    const cards = Object.entries(a.windows).map(([k, w]) => `<div class="avc ${cls(w.uptime_pct)}"><small>Uptime ${esc(lbl[k] || k)}</small>`
+    const cards = Object.entries(a.windows).map(([k, w]) => w.uptime_pct == null
+        ? `<div class="avc ps"><small>Uptime ${esc(lbl[k] || k)}</small><b>Paused</b><span>Paused ทั้งช่วง</span></div>`
+        : `<div class="avc ${cls(w.uptime_pct)}"><small>Uptime ${esc(lbl[k] || k)}</small>`
         + `<b>${w.uptime_pct >= 99.995 ? "100" : w.uptime_pct.toFixed(w.uptime_pct >= 99 ? 3 : 2)}%</b>`
         + `<i><em style="width:${Math.max(0, Math.min(100, w.uptime_pct))}%"></em></i>`
-        + `<span>Downtime ${esc(w.downtime ? fmtDur(w.downtime) : "0")} · ${w.outages} ครั้ง</span></div>`).join("");
+        + `<span>Downtime ${esc(w.downtime ? fmtDur(w.downtime) : "0")} · ${w.outages} ครั้ง</span>`
+        + (w.paused ? `<span>Paused ${esc(fmtDur(w.paused))} (ไม่นับ)</span>` : "") + `</div>`).join("");
     const now = a.since ? `<div class="avc ${down ? "cr" : "ok"}"><small>สถานะตอนนี้</small><b>${down ? "Down" : "Up"}</b>`
         + `<span>มาแล้ว ${esc(ago(a.since))}</span><span>นานสุด (30 วัน): ${a.longest ? esc(fmtDur(a.longest)) : "-"}</span></div>` : "";
-    return `<div class="avgrid">${now}${cards}</div>`;
+    const ps = (a.pauses || []).length ? `<table class="avps"><thead><tr><th>Pause ตั้งแต่</th><th>ถึง</th><th>นาน</th><th>เหตุผล</th></tr></thead><tbody>`
+        + a.pauses.map(p => `<tr><td>${esc(fmtTime(p.start))}</td><td>${p.end ? esc(fmtTime(p.end)) : "ยัง Pause อยู่"}</td>`
+            + `<td>${esc(fmtDur((p.end || Date.now() / 1000) - p.start))}</td><td>${esc(p.reason || "-")}</td></tr>`).join("") + `</tbody></table>` : "";
+    return `<div class="avgrid">${now}${cards}</div>${ps}`;
 }
 
 function renderHead() {
@@ -62,8 +68,8 @@ function renderHead() {
         + cell("Last Scan", esc(ago(d.updated_at)))
         + cell("Last Up", d.last_up ? esc(ago(d.last_up)) : "-")
         + cell("Last Down", d.last_down ? esc(ago(d.last_down)) : "never")
-        + cell(`Uptime (${d.days} d)`, `${d.uptime_pct.toFixed(4)}%`)
-        + cell(`Downtime (${d.days} d)`, `${d.downtime_pct.toFixed(4)}%`)
+        + cell(`Uptime (${d.days} d)`, d.uptime_pct == null ? "Paused" : `${d.uptime_pct.toFixed(4)}%`)
+        + cell(`Downtime (${d.days} d)`, d.downtime_pct == null ? "-" : `${d.downtime_pct.toFixed(4)}%`)
         + cell("Sensor Type", esc(KIND[s.kind] || s.kind || "-"))
         + cell("Status since", `${esc(fmtTime(s.since))} <span class="st-mut">(${esc(ago(s.since))})</span>`)
         + cell("Interval", `${esc(d.interval)} s`)

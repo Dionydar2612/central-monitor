@@ -102,7 +102,9 @@ def _server(target, sensor_states, batch):
     except (TypeError, ValueError):
         prio = 3
     base = {"web": name, "host": target.get("host"), "group": target.get("group") or "", "priority": prio if 1 <= prio <= 5 else 3,
-            "paused": bool(target.get("paused")), "os": "linux", "kind": "ssh"}
+            "paused": bool(target.get("paused")), "os": "linux", "kind": "ssh",
+            "pause_reason": ((target.get("pause") or {}).get("reason") or "") if target.get("paused") and isinstance(target.get("pause"), dict) else "",
+            "paused_at": ((target.get("pause") or {}).get("at")) if target.get("paused") and isinstance(target.get("pause"), dict) else None}
 
     if base["paused"]:          # pause = ไม่ถาม Prometheus ไม่นับเป็นปัญหา
         return {**base, "instance": (target.get("prometheus") or {}).get("instance"),

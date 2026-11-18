@@ -168,7 +168,7 @@ def require_authentication():
 
 
 _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$"
-                         r"|^/api/targets/[^/]+/sensor-(toggle|settings)$")
+                         r"|^/api/targets/[^/]+/sensor-(toggle|settings)$|^/api/targets/[^/]+/log-status$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 _NETSEC_REFRESH = re.compile(r"^/api/netsec/[^/]+/refresh$")
 _TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
@@ -210,13 +210,13 @@ def _required_role(method, path):
 _AUDIT_RULES = [
     # (method, regex ของ path, ชื่อการกระทำ, ฟิลด์ที่เก็บจาก body)
     ("POST", re.compile(r"^/api/targets$"), "target.add", ("name", "host", "group", "paused")),
-    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/pause$"), "target.pause", ("paused",)),
+    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/pause$"), "target.pause", ("paused", "reason")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-toggle$"), "target.sensor_toggle", ("sensor", "disabled")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-settings$"), "target.sensor_settings", ("sensor", "priority", "minutes")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
     ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
-    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused")),
+    ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused", "pause_reason")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
     ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)/pause$"), "check.pause", ("paused",)),
@@ -1377,16 +1377,45 @@ def targets_sensor_settings(name):
 
 @app.put("/api/targets/<name>/pause")
 def targets_pause(name):
-    """Pause / Resume เครื่อง  body: {"paused": true|false}"""
+    """Pause / Resume เครื่อง  body: {"paused": true|false, "reason": "..."}  Pause ต้องมีเหตุผล"""
     body = _json_body()
     if body is None:
         return jsonify({"error": "json_required"}), 415
     try:
-        result = targets_service.set_paused(name, bool(body.get("paused")))
+        result = targets_service.set_paused(name, bool(body.get("paused")), body.get("reason"), session.get("username"))
+    except ValidationError as e:
+        return _bad_request(e)
     except (OSError, YAMLError) as e:
         return _config_error(e)
     if result is None:
         return jsonify({"error": "not found"}), 404
+    return jsonify(result)
+
+
+@app.get("/api/targets/<name>/log-status")
+def targets_log_status(name):
+    """log ที่ตั้งไว้ของเครื่อง: ดึงล่าสุดเมื่อไหร่ / กี่ไฟล์ (checkpoints)
+    ?check=1 -> ให้ puller SSH ไปตรวจสด (โฟลเดอร์มีไหม / มีไฟล์ตรง path ไหม / อ่านได้ไหม)"""
+    try:
+        result = targets_service.log_status(name)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if result is None:
+        return jsonify({"error": "not found"}), 404
+    if request.args.get("check") == "1":
+        if result["agent"]:
+            result["check_error"] = "เครื่อง Windows (agent) ตรวจสดไม่ได้ ดูจากเวลาดึงล่าสุดแทน"
+        else:
+            try:
+                status, data = puller_get("/log-check", {"target": name}, timeout=40)
+            except Exception as e:
+                status, data = 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
+            if status == 200:
+                live = {(r.get("name"), r.get("path")): r for r in data.get("logs") or []}
+                for row in result["logs"]:
+                    row["check"] = live.get((row["name"], row["path"]))
+            else:
+                result["check_error"] = data.get("error") or f"HTTP {status}"
     return jsonify(result)
 
 

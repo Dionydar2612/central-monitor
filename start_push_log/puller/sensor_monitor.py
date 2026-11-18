@@ -61,6 +61,9 @@ import software_watch
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
 INCIDENTS_FILE = os.path.join(STATE_DIR, "incidents.json")
+# ช่วงที่เครื่องถูก Pause [{web, start, end, reason}] -> Availability ไม่นับช่วงนี้ (ไม่ใช่ uptime ไม่ใช่ downtime)
+PAUSES_FILE = os.path.join(STATE_DIR, "pauses.json")
+MAX_PAUSES = 5000
 SUMMARY_STATE_FILE = os.path.join(STATE_DIR, "notify_summary.json")       # เวลาที่ส่งสรุปล่าสุด (กันส่งซ้ำ)
 SUMMARY_REQUEST_FILE = os.path.join(STATE_DIR, "notify_summary.request")  # หน้าเว็บกด "ส่งสรุปตอนนี้"
 SOFTWARE_FILE = os.path.join(STATE_DIR, "software.json")                   # รายการโปรแกรมที่จำไว้ + ประวัติ (Windows)
@@ -561,7 +564,8 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
                     "error": limits["error"] if limits else None})
 
     if t.get("paused"):
-        add("availability", "availability", "Availability", "paused", unit="", message="Paused by user")
+        reason = (t.get("pause") or {}).get("reason") if isinstance(t.get("pause"), dict) else ""
+        add("availability", "availability", "Availability", "paused", unit="", message=f"Paused: {reason}" if reason else "Paused by user")
         return out
 
     agent = str(t.get("type") or "ssh") == "agent"
@@ -839,6 +843,7 @@ def run_once(previous):
 
     now = time.time()
     events, closed, pending_events = [], [], []
+    pauses_closed = []
 
     for s in sensors:
         old = previous.get(s["id"]) or {}
@@ -882,6 +887,10 @@ def run_once(previous):
                                                   f" · ไม่ได้แจ้ง) · {s['message']}")))
         s["status"] = new
         s["since"] = old.get("since", now) if new == confirmed else first_seen
+        # ช่วง Pause ของเครื่อง (sensor availability): ออกจาก paused -> บันทึกช่วงที่หยุดไว้
+        if s.get("kind") == "availability" and confirmed == "paused" and new != "paused":
+            pauses_closed.append({"web": s["web"], "start": old.get("since") or now, "end": now,
+                                  "reason": str(old.get("message") or "").removeprefix("Paused: ")})
 
         # --- incident: เปิดเมื่อมีปัญหา, อัปเดตค่าสูงสุด/สถานะแย่สุด, ปิดเมื่อกลับเป็น OK ---
         inc = s["incident"]
@@ -933,6 +942,10 @@ def run_once(previous):
                           "sensors": sensors})
     if closed or not os.path.exists(INCIDENTS_FILE):
         _save_incidents(closed, opts["retention"], now)
+    if pauses_closed:
+        data = _read(PAUSES_FILE, [])
+        data = [p for p in (data if isinstance(data, list) else []) if (p.get("end") or now) >= now - opts["retention"]] + pauses_closed
+        _write(PAUSES_FILE, data[-MAX_PAUSES:])
     append_events(events)
     try:
         notify.sensor_events(events, config)          # การ์ดแจ้งเตือน Microsoft Teams (ถ้าตั้งไว้)

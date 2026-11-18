@@ -986,7 +986,7 @@ function availInfo(w) {
     const state = since == null ? "" : `${down ? "Down" : "Up"} ${shortDur(since)}`;
     const outs = Number(a.outages_24h) || 0;
     const href = "/sensor?id=" + encodeURIComponent(a.sensor_id || `${w.web}:availability`);
-    const tip = `Uptime 24h ${pct} · ${outs} outage(s) · downtime ${shortDur(a.downtime_24h)}${state ? " · " + state : ""}`;
+    const tip = `Uptime 24h ${pct} · ${outs} outage(s) · downtime ${shortDur(a.downtime_24h)}${a.paused_24h ? " · paused " + shortDur(a.paused_24h) + " (ไม่นับ)" : ""}${state ? " · " + state : ""}`;
     return { cls, pct, state, outs, href, tip, down };
 }
 function availCell(w) {
@@ -1020,7 +1020,7 @@ function serverRows(list, cur, keepOrder) {
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
             const os = w.os === "windows" ? `<span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent">Win</span>` : `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
-            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${why}>${escapeHtml(label)}</span>${ack}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${w.paused && w.pause_reason ? ` title="${escapeHtml("Pause: " + w.pause_reason)}"` : why}>${escapeHtml(label)}</span>${ack}${w.paused && w.pause_reason ? `<div class="cerr">${escapeHtml(w.pause_reason)}</div>` : ""}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
 
@@ -1110,7 +1110,7 @@ function cardsHtml(list, cur) {
         return `<div class="mcard ${cls}" data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0">
 <div class="mtop"><b>${escapeHtml(w.web)}</b>${osTag(w)}<span class="ovst ${cls}">${escapeHtml(label)}</span></div>
 <div class="mhost">${escapeHtml(w.host || w.instance || "-")}</div>
-${w.paused ? `<div class="mhost">ไม่ได้ตรวจ (Paused)</div>` : bar("cpu", "CPU", w.cpu) + bar("memory", "Mem", w.memory) + bar("disk", "Disk", w.disk)}
+${w.paused ? `<div class="mhost">Paused${w.pause_reason ? ": " + escapeHtml(w.pause_reason) : ""}</div>` : bar("cpu", "CPU", w.cpu) + bar("memory", "Mem", w.memory) + bar("disk", "Disk", w.disk)}
 ${why}<div class="mfoot"><span>${av ? `<a class="mav ${av.cls}" href="${av.href}" title="${escapeHtml(av.tip)}">${av.pct}${av.state ? ` · ${escapeHtml(av.state)}` : ""}</a>` : "-"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
     }).join("")}</div>`;
 }
@@ -1316,7 +1316,7 @@ function machineSlide(w) {
     return `<div class="slide ${cls}">
 <div class="slhead"><div><button type="button" class="slname" data-web="${escapeHtml(w.web)}">${escapeHtml(w.web)}</button>${osTag(w)} ${stars(w.priority)}<div class="slsub">${escapeHtml([w.group || "", w.host || w.instance || ""].filter(Boolean).join(" · "))}</div></div><span class="ovst ${cls} big">${escapeHtml(label)}</span></div>
 <div class="slbody">
-<div class="slgs">${w.paused ? `<div class="empty">ไม่ได้ตรวจ (Paused)</div>` : slideGauge(w, "cpu", "CPU avg 5m") + slideGauge(w, "memory", "Memory") + slideGauge(w, "disk", "Disk")}</div>
+<div class="slgs">${w.paused ? `<div class="empty">Paused${w.pause_reason ? ": " + escapeHtml(w.pause_reason) : ""}</div>` : slideGauge(w, "cpu", "CPU avg 5m") + slideGauge(w, "memory", "Memory") + slideGauge(w, "disk", "Disk")}</div>
 <div class="slfs">${fact("Availability 24h", av ? `<a href="${av.href}">${av.pct}</a>` : "-", av ? av.cls : "")}${fact(av && av.down ? "Down มาแล้ว" : "Up มาแล้ว", av && av.state ? escapeHtml(av.state.replace(/^(Up|Down) /, "")) : "-", av && av.down ? "cr" : "")}${fact("Down 24h", av ? `${av.outs} ครั้ง` : "-", av && av.outs ? "wr" : "")}${fact("Network", net)}${fact("Ping", ping || "-")}${fact("Last pull", w.paused ? "-" : pullHtml(w.last_pull))}</div>
 </div>
 ${probs.length ? `<div class="slprobs">${probs.map(p => `<span>${escapeHtml(p)}</span>`).join("")}</div>` : ""}
@@ -1605,11 +1605,15 @@ function renderMachines(ov) {
 
 async function togglePause(btn) {
     const kind = btn.dataset.kind, name = btn.dataset.pause, paused = btn.dataset.paused !== "1";
-    if (paused && !confirm(`Pause ${name}?\n${kind === "targets" ? "หยุดดึง log และเก็บสถานะของเครื่องนี้จนกว่าจะกด Resume" : "หยุดเช็ค URL นี้จนกว่าจะกด Resume"}`)) return;
+    let reason = "";
+    if (paused && kind === "targets") {
+        reason = (prompt(`Pause ${name}\nเหตุผล (จำเป็น) เช่น ปิดซ่อมบำรุง / ย้ายเครื่อง\nช่วงที่ Pause ไม่นับเป็น downtime`) || "").trim();
+        if (!reason) return;
+    } else if (paused && !confirm(`Pause ${name}?\nหยุดเช็ค URL นี้จนกว่าจะกด Resume`)) return;
     btn.disabled = true;
     try {
         const r = await fetch(`/api/${kind}/${encodeURIComponent(name)}/pause`, {
-            method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused }) });
+            method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paused, reason }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
         renderMachines(await apiGet("/api/overview"));
     } catch (err) { alert("Pause/Resume failed: " + err.message); btn.disabled = false; }
@@ -2336,7 +2340,7 @@ function renderDevice() {
     const chip = (k, ic, n) => n ? `<span class="dchip ${k}">${ic} ${n}</span>` : "";
     const stat = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
     const head = `<div class="dhead"><h2>Sensors</h2><div class="dchips">${chip("ok", "✓", cnt("ok"))}${chip("wr", "!", cnt("warning"))}${chip("cr", "✕", cnt("error") + cnt("down"))}${chip("ps", "II", cnt("paused"))}${chip("na", "?", cnt("unknown"))}</div>
-<div class="dstats">${stat("Uptime 30 วัน", av ? av.uptime_pct.toFixed(2) + "%" : "-")}${stat("Downtime", av ? av.downtime_pct.toFixed(2) + "%" : "-")}${stat("Down ล่าสุด", av && av.last_down ? escapeHtml(devTime(av.last_down)) : "ไม่เคย")}${stat("ตรวจล่าสุด", d.updated ? escapeHtml(devTime(d.updated)) : "-")}</div></div>`;
+<div class="dstats">${stat("Uptime 30 วัน", av && av.uptime_pct != null ? av.uptime_pct.toFixed(2) + "%" : "-")}${stat("Downtime", av && av.downtime_pct != null ? av.downtime_pct.toFixed(2) + "%" : "-")}${stat("Down ล่าสุด", av && av.last_down ? escapeHtml(devTime(av.last_down)) : "ไม่เคย")}${stat("ตรวจล่าสุด", d.updated ? escapeHtml(devTime(d.updated)) : "-")}</div></div>`;
     /* เกจ: เฉพาะค่าตัวเลข (ประสิทธิภาพ + เครือข่าย) ขนาดเท่ากันทุกใบ */
     const gauges = sorted.filter(x => num(x) && x.unit && ["perf", "net"].includes(devCat(x)))
         .sort((a, b) => ["cpu", "memory", "disk"].indexOf(b.kind) - ["cpu", "memory", "disk"].indexOf(a.kind));

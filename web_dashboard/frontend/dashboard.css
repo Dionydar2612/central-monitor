@@ -371,6 +371,9 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .st-h3{font-size:15px;font-weight:600;margin:22px 0 6px}
 .st-logrow{display:grid;grid-template-columns:150px 1fr 120px auto;gap:10px;align-items:start;margin-top:10px}
 .st-logrow .st-f label{display:none}
+.st-loghead{display:grid;grid-template-columns:150px 1fr 120px 34px;gap:10px;margin-top:12px;font-size:12px;color:var(--mut);font-weight:600}
+.st-logst{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--mut);margin-top:-4px}
+.st-logst:empty{display:none}.st-logst .ok{color:var(--good)}.st-logst .wr{color:#c27c00}.st-logst .bad{color:#e5484d}
 .st-box{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:12px 14px;margin-top:10px;font-size:14px}
 .st-fp{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all;color:var(--mut)}
 .st-fp b{color:var(--ink);font-weight:600}
@@ -378,7 +381,7 @@ td{padding:12px 10px;border-bottom:1px solid var(--line)}tr:last-child td{border
 .st-msg{margin-top:12px;font-size:14px}
 .st-msg.ok{color:var(--good)}.st-msg.bad{color:#e5484d}
 .st-row-end{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;flex-wrap:wrap}
-@media (max-width:720px){.st-logrow{grid-template-columns:1fr}.st-logrow .st-f label{display:block}}
+@media (max-width:720px){.st-logrow{grid-template-columns:1fr}.st-logrow .st-f label{display:block}.st-loghead{display:none}}
 
 /* =========================================================
    SERVICE LIST - จัดรายการ service ให้เป็นระเบียบ
@@ -1462,6 +1465,8 @@ a.ovtilelink{display:contents;color:inherit;text-decoration:none}
 .avc span{font-size:12px;color:var(--mut)}.avc i{display:block;height:5px;border-radius:3px;background:rgba(229,72,77,.35);overflow:hidden}
 .avc i em{display:block;height:100%;background:#0a9a60}
 .avc.ok b{color:#0a9a60}.avc.wr b{color:#c27c00}.avc.wr i em{background:#f5b400}.avc.cr b{color:#e5484d}.avc.cr{border-color:rgba(229,72,77,.45)}
+.avc.ps b{color:#4c8ff0}
+.avps{width:100%;margin-top:10px;border-collapse:collapse;font-size:13px}.avps th,.avps td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line,#e3e6ea)}.avps th{color:var(--mut);font-weight:600}
 .sngrid small,.devgrid small{display:block;color:var(--mut);font-size:12px}.sngrid b,.devgrid b{font-size:14px;font-weight:600}
 .snover{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
 .snbig{display:flex;flex-direction:column;align-items:center;min-width:200px}.snbt{font-weight:600;align-self:flex-start}.snbv{font-size:22px;font-weight:700}

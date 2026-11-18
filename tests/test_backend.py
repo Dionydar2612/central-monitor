@@ -368,6 +368,87 @@ class Backend(unittest.TestCase):
         self.assertIsNotNone(d["availability"]["last_down"])
         os.remove(sensors_service.SENSORS_FILE); os.remove(sensors_service.INCIDENTS_FILE)
 
+    def test_pause_reason_and_downtime(self):
+        """Pause ต้องมีเหตุผล · ช่วงที่ Pause ไม่นับเป็น downtime (ตัดออกจากตัวหาร)"""
+        import json as _j, time as _t, sensors_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "pz-01", "host": "10.0.0.31", "ssh": {"user": "cp"}, "logs": []})
+        r = c.put("/api/targets/pz-01/pause", json={"paused": True})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("reason", r.json["fields"])
+        r = c.put("/api/targets/pz-01/pause", json={"paused": True, "reason": "ปิดซ่อมบำรุง"})
+        self.assertEqual(r.status_code, 200, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "pz-01"][0]
+        self.assertEqual((t["paused"], t["pause_reason"], t["paused_by"]), (True, "ปิดซ่อมบำรุง", "admin"))
+        # แก้เครื่องที่ Pause อยู่: เหตุผลต้องไม่หาย / เอาเหตุผลออก -> error
+        body = {"host": "10.0.0.31", "ssh": {"user": "cp"}, "logs": [], "paused": True}
+        self.assertIn("pause_reason", c.put("/api/targets/pz-01", json=body).json["fields"])
+        r = c.put("/api/targets/pz-01", json=dict(body, pause_reason="ย้ายเครื่อง", paused_at=t["paused_at"], paused_by="admin"))
+        self.assertLess(r.status_code, 300, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "pz-01"][0]
+        self.assertEqual(t["pause_reason"], "ย้ายเครื่อง")
+        self.assertEqual(c.put("/api/targets/pz-01/pause", json={"paused": False}).status_code, 200)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "pz-01"][0]
+        self.assertEqual((t["paused"], t["pause_reason"]), (False, ""))
+        c.delete("/api/targets/pz-01")
+        # down 1 ชม. + Pause 12 ชม. ใน 24 ชม. -> uptime = 100 - 1/12
+        now = _t.time()
+        sensors = [{"id": "pz-02:availability", "web": "pz-02", "kind": "availability", "status": "ok", "since": now - 3600}]
+        incs = [{"id": "pz-02:availability", "web": "pz-02", "kind": "availability", "start": now - 7200, "end": now - 3600, "worst": "down"}]
+        pauses = [{"web": "pz-02", "start": now - 20 * 3600, "end": now - 8 * 3600, "reason": "ซ่อม"}]
+        a = sensors_service.availability_stats(incs, sensors[0], now, pauses)
+        w = a["windows"]["24h"]
+        self.assertEqual(w["paused"], 12 * 3600)
+        self.assertAlmostEqual(w["uptime_pct"], round(100 - 3600 / (12 * 3600) * 100, 3), places=3)
+        self.assertEqual(a["pauses"][0]["reason"], "ซ่อม")
+        # Pause อยู่ทั้งช่วง -> ไม่มี uptime (None) ไม่ใช่ 100%
+        a = sensors_service.availability_stats([], {"status": "paused", "since": now - 2 * 86400}, now,
+                                               [{"start": now - 2 * 86400, "end": None}])
+        self.assertIsNone(a["windows"]["24h"]["uptime_pct"])
+        # ผ่าน API: pauses.json + ที่ยัง Pause อยู่
+        with open(sensors_service.SENSORS_FILE, "w") as f:
+            _j.dump({"sensors": sensors}, f)
+        with open(sensors_service.INCIDENTS_FILE, "w") as f:
+            _j.dump(incs, f)
+        with open(sensors_service.PAUSES_FILE, "w") as f:
+            _j.dump(pauses, f)
+        self.assertEqual(sensors_service.availability_by_web()["pz-02"]["paused_24h"], 12 * 3600)
+        d = c.get("/api/sensors/detail?id=pz-02:availability").json
+        self.assertAlmostEqual(d["downtime_pct"], 3600 / (30 * 86400 - 12 * 3600) * 100, places=3)
+        for f in (sensors_service.SENSORS_FILE, sensors_service.INCIDENTS_FILE, sensors_service.PAUSES_FILE):
+            os.remove(f)
+
+    def test_log_status(self):
+        """Settings > Log: ดึงล่าสุดเมื่อไหร่ / กี่ไฟล์ (checkpoints) + ตรวจสดผ่าน puller"""
+        import json as _j, api, settings
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "lg-01", "host": "10.0.0.41", "ssh": {"user": "cp"}, "logs": [
+            {"name": "application", "path": "/opt/app/logs/auto_*.log", "type": "ImportArkheion"},
+            {"name": "system", "path": "/var/log/syslog", "type": "system"}]})
+        with open(os.path.join(settings.STATE_DIR, "checkpoints.json"), "w") as f:
+            _j.dump({"lg-01::application::/opt/app/logs/auto_1.log": {"target": "lg-01", "path": "/opt/app/logs/auto_1.log", "offset": 10,
+                                                                     "updated_at": "2026-11-18T01:00:00+00:00"},
+                     "lg-01::application::/opt/app/logs/auto_2.log": {"target": "lg-01", "path": "/opt/app/logs/auto_2.log", "offset": 5,
+                                                                     "updated_at": "2026-11-18T02:00:00+00:00"},
+                     "lg-09::application::/opt/app/logs/auto_3.log": {"target": "lg-09", "path": "/opt/app/logs/auto_3.log"}}, f)
+        d = c.get("/api/targets/lg-01/log-status").json
+        self.assertEqual([(r["type"], r["files"], r["last_pull"]) for r in d["logs"]],
+                         [("ImportArkheion", 2, "2026-11-18T02:00:00+00:00"), ("system", 0, None)])
+        saved = api.puller_get
+        try:
+            api.puller_get = lambda path, params, timeout=30: (200, {"logs": [
+                {"name": "system", "path": "/var/log/syslog", "ok": False, "problem": "พบไฟล์แต่อ่านไม่ได้ (สิทธิ์ไฟล์)", "files": []}]})
+            d = c.get("/api/targets/lg-01/log-status?check=1").json
+            self.assertIsNone(d["logs"][0]["check"])
+            self.assertEqual(d["logs"][1]["check"]["problem"], "พบไฟล์แต่อ่านไม่ได้ (สิทธิ์ไฟล์)")
+        finally:
+            api.puller_get = saved
+        self.assertEqual(c.get("/api/targets/nope/log-status").status_code, 404)
+        c.delete("/api/targets/lg-01")
+        os.remove(os.path.join(settings.STATE_DIR, "checkpoints.json"))
+
     def test_sensor_detail(self):
         import json as _j, time as _t, sensors_service
         self.assertEqual(self.login("admin", "rootpass"), 200)
