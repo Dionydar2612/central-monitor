@@ -514,6 +514,24 @@ class Backend(unittest.TestCase):
         self.assertEqual(self.c.get("/api/sensors/detail?id=nope").status_code, 404)
         os.remove(sensors_service.SENSORS_FILE); os.remove(sensors_service.INCIDENTS_FILE)
 
+    def test_logs_shared_scan(self):
+        """สแกน OpenSearch ครั้งเดียวใช้ร่วมทุกเครื่อง (เดิมสแกนแยกทีละเครื่อง)"""
+        import logs_service
+        calls = []
+        def fake(path, payload):
+            calls.append(payload["from"])
+            return {"hits": {"hits": [{"_id": "1", "_index": "i", "_source": {"@timestamp": "2026-11-12T10:00:00Z", "body": "ERROR x",
+                     "log.file.path": "/var/log/__web-01__/a.log"}}]}}
+        orig, raw = logs_service.opensearch_request, dict(logs_service._RAW)
+        logs_service.opensearch_request = fake
+        logs_service._RAW.update(exp=0.0)
+        try:
+            logs_service._scan("web-01"); logs_service._scan("web-02"); logs_service._scan("web-01")
+            self.assertEqual(calls, [0])
+        finally:
+            logs_service.opensearch_request = orig
+            logs_service._RAW.update(raw, exp=0.0)
+
     def test_light_entry_fp(self):
         import logs_service
         hit = lambda body: {"_id": "x", "_index": "logs-central-1", "_source": {

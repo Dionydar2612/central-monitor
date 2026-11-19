@@ -91,6 +91,6 @@ try { document.documentElement.dataset.platforms = sessionStorage.getItem("cm.pl
             }
         } catch (e) { /* ignore */ }
         refresh();
-        setInterval(refresh, 15000);
+        setInterval(() => { if (!document.hidden) refresh(); }, 15000);   // แท็บที่ไม่ได้เปิดดู ไม่ต้องดึง
     })();
 })();

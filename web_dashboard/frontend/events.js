@@ -406,5 +406,5 @@ document.addEventListener("DOMContentLoaded", async () => {
         try { await fetch("/api/logout", { method: "POST", credentials: "same-origin" }); } finally { location.href = "/login"; }
     });
     render();
-    setInterval(() => { if ($("evModal").hidden) render(); }, 30000);
+    setInterval(() => { if ($("evModal").hidden && !document.hidden) render(); }, 30000);
 });

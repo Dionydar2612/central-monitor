@@ -40,6 +40,7 @@ log เป็นของเครื่องไหน?
 """
 
 import re
+import threading
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -63,7 +64,7 @@ SOURCE_FIELDS = ["@timestamp", "body", "message", "attributes", "resource"]
 SCAN_PAGE = 2000            # เอกสารต่อหน้า
 SCAN_MAX_DOCS = 10000       # index.max_result_window ปริยายของ OpenSearch = 10000
 SCAN_KEEP = 3000            # ได้ log ของเครื่องนี้ครบเท่านี้แล้วหยุดอ่านหน้าถัดไป
-SCAN_TTL = 8                # วินาทีที่ผลสแกนใช้ซ้ำได้
+SCAN_TTL = 15               # วินาทีที่ผลสแกนใช้ซ้ำได้ (สแกนครั้งเดียวใช้ร่วมทุกเครื่อง)
 
 # ฟิลด์จาก snapshot ที่แนบในหน้ารายละเอียด log
 DETAIL_SNAPSHOT_KEYS = (
@@ -78,7 +79,9 @@ _BODY_TS = re.compile(
 # เวลาดึงไฟล์ในชื่อไฟล์ buffer: __20261005T013000Z__
 _FILE_TS = re.compile(r"__(\d{8}T\d{6}Z)__")
 
-_SCAN_CACHE = {}     # web -> (หมดอายุเมื่อ, [entry])
+_SCAN_CACHE = {}     # web -> (รุ่นของชุดเอกสาร, [entry])
+_RAW = {"exp": 0.0, "ver": 0, "hits": []}   # เอกสารล่าสุดชุดเดียวใช้ร่วมทุกเครื่อง
+_RAW_LOCK = threading.Lock()
 
 # ระดับที่เก็บ/แสดงจาก OpenSearch (INFO ไม่เก็บ ดูได้เฉพาะตอนกด Load INFO log)
 LEVELS = ("ERROR", "WARN")
@@ -342,44 +345,54 @@ def _public(entry):
 # สแกน log ของเครื่อง (ใช้ร่วมกันทุกฟังก์ชัน)
 # ---------------------------------------------------------------------------
 
-def _scan(web):
-    """log ของเครื่องนี้ ใหม่ -> เก่า (ผ่าน cache สั้น ๆ) OpenSearch ล่ม -> ใช้ผลเก่าที่มี หรือ []"""
+def _raw_hits():
+    """เอกสารล่าสุดจาก OpenSearch ชุดเดียวใช้ร่วมทุกเครื่อง (cache SCAN_TTL วินาที + lock กันยิงซ้ำพร้อมกัน)
+    เดิมสแกนแยกทีละเครื่อง (เครื่องละสูงสุด 10,000 เอกสาร) ทำให้ OpenSearch ใช้ CPU สูงเมื่อมีหลายเครื่อง"""
     now = time.time()
+    if _RAW["exp"] > now:
+        return _RAW["ver"], _RAW["hits"]
+    with _RAW_LOCK:
+        if _RAW["exp"] > time.time():
+            return _RAW["ver"], _RAW["hits"]
+        hits = []
+        try:
+            for offset in range(0, SCAN_MAX_DOCS, SCAN_PAGE):
+                result = opensearch_request(LOG_INDEX_PATTERN, {
+                    "from": offset,
+                    "size": min(SCAN_PAGE, SCAN_MAX_DOCS - offset),
+                    "_source": SOURCE_FIELDS,
+                    "query": {"match_all": {}},
+                    "sort": [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}],
+                })
+                page = result.get("hits", {}).get("hits", [])
+                hits += page
+                if len(page) < SCAN_PAGE:
+                    break
+        except Exception as e:
+            print("[LOGS] OpenSearch query error:", repr(e))
+            _RAW["exp"] = time.time() + SCAN_TTL          # ล่ม -> ใช้ผลเดิม ไม่ยิงซ้ำทุกคำขอ
+            return _RAW["ver"], _RAW["hits"]
+        _RAW.update(exp=time.time() + SCAN_TTL, ver=_RAW["ver"] + 1, hits=hits)
+        return _RAW["ver"], hits
+
+
+def _scan(web):
+    """log ของเครื่องนี้ ใหม่ -> เก่า (คัดจากชุดเอกสารที่สแกนร่วมกัน)"""
+    ver, hits = _raw_hits()
     cached = _SCAN_CACHE.get(web)
-
-    if cached and cached[0] > now:
+    if cached and cached[0] == ver:
         return cached[1]
-
-    entries = []
     marker = f"__{resolve_web_name(web)}__"
-
-    try:
-        for offset in range(0, SCAN_MAX_DOCS, SCAN_PAGE):
-            result = opensearch_request(LOG_INDEX_PATTERN, {
-                "from": offset,
-                "size": min(SCAN_PAGE, SCAN_MAX_DOCS - offset),
-                "_source": SOURCE_FIELDS,
-                "query": {"match_all": {}},
-                "sort": [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}],
-            })
-            hits = result.get("hits", {}).get("hits", [])
-
-            for hit in hits:
-                entry = _light_entry(web, marker, hit)
-                if entry:
-                    entries.append(entry)
-
-            if len(hits) < SCAN_PAGE or len(entries) >= SCAN_KEEP:
+    entries = []
+    for hit in hits:
+        entry = _light_entry(web, marker, hit)
+        if entry:
+            entries.append(entry)
+            if len(entries) >= SCAN_KEEP:
                 break
-
-    except Exception as e:
-        print("[LOGS] OpenSearch query error:", repr(e))
-        return cached[1] if cached else []
-
     # @timestamp ที่แก้แล้ว (จากต้นข้อความ/ชื่อไฟล์) อาจไม่เรียงตามที่ OpenSearch เรียงมา
     entries.sort(key=lambda e: e["_ts"], reverse=True)
-
-    _SCAN_CACHE[web] = (now + SCAN_TTL, entries)
+    _SCAN_CACHE[web] = (ver, entries)
     return entries
 
 

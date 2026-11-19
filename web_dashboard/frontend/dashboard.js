@@ -2972,7 +2972,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadCurrentUser();
     loadOrder().then(() => { if (S.ov) renderMachines(); });       /* ลำดับเครื่อง / กลุ่มที่จัดไว้ */
     loadAll();
-    setInterval(loadAll, 10000);
+    setInterval(() => { if (!document.hidden) loadAll(); }, 10000);   // แท็บที่ไม่ได้เปิดดู ไม่ต้องดึง
     /* Apps & Web แสดงที่หน้าหลักเหมือนเดิม · Network & Security เปิดจากหน้า Settings */
     loadApps();
     setInterval(() => { if (!document.hidden) loadApps(); }, 30000);
