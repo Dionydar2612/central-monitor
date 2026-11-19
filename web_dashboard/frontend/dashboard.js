@@ -1020,7 +1020,7 @@ function serverRows(list, cur, keepOrder) {
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
             const os = w.os === "windows" ? `<span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent">Win</span>` : `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
-            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><span class="ovst ${cls}"${w.paused && w.pause_reason ? ` title="${escapeHtml("Pause: " + w.pause_reason)}"` : why}>${escapeHtml(label)}</span>${ack}${w.paused && w.pause_reason ? `<div class="cerr">${escapeHtml(w.pause_reason)}</div>` : ""}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
+            return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><button type="button" class="ovst ${cls}" data-stpop="${escapeHtml(w.web)}"${w.paused && w.pause_reason ? ` title="${escapeHtml("Pause: " + w.pause_reason)}"` : why}>${escapeHtml(label)}</button>${ack}${w.paused && w.pause_reason ? `<div class="cerr">${escapeHtml(w.pause_reason)}</div>` : ""}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
 
@@ -1108,7 +1108,7 @@ function cardsHtml(list, cur) {
         const btn = op ? `<button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button>` : "";
         const why = w.problems && w.problems.length ? `<div class="mwhy" title="${escapeHtml(w.problems.join(", "))}">${escapeHtml(w.problems.slice(0, 2).join(" · "))}</div>` : "";
         return `<div class="mcard ${cls}" data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0">
-<div class="mtop"><b>${escapeHtml(w.web)}</b>${osTag(w)}<span class="ovst ${cls}">${escapeHtml(label)}</span></div>
+<div class="mtop"><b>${escapeHtml(w.web)}</b>${osTag(w)}<button type="button" class="ovst ${cls}" data-stpop="${escapeHtml(w.web)}">${escapeHtml(label)}</button></div>
 <div class="mhost">${escapeHtml(w.host || w.instance || "-")}</div>
 ${w.paused ? `<div class="mhost">Paused${w.pause_reason ? ": " + escapeHtml(w.pause_reason) : ""}</div>` : bar("cpu", "CPU", w.cpu) + bar("memory", "Mem", w.memory) + bar("disk", "Disk", w.disk)}
 ${why}<div class="mfoot"><span>${av ? `<a class="mav ${av.cls}" href="${av.href}" title="${escapeHtml(av.tip)}">${av.pct}${av.state ? ` · ${escapeHtml(av.state)}` : ""}</a>` : "-"} · ${w.paused ? "-" : pullHtml(w.last_pull)}</span>${btn}</div></div>`;
@@ -1494,7 +1494,7 @@ function groupHtml(n, cur, depth, forceOpen) {
 
 function matchesFilter(x, f, isCheck) {
     if (!isCheck && S.ovOs && (x.os === "windows" ? "windows" : "linux") !== S.ovOs) return false;
-    if (!isCheck && S.ovState && x.state !== S.ovState) return false;
+    if (!isCheck && S.ovState && (S.ovState === "UP" ? x.status !== "online" : x.state !== S.ovState)) return false;
     if (!f) return true;
     const hay = isCheck ? [x.name, x.url, x.group] : [x.web, x.host, x.instance, x.group, x.state];
     return hay.some(v => String(v || "").toLowerCase().includes(f));
@@ -1543,21 +1543,23 @@ function renderMachines(ov) {
 
     const cb = c => realChecks.filter(x => x.status === c).length;
     const wb = c => wms.filter(x => x.status === c).length;
-    const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
+    const tile = (label, n, cls, sub, st) => st == null
+        ? `<div class="ovtile ${cls}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`
+        : `<button type="button" class="ovtile ${cls}${S.ovState === st && st ? " on" : ""}" data-ovst="${st}" title="${st ? "แสดงเฉพาะเครื่องที่เป็น " + label : "แสดงทุกเครื่อง"}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</button>`;
     const okCount = webs.filter(w => w.state === "HEALTHY").length;
     q("#ovTiles").innerHTML =
-        tile("Total", ov.total, "tot", hasValue(ov.windows) ? `${ov.linux || 0} Linux · ${ov.windows || 0} Windows` : "machines") +
-        tile("Up", ov.up || 0, "up", `${okCount} OK`) +
-        tile("Down", ov.down || 0, "dn", "no data / not responding") +
-        tile("Warning", ov.warning || 0, "nok", "≥ warning threshold") +
-        tile("Critical", ov.problem || 0, "dn", "≥ error threshold") +
-        tile("Paused", ov.paused || 0, "ps", "not monitored") +
+        tile("Total", ov.total, "tot", hasValue(ov.windows) ? `${ov.linux || 0} Linux · ${ov.windows || 0} Windows` : "machines", "") +
+        tile("Up", ov.up || 0, "up", `${okCount} OK`, "UP") +
+        tile("Down", ov.down || 0, "dn", "no data / not responding", "DOWN") +
+        tile("Warning", ov.warning || 0, "nok", "≥ warning threshold", "WARNING") +
+        tile("Critical", ov.problem || 0, "dn", "≥ error threshold", "PROBLEM") +
+        tile("Paused", ov.paused || 0, "ps", "not monitored", "PAUSED") +
         (SHOW_CHECKS ? tile("Web checks", realChecks.length, "chk", realChecks.length ? `${cb("up")} up · ${cb("warning")} warn · ${cb("down")} down` : "none") : "") +
         (wms.length ? `<a class="ovtilelink" href="/apps">${tile("Apps & Web", wms.length, wb("down") ? "dn" : wb("warning") ? "nok" : "up", `${wb("up")} up · ${wb("warning")} warn · ${wb("down")} down`)}</a>` : "");
     q("#ovTiles").classList.add("many");
 
     const f = (S.ovq || "").trim().toLowerCase();
-    const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true)));
+    const tree = buildTree(webs.filter(w => matchesFilter(w, f)), checks.filter(c => matchesFilter(c, f, true) && !S.ovState));
     const tops = [...tree.kids.values()].sort(groupCmp);
     /* เครื่อง/check ที่ไม่ได้ตั้งกลุ่ม: แสดงตารางตรง ๆ ไม่มีหัวกลุ่ม (กลุ่มแสดงเฉพาะที่ตั้งชื่อไว้) */
     const loose = (tree.servers.length ? `<div class="gloose">${serversHtml(tree.servers, cur)}</div>` : "") +
@@ -1595,12 +1597,67 @@ function renderMachines(ov) {
     }
     q("#mach").innerHTML = !webs.length && !checks.length
         ? `<div class="empty">No WEB configured - open Settings and add a target</div>`
-        : (tops.length || loose) ? nodeItems(tree, cur, 0, !!f, true) + (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "")
+        : (tops.length || loose) ? nodeItems(tree, cur, 0, !!f || !!S.ovState, true) + (tree.checks.length ? `<div class="gloose">${checkTables(tree.checks)}</div>` : "")
         : `<div class="empty">Nothing matches "${escapeHtml(S.ovq)}"</div>`;
     if (S.arrange) {
         q("#mach").insertAdjacentHTML("afterbegin", `<div class="ghead droproot" data-group="" role="button">⤒ ระดับบนสุด / ไม่มีกลุ่ม <small>ลากเครื่อง / กลุ่มมาวางที่นี่ · ลากกลุ่มไปกลางหัวกลุ่มอื่น = เป็นกลุ่มย่อย</small></div>`);
         q("#mach").querySelectorAll("tr[data-web], .mtile[data-web], .mcard[data-web], .ghead[data-group]:not(.droproot)").forEach(n => { n.draggable = true; });
     }
+}
+
+/* เปิดรายละเอียดเครื่อง (เหมือนคลิกแถว) */
+function openWeb(web, then) {
+    togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.live = null; S.liveErr = null;
+    S.web = web; S.hist = null; S.dev = null; if (q("#devPanel")) q("#devPanel").innerHTML = "";
+    if (window.CMPanes) CMPanes.reset();
+    setUrlWeb(S.web);
+    renderMachines();
+    return loadAll().then(() => (then ? then() : q("#detail").scrollIntoView({ behavior: "smooth", block: "start" })));
+}
+
+/* กดที่ Status ของเครื่อง: หน้าต่างบอกว่ามีปัญหาอะไร ตรงไหน (sensor ที่ไม่ OK + log ERROR / WARN) แต่ละรายการกดไปดูต่อได้ */
+const STP_RANK = { down: 0, error: 1, warning: 2, unknown: 3, paused: 4, ok: 5 };
+async function openStatusPop(web) {
+    q("#stPop")?.remove();
+    const w = (S.webs || []).find(x => x.web === web) || { web };
+    const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
+    const box = document.createElement("div");
+    box.id = "stPop"; box.className = "stpop";
+    box.innerHTML = `<div class="stpop-box" role="dialog" aria-modal="true" aria-label="ปัญหาของ ${escapeHtml(web)}"><div class="stpop-h"><b>${escapeHtml(web)}</b><span class="ovst ${cls}">${escapeHtml(label)}</span><button type="button" class="stpop-x" aria-label="ปิด">×</button></div><div class="stpop-b"><div class="empty">กำลังโหลด…</div></div><div class="stpop-f"><button type="button" class="svbtn" data-stgo="detail">รายละเอียดเครื่อง</button><button type="button" class="svbtn" data-stgo="logs">Logs ของเครื่องนี้</button><a class="svbtn" href="/network?web=${encodeURIComponent(web)}">Network</a></div></div>`;
+    document.body.append(box);
+    const close = () => { box.remove(); document.removeEventListener("keydown", esc); };
+    const esc = e => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", esc);
+    box.addEventListener("click", e => {
+        if (e.target === box || e.target.closest(".stpop-x")) { close(); return; }
+        const g = e.target.closest("[data-stgo]");
+        if (!g) return;
+        close();
+        const go = g.dataset.stgo;
+        const then = go === "logs" ? () => {
+                const sel = q("#logWeb");
+                if (sel && [...sel.options].some(o => o.value === web)) { sel.value = web; sel.dispatchEvent(new Event("change", { bubbles: true })); }
+                sel?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+                   : go === "dev" ? () => q("#devPanel")?.scrollIntoView({ behavior: "smooth", block: "start" }) : null;
+        if (S.web === web) { then ? then() : q("#detail").scrollIntoView({ behavior: "smooth", block: "start" }); } else openWeb(web, then);
+    });
+    let sens = [];
+    try { sens = (await apiGet(`/api/sensors?web=${encodeURIComponent(web)}`)).sensors || []; }
+    catch (e) { box.querySelector(".stpop-b").innerHTML = `<div class="empty">โหลด sensor ไม่ได้: ${escapeHtml(e.message)}</div>`; return; }
+    if (!box.isConnected) return;
+    const bad = sens.filter(x => !["ok", "paused"].includes(x.status))
+        .sort((a, b) => (STP_RANK[a.status] ?? 9) - (STP_RANK[b.status] ?? 9) || (Number(b.priority) || 3) - (Number(a.priority) || 3));
+    const okN = sens.filter(x => x.status === "ok").length, offN = sens.filter(x => x.status === "paused").length;
+    const row = x => {
+        const [ico, l, c] = DEV_ST[x.status] || DEV_ST.unknown;
+        return `<a class="stpop-r" href="/sensor?id=${encodeURIComponent(x.id)}"><span class="evst ${c === "cr" ? "dn" : c}">${ico} ${escapeHtml(l)}</span><span><b>${escapeHtml(x.name || x.id)}</b><small>${escapeHtml(x.message || "")}</small></span><em>${x.since ? escapeHtml(shortDur(Date.now() / 1000 - Number(x.since))) : ""}</em></a>`;
+    };
+    const why = (w.problems || []).length && !bad.length ? `<div class="stpop-why">${escapeHtml(w.problems.join(" · "))}</div>` : "";
+    const pause = w.paused ? `<div class="stpop-why">Paused${w.pause_reason ? ": " + escapeHtml(w.pause_reason) : ""}</div>` : "";
+    box.querySelector(".stpop-b").innerHTML = pause + why
+        + (bad.length ? `<div class="stpop-t">Sensor ที่มีปัญหา (${bad.length})</div>${bad.map(row).join("")}` : `<div class="empty">ไม่มี sensor ที่มีปัญหา</div>`)
+        + `<div class="stpop-sum">OK ${okN} sensor${offN ? ` · ปิดไว้ ${offN}` : ""} · <button type="button" class="linkbtn" data-stgo="dev">ดู sensor ทั้งหมด</button></div>`;
 }
 
 async function togglePause(btn) {
@@ -2190,7 +2247,7 @@ function setupServicePicker() {
 function canAckLogs() { return canOperate() && !S.info; }
 function renderLogHead(selectable, grouped) {
     q("#plogHead").innerHTML = grouped
-        ? `<tr><th>Last seen</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}${selectable ? `<th class="gack"></th>` : ""}</tr>`
+        ? `<tr><th>Last seen</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}${selectable ? `<th class="gack">Acknowledge</th>` : ""}</tr>`
         : `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
 }
 function logCols(selectable, grouped) { return 5 + (selectable ? 1 : 0) + (S.showMetrics ? 1 : 0) + (grouped ? 1 : 0); }
@@ -2220,8 +2277,12 @@ function renderGroups(list) {
         const webs = g.machines > 1 ? ` <span class="gmore" title="${escapeHtml((g.webs || []).join(", "))}">+${g.machines - 1} เครื่อง</span>` : "";
         const ackTag = g.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${g.ack.by || "-"}${g.ack.until ? " · ถึง " + new Date(g.ack.until * 1000).toLocaleString("en-GB") : ""}${g.ack.note ? " · " + g.ack.note : ""}`)}">ACK</span>` : "";
         tr.innerHTML = `<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td>${escapeHtml((g.types || []).join(", ") || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}${selectable ? `<td class="gack">${groupAckHtml(g)}</td>` : ""}`;
+        tr.addEventListener("change", e => {
+            const sel = e.target.closest("select[data-gack]");
+            if (sel && sel.value) ackGroup(sel);
+        });
         tr.addEventListener("click", e => {
-            const b = e.target.closest("button[data-gack],button[data-gunack]");
+            const b = e.target.closest("button[data-gunack]");
             if (b) { ackGroup(b); return; }
             if (e.target.closest("td.gack")) return;
             if (p.id) openLogDetail(p);
@@ -2229,21 +2290,26 @@ function renderGroups(list) {
         tb.appendChild(tr);
     });
 }
-/* ปุ่ม ack ท้ายแถวกลุ่ม: Ack ทั้งกลุ่ม (ตาม fingerprint) เลือกเวลา 1 ชม. / 24 ชม. / 7 วัน
-   ซ่อนทุกบรรทัดที่ fp ตรง รวมบรรทัดที่จะเข้ามาใหม่ หมดเวลาแล้วโผล่กลับมาเอง */
+/* Acknowledge ทั้งกลุ่ม (ตาม fingerprint): รับทราบแล้ว -> ซ่อนปัญหานี้ (รวมบรรทัดที่เข้ามาใหม่) ตามเวลาที่เลือก
+   หมดเวลาแล้วถ้ายังเกิดอยู่จะกลับมาแสดงเอง · ack แล้วแสดง "ซ่อนถึง ..." + ปุ่มยกเลิก */
+const GACK_OPTS = [[1, "1 ชั่วโมง"], [8, "8 ชั่วโมง"], [24, "1 วัน"], [168, "7 วัน"]];
 function groupAckHtml(g) {
     if (!g.fp) return "";
-    if (g.ack && g.ack.fp) return `<button type="button" class="svbtn sm" data-gunack="${escapeHtml(g.fp)}">ยกเลิก ack</button>`;
-    return `<select class="gackh" aria-label="ซ่อนนานเท่าไร"><option value="1">1 ชม.</option><option value="24" selected>24 ชม.</option><option value="168">7 วัน</option></select><button type="button" class="svbtn sm" data-gack="${escapeHtml(g.fp)}" title="Acknowledge ทั้งกลุ่ม: ซ่อนทุกบรรทัดของปัญหานี้ (รวมที่เข้ามาใหม่) จนหมดเวลา">Ack กลุ่ม</button>`;
+    if (g.ack && g.ack.fp) {
+        const until = g.ack.until ? new Date(g.ack.until * 1000) : null;
+        const txt = until ? `ซ่อนถึง ${until.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Ack แล้ว";
+        return `<span class="gackd" title="${escapeHtml(`โดย ${g.ack.by || "-"}${g.ack.note ? " · " + g.ack.note : ""}`)}">${escapeHtml(txt)}</span><button type="button" class="svbtn sm" data-gunack="${escapeHtml(g.fp)}">ยกเลิก</button>`;
+    }
+    return `<select class="gackh" data-gack="${escapeHtml(g.fp)}" aria-label="Acknowledge: ซ่อนปัญหานี้นานเท่าไร"><option value="">Ack · ซ่อน…</option>${GACK_OPTS.map(([h, l]) => `<option value="${h}">ซ่อน ${l}</option>`).join("")}</select>`;
 }
 async function ackGroup(btn) {
     const on = !!btn.dataset.gack, fp = btn.dataset.gack || btn.dataset.gunack;
-    const tr = btn.closest("tr"), hours = on ? Number(tr.querySelector(".gackh").value) : 0;
+    const hours = on ? Number(btn.value) : 0;
     let note = "";
     if (on) {
-        const label = { 1: "1 ชั่วโมง", 24: "24 ชั่วโมง", 168: "7 วัน" }[hours] || `${hours} ชั่วโมง`;
-        note = prompt(`Acknowledge ทั้งกลุ่ม ${label}?\nทุกบรรทัดของปัญหานี้ (รวมที่เข้ามาใหม่) จะถูกซ่อนจากตารางและตัวนับจนหมดเวลา\nโน้ต (ไม่บังคับ):`, "");
-        if (note === null) return;
+        const label = (GACK_OPTS.find(o => o[0] === hours) || [0, `${hours} ชั่วโมง`])[1];
+        note = prompt(`รับทราบปัญหานี้ และซ่อน ${label}\nทุกบรรทัดของปัญหานี้ (รวมที่เข้ามาใหม่) จะไม่แสดงในตารางและตัวนับ · หมดเวลาแล้วถ้ายังเกิดอยู่จะกลับมาแสดง\nโน้ต (ไม่บังคับ):`, "");
+        if (note === null) { btn.value = ""; return; }
     }
     btn.disabled = true;
     try {
@@ -2856,6 +2922,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const pb = e.target.closest("button[data-pause]");
         if (pb) { e.stopPropagation(); togglePause(pb); return; }
+        const sp = e.target.closest("[data-stpop]");
+        if (sp) { openStatusPop(sp.dataset.stpop); return; }
         const sg = e.target.closest("[data-slgo]");                 /* สไลด์ */
         if (sg) { slideGo(Number(sg.dataset.slgo)); return; }
         if (e.target.closest("[data-slplay]")) { SL.play = !SL.play; SL.at = Date.now(); slSave(); renderMachines(); return; }
@@ -2878,11 +2946,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const b = e.target.closest("[data-web]"); if (!b) return;
         if (b.dataset.web === S.web) { closeDetail(); return; }       /* คลิกเครื่องเดิมซ้ำ = ปิดรายละเอียด */
-        togglePick(false); S.svf = "all"; S.svnf = false; S.ext = null; S.marks = []; S.markGroups = []; S.live = null; S.liveErr = null;
-        S.web = b.dataset.web; S.hist = null; S.dev = null; if (q("#devPanel")) q("#devPanel").innerHTML = "";
-        if (window.CMPanes) CMPanes.reset();
-        setUrlWeb(S.web);
-        renderMachines(); loadAll().then(() => q("#detail").scrollIntoView({ behavior: "smooth", block: "start" }));
+        openWeb(b.dataset.web);
+    });
+    /* กล่องสรุป Up / Down / Warning / Critical / Paused: กด = แสดงเฉพาะเครื่องสถานะนั้น (กดซ้ำ / Total = ทั้งหมด) */
+    q("#ovTiles").addEventListener("click", e => {
+        const t = e.target.closest("[data-ovst]"); if (!t) return;
+        const st = t.dataset.ovst;
+        S.ovState = !st || S.ovState === st ? "" : st;
+        q("#ovState").value = S.ovState;
+        renderMachines();
+        if (S.ovState) q("#mach").scrollIntoView({ behavior: "smooth", block: "start" });
     });
     q("#lvTabs").addEventListener("click", e => {
         const b = e.target.closest("button[data-lv]"); if (!b) return;

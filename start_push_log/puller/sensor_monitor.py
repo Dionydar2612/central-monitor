@@ -510,6 +510,46 @@ def _apply_sensor_settings(t, out):
                 s["sensor_minutes"] = float(r["minutes"])
         except (TypeError, ValueError):
             pass
+        _apply_sensor_limits(s, r)
+        n = r.get("notify")
+        if n == "off":
+            s["notify"] = False
+        elif n == "error":
+            s["notify_min"] = "error"
+        if n in ("off", "error"):
+            s["sensor_notify"] = n
+
+
+def _apply_sensor_limits(s, r):
+    """เกณฑ์ warning / error เฉพาะ sensor (เฉพาะ sensor ที่เป็นตัวเลขและมีเกณฑ์อยู่แล้ว) -> คิดระดับใหม่จากค่าตอนนี้"""
+    def num(x):
+        try:
+            return float(x) if x not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+    w, e = num(r.get("warning")), num(r.get("error"))
+    if w is None and e is None:
+        return
+    if s.get("warning") is None and s.get("error") is None:
+        return
+    th = {"warning": w if w is not None else num(s.get("warning")), "error": e if e is not None else num(s.get("error"))}
+    if th["warning"] is None:
+        th["warning"] = th["error"]
+    if th["error"] is None:
+        th["error"] = float("-inf") if s.get("low_is_bad") else float("inf")
+    s["warning"] = th["warning"]
+    s["error"] = th["error"] if th["error"] not in (float("inf"), float("-inf")) else None
+    s["sensor_warning"], s["sensor_error"] = w, e
+    value = num(s.get("value"))
+    if value is None or s.get("status") not in ("ok", "warning", "error"):
+        return
+    new = _grade(value, th, low=bool(s.get("low_is_bad")))
+    if new != s["status"] or w is not None or e is not None:
+        base = str(s.get("message") or "").split(" - ")[0]
+        unit = s.get("unit") or ""
+        cmp = "below" if s.get("low_is_bad") else "limit"
+        s["status"] = new
+        s["message"] = base + (f" - {new} {cmp} {th[new]:g}{unit}" if new in ("warning", "error") else "")
 
 
 def _apply_disabled(t, out):
@@ -808,13 +848,22 @@ def _save_incidents(new_items, retention, now):
 EVENT_RANK = {"down": 5, "error": 4, "warning": 3, "unknown": 2, "recovered": 1}
 
 
+def _notify_ok(s, new, confirmed):
+    """ต้องแจ้งไหม: กฎปิดแจ้ง / sensor ตั้ง "ไม่แจ้ง" -> ไม่แจ้ง · ตั้ง "เฉพาะ Error / Down" -> warning ไม่แจ้ง (หายจาก warning ก็ไม่แจ้ง)"""
+    if s.get("notify", True) is False:
+        return False
+    if s.get("notify_min") == "error":
+        return new in ("error", "down") or confirmed in ("error", "down")
+    return True
+
+
 def _event(s, new, confirmed, notify=None, pending=False, message=None):
     """1 รายการใน System log (+ ข้อมูลทำการ์ด Teams ใน notify.py)"""
     e = {"source": "sensor", "level": new, "web": s["web"], "group": s["group"],
          "sensor": s["name"], "from": confirmed, "to": new,
          "sid": s["id"], "kind": s.get("kind"), "value": s.get("value"), "unit": s.get("unit"),
          "mount": s.get("mount"), "warning": s.get("warning"), "error": s.get("error"),
-         "low": s.get("low_is_bad"), "notify": s.get("notify", True) if notify is None else notify,
+         "low": s.get("low_is_bad"), "notify": _notify_ok(s, new, confirmed) if notify is None else notify,
          "template": s.get("template"),
          "rule": (s.get("details") or {}).get("rule") if s.get("kind") == "custom" else None,
          "host": s.get("host"), "priority": s.get("priority") or 3}

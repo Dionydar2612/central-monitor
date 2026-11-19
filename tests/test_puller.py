@@ -205,6 +205,28 @@ class SensorPriority(unittest.TestCase):
         self.assertEqual([x["priority"] for x in out], [5, 2, 2])           # ไม่ตั้ง = Priority ของเครื่อง
         self.assertEqual(out[1]["confirm"], 20)                             # 10 นาที / 30 วินาที
 
+    def test_sensor_limits_and_notify(self):
+        sm = sensor_monitor
+        out = [{"id": "w:packet_loss", "kind": "packet_loss", "status": "warning", "value": 2.0, "unit": "%", "warning": 1, "error": 5,
+                "message": "2.0% loss of 20 pings in 5m - warning limit 1%"},
+               {"id": "w:cpu", "kind": "cpu", "status": "ok", "value": 50.0, "unit": "%", "warning": 80, "error": 90, "message": "50.0% CPU"},
+               {"id": "w:availability", "kind": "availability", "status": "down", "warning": None, "error": None, "message": "down"}]
+        rules = {"packet_loss": {"warning": 3, "error": 10, "notify": "error"}, "cpu": {"warning": 40},
+                 "availability": {"warning": 1, "notify": "off"}}
+        sm._apply_sensor_settings({"alert": {"sensors": rules}}, out)
+        for x in out:
+            x.update(web="w", group="", name=x["kind"])
+        self.assertEqual(out[0]["status"], "ok")                          # 2% < เกณฑ์ใหม่ 3%
+        self.assertEqual(out[0]["message"], "2.0% loss of 20 pings in 5m")
+        self.assertEqual((out[1]["status"], out[1]["warning"], out[1]["error"]), ("warning", 40.0, 90.0))
+        self.assertIn("warning limit 40%", out[1]["message"])
+        self.assertEqual(out[2]["status"], "down")                         # ไม่ใช่ตัวเลข -> ไม่แตะเกณฑ์
+        self.assertIs(sm._event(out[2], "down", "ok")["notify"], False)    # ตั้ง "ไม่แจ้ง"
+        self.assertIs(sm._event(out[0], "warning", "ok")["notify"], False)  # เฉพาะ Error / Down
+        self.assertIs(sm._event(out[0], "error", "warning")["notify"], True)
+        self.assertIs(sm._event(out[0], "ok", "error")["notify"], True)     # หายจาก error = แจ้ง
+        self.assertIs(sm._event(out[1], "warning", "ok")["notify"], True)
+
     def _run(self, raws, previous):
         sm = sensor_monitor
         got = {}

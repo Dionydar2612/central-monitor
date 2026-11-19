@@ -73,9 +73,10 @@ function renderHead() {
         + cell("Sensor Type", esc(KIND[s.kind] || s.kind || "-"))
         + cell("Status since", `${esc(fmtTime(s.since))} <span class="st-mut">(${esc(ago(s.since))})</span>`)
         + cell("Interval", `${esc(d.interval)} s`)
-        + cell("Limits", s.warning != null || s.error != null ? `warning ${esc(fmt(s.warning, s.unit))} · error ${esc(fmt(s.error, s.unit))}${s.low_is_bad ? " (ต่ำกว่า = แจ้ง)" : ""}` : "-")
+        + cell("Limits", s.warning != null || s.error != null ? `warning ${esc(fmt(s.warning, s.unit))} · error ${esc(fmt(s.error, s.unit))}${s.low_is_bad ? " (ต่ำกว่า = แจ้ง)" : ""}${s.sensor_warning != null || s.sensor_error != null ? "" : ` <span class="st-mut">(ของเครื่อง)</span>`}` : "-")
         + cell("ID", `<code>${esc(s.id)}</code>`)
-        + cell("Priority", prioStars(s.priority) + (s.sensor_priority ? "" : ` <span class="st-mut">(ของเครื่อง)</span>`))
+        + cell("Priority", prioStars(s.priority) + ` <span class="st-mut">${esc(PRIO_EFFECT[Math.max(1, Math.min(5, Number(s.priority) || 3))])}${s.sensor_priority ? "" : " · ของเครื่อง"}</span>`)
+        + cell("แจ้งเตือน", esc(NOTIFY_LABEL[s.sensor_notify || ""]))
         + cell("แจ้งเมื่อเป็นต่อเนื่อง", esc(fmtDur((s.confirm || d.confirm_checks || 2) * (d.interval || 30))) + (s.sensor_minutes ? "" : ` <span class="st-mut">(ของเครื่อง)</span>`))
         + `</div>` + availHtml(d.availability) + (canOp ? setHtml(s) : "");
     if (canOp) $("snSetSave").onclick = saveSettings;
@@ -179,19 +180,28 @@ ${rows.map(i => { const [, l, c] = ST[i.worst] || ST.unknown; return `<tr><td>${
 /* Priority / เวลาแจ้งเฉพาะ sensor นี้ (targets[].alert.sensors) - operator ขึ้นไป */
 function prioStars(n) { n = Math.max(1, Math.min(5, Number(n) || 3)); return `<span class="prio">${"★".repeat(n)}<i>${"★".repeat(5 - n)}</i></span>`; }
 function sensorKey(s) { return String(s.id).split(":").slice(1).join(":"); }
+/* Priority มีผลกับ: ลำดับการแจ้ง (สูงก่อนเสมอ) + ป๊อปอัปแสดงนานเท่าไร (popup.js) + ลำดับในรายการปัญหา */
+const PRIO_EFFECT = { 5: "วิกฤต · ป๊อปอัปค้างจนกดปิด", 4: "สูง · ป๊อปอัป 60 วินาที", 3: "ปกติ · ป๊อปอัป 15-30 วินาที", 2: "ต่ำ · ป๊อปอัป 8 วินาที", 1: "ต่ำสุด · ไม่ขึ้นป๊อปอัป (Teams / log)" };
+const NOTIFY_LABEL = { "": "Warning ขึ้นไป (Teams + ป๊อปอัป)", error: "เฉพาะ Error / Down", off: "ไม่แจ้ง (บันทึก System log อย่างเดียว)" };
 function setHtml(s) {
-    const opts = [["", "ของเครื่อง"], ["5", "★★★★★ 5 สำคัญสุด"], ["4", "★★★★ 4"], ["3", "★★★ 3"], ["2", "★★ 2"], ["1", "★ 1"]];
+    const opts = [["", "ของเครื่อง"], ...[5, 4, 3, 2, 1].map(n => [String(n), `${"★".repeat(n)} ${n} ${PRIO_EFFECT[n]}`])];
+    const num = s.warning != null || s.error != null;
+    const lim = (id, k, label) => `<label>${label} ${s.low_is_bad ? "≤" : "≥"} <input id="${id}" type="number" step="any" value="${esc(s["sensor_" + k] ?? "")}" placeholder="${esc(s["sensor_" + k] == null && s[k] != null ? s[k] : "ของเครื่อง")}">${esc(s.unit || "")}</label>`;
     return `<div class="snset"><b>ตั้งค่า sensor นี้</b>
 <label>Priority <select id="snSetPrio">${opts.map(([v, l]) => `<option value="${v}"${String(s.sensor_priority || "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+${num ? lim("snSetWarn", "warning", "Warning") + lim("snSetErr", "error", "Error") : ""}
 <label>แจ้งเมื่อเป็นต่อเนื่อง <input id="snSetMin" type="number" min="0.5" max="1440" step="0.5" value="${esc(s.sensor_minutes ?? "")}" placeholder="ของเครื่อง"> นาที</label>
-<button type="button" class="sntog dark" id="snSetSave">บันทึก</button><span class="st-mut" id="snSetMsg">ยังไม่ครบเวลา = บันทึกใน System log แต่ไม่แจ้ง · Priority สูงแจ้งก่อนเสมอ</span></div>`;
+<label>แจ้งเตือน <select id="snSetNotify">${Object.entries(NOTIFY_LABEL).map(([v, l]) => `<option value="${v}"${(s.sensor_notify || "") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+<button type="button" class="sntog dark" id="snSetSave">บันทึก</button><span class="st-mut" id="snSetMsg"></span></div>`;
 }
 async function saveSettings() {
     const s = N.d.sensor, b = $("snSetSave"); b.disabled = true;
     try {
         const r = await fetch(`/api/targets/${encodeURIComponent(s.web)}/sensor-settings`, { method: "POST", credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sensor: sensorKey(s), priority: $("snSetPrio").value, minutes: $("snSetMin").value.trim() }) });
+            body: JSON.stringify({ sensor: sensorKey(s), priority: $("snSetPrio").value, minutes: $("snSetMin").value.trim(),
+                                   warning: $("snSetWarn") ? $("snSetWarn").value.trim() : "", error: $("snSetErr") ? $("snSetErr").value.trim() : "",
+                                   notify: $("snSetNotify").value, low: !!s.low_is_bad }) });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || Object.values(j.fields || {}).join(" · ") || `HTTP ${r.status}`);
         $("snSetMsg").textContent = "บันทึกแล้ว · มีผลใน ~30 วินาที";

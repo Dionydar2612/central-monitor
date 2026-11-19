@@ -222,7 +222,8 @@ def clean_alert(value, errors, prefix="alert"):
 
 
 def clean_sensor_one(v, errors, field):
-    """{"priority", "minutes"} ของ sensor เดียว  ช่องว่าง = ไม่ตั้ง  คืน dict (อาจว่าง)"""
+    """{"priority", "minutes", "warning", "error", "notify"} ของ sensor เดียว  ช่องว่าง = ไม่ตั้ง  คืน dict (อาจว่าง)
+    warning / error = เกณฑ์แจ้งเตือนของ sensor นี้ (แทนค่าของเครื่อง) · notify: "" ปกติ / "error" แจ้งเฉพาะ Error-Down / "off" ไม่แจ้ง (บันทึก log อย่างเดียว)"""
     o = {}
     if not isinstance(v, dict):
         return o
@@ -246,6 +247,28 @@ def clean_sensor_one(v, errors, field):
             o["minutes"] = int(m) if m.is_integer() else m
         else:
             errors[f"{field}.minutes"] = "ต้องอยู่ระหว่าง 0.5-1440 นาที"
+    for k in ("warning", "error"):
+        x = v.get(k)
+        if x in (None, ""):
+            continue
+        try:
+            x = float(x)
+        except (TypeError, ValueError):
+            x = None
+        if x is None or not (-1e9 <= x <= 1e9) or x != x:
+            errors[f"{field}.{k}"] = "ใส่ตัวเลข"
+        else:
+            o[k] = int(x) if x.is_integer() else x
+    if "warning" in o and "error" in o:
+        low = bool(v.get("low"))
+        if (o["warning"] < o["error"]) if low else (o["warning"] > o["error"]):
+            errors[f"{field}.warning"] = "warning ต้องสูงกว่า error (ค่ายิ่งต่ำยิ่งแย่)" if low else "warning ต้องไม่เกิน error"
+    n = str(v.get("notify") or "").strip()
+    if n:
+        if n in ("error", "off"):
+            o["notify"] = n
+        else:
+            errors[f"{field}.notify"] = "เลือกวิธีแจ้ง"
     return o
 
 
@@ -296,13 +319,14 @@ def set_sensor_disabled(name, sensor, disabled):
     return {"name": name, "disabled_sensors": cur}
 
 
-def set_sensor_settings(name, sensor, priority=None, minutes=None):
+def set_sensor_settings(name, sensor, priority=None, minutes=None, warning=None, error=None, notify=None, low=False):
     """Priority / นานกี่นาทีก่อนแจ้ง ของ sensor เดียว (targets[].alert.sensors)  ว่างทั้งคู่ = ลบ  ไม่มีเครื่อง -> None"""
     sensor = str(sensor or "").strip()
     errors = {}
     if not SENSOR_KEY_RE.match(sensor):
         errors["sensor"] = "ชื่อ sensor ไม่ถูกต้อง"
-    one = clean_sensor_one({"priority": priority, "minutes": minutes}, errors, "sensor")
+    one = clean_sensor_one({"priority": priority, "minutes": minutes, "warning": warning, "error": error,
+                            "notify": notify, "low": low}, errors, "sensor")
     if errors:
         raise ValidationError({k.replace("sensor.", ""): v for k, v in errors.items()})
     y = _yaml()

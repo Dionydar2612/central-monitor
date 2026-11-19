@@ -419,6 +419,23 @@ class Backend(unittest.TestCase):
         for f in (sensors_service.SENSORS_FILE, sensors_service.INCIDENTS_FILE, sensors_service.PAUSES_FILE):
             os.remove(f)
 
+    def test_sensor_settings_limits(self):
+        """ตั้งค่า sensor: Priority / นาที / เกณฑ์ warning-error / วิธีแจ้ง"""
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "ss-01", "host": "10.0.0.51", "ssh": {"user": "cp"}, "logs": []})
+        r = c.post("/api/targets/ss-01/sensor-settings", json={"sensor": "cpu", "priority": 5, "warning": "70", "error": "85", "notify": "error"})
+        self.assertEqual(r.status_code, 200, r.json)
+        self.assertEqual(r.json["settings"], {"priority": 5, "warning": 70, "error": 85, "notify": "error"})
+        bad = c.post("/api/targets/ss-01/sensor-settings", json={"sensor": "cpu", "warning": 90, "error": 80}).json
+        self.assertIn("warning", bad["fields"])
+        ok = c.post("/api/targets/ss-01/sensor-settings", json={"sensor": "mem_available", "warning": 20, "error": 10, "low": True})
+        self.assertEqual(ok.status_code, 200)
+        self.assertIn("notify", c.post("/api/targets/ss-01/sensor-settings", json={"sensor": "cpu", "notify": "x"}).json["fields"])
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "ss-01"][0]
+        self.assertEqual(t["alert"]["sensors"]["cpu"]["notify"], "error")
+        c.delete("/api/targets/ss-01")
+
     def test_log_status(self):
         """Settings > Log: ดึงล่าสุดเมื่อไหร่ / กี่ไฟล์ (checkpoints) + ตรวจสดผ่าน puller"""
         import json as _j, api, settings

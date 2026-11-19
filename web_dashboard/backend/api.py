@@ -212,7 +212,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/targets$"), "target.add", ("name", "host", "group", "paused")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/pause$"), "target.pause", ("paused", "reason")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-toggle$"), "target.sensor_toggle", ("sensor", "disabled")),
-    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-settings$"), "target.sensor_settings", ("sensor", "priority", "minutes")),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/sensor-settings$"), "target.sensor_settings", ("sensor", "priority", "minutes", "warning", "error", "notify")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
     ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
@@ -1367,7 +1367,8 @@ def targets_sensor_settings(name):
     if body is None:
         return jsonify({"error": "json_required"}), 415
     try:
-        out = targets_service.set_sensor_settings(name, body.get("sensor"), body.get("priority"), body.get("minutes"))
+        out = targets_service.set_sensor_settings(name, body.get("sensor"), body.get("priority"), body.get("minutes"),
+                                                  body.get("warning"), body.get("error"), body.get("notify"), body.get("low"))
     except ValidationError as e:
         return _bad_request(e)
     except (OSError, YAMLError) as e:

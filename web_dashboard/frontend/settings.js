@@ -92,8 +92,8 @@ const isOp = () => S.role === "operator";
 function rowActions(t, extraFn, extraLabel) {
     const out = [el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
                  el("button", { class: "st-btn sm", onclick: () => openForm(t) }, isOp() ? "การแจ้งเตือน / Log" : "Edit")];
-    if (!isOp()) out.push(el("button", { class: "st-btn sm", onclick: extraFn }, extraLabel),
-                          el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete"));
+    /* Deploy key / Install command อยู่ในฟอร์ม Edit (แท็บ การเชื่อมต่อ) ไม่แสดงในรายการ */
+    if (!isOp()) out.push(el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete"));
     return out;
 }
 
@@ -324,6 +324,8 @@ function sensRow(key, v) {
     tr.querySelector('[data-k="priority"]').value = v.priority ? String(v.priority) : "";
     tr.querySelector('[data-k="minutes"]').value = v.minutes ?? "";
     tr.querySelector("[data-del]").onclick = () => tr.remove();
+    /* warning / error / วิธีแจ้ง ตั้งที่หน้า sensor -> เก็บไว้ไม่ให้หายตอนบันทึกฟอร์ม */
+    tr._extra = Object.fromEntries(["warning", "error", "notify"].filter(k => v[k] != null && v[k] !== "").map(k => [k, v[k]]));
     return tr;
 }
 function sensRows(map) {
@@ -337,7 +339,8 @@ function readSensRows() {
         const k = tr.querySelector('[data-k="key"]').value.trim();
         if (!k) return;
         const p = tr.querySelector('[data-k="priority"]').value, m = tr.querySelector('[data-k="minutes"]').value.trim();
-        if (p || m) out[k] = { ...(p ? { priority: Number(p) } : {}), ...(m ? { minutes: m } : {}) };
+        const x = tr._extra || {};
+        if (p || m || Object.keys(x).length) out[k] = { ...x, ...(p ? { priority: Number(p) } : {}), ...(m ? { minutes: m } : {}) };
     });
     return out;
 }

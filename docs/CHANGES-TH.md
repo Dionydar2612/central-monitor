@@ -1,3 +1,13 @@
+# เพิ่มเติม (19 พ.ย. 2026): Ack log ชัดเจน · กล่องสถานะกดได้ · ตั้งค่า sensor เต็ม · ล้างปุ่มใน Settings
+- Logs (แบบกลุ่ม): คอลัมน์ **Acknowledge** = เมนูเดียว "Ack · ซ่อน…" เลือก ซ่อน 1 ชม. / 8 ชม. / 1 วัน / 7 วัน (รับทราบแล้วซ่อนปัญหานี้ รวมบรรทัดใหม่ หมดเวลาแล้วถ้ายังเกิดจะกลับมา) · ack แล้วแสดง "ซ่อนถึง …" + ปุ่มยกเลิก (เดิมเป็นกล่อง "24 ชม." ที่ไม่บอกว่าคืออะไร)
+- WEB status: กล่อง Up / Down / Warning / Critical / Paused กดแล้วแสดงเฉพาะเครื่องสถานะนั้น (กดซ้ำ / Total = ทั้งหมด) · ตัวกรองสถานะมี "Up"
+- กด Status ของเครื่อง (ตาราง / การ์ด) -> หน้าต่างบอก sensor ที่มีปัญหา (กดไปหน้า sensor) + ปุ่ม รายละเอียดเครื่อง / Logs ของเครื่องนี้ / Network
+- หน้า sensor > ตั้งค่า sensor นี้: Priority, เกณฑ์ Warning / Error ของ sensor นี้, แจ้งเมื่อเป็นต่อเนื่องกี่นาที, วิธีแจ้ง (Warning ขึ้นไป / เฉพาะ Error-Down / ไม่แจ้ง บันทึก log อย่างเดียว) เก็บใน `targets[].alert.sensors`
+- Priority มีผลกับการแสดงผล: ★5 ป๊อปอัปค้างจนกดปิด · ★4 60 วิ · ★3 15-30 วิ · ★2 8 วิ · ★1 ไม่ขึ้นป๊อปอัป (ยังส่ง Teams / บันทึก log) · Priority สูงแจ้งก่อนและอยู่บนสุดเสมอ
+- Settings > Targets: เอาปุ่ม Install command / Deploy key ออกจากรายการ (ยังทำได้ในฟอร์ม Edit แท็บ การเชื่อมต่อ)
+
+---
+
 # เพิ่มเติม (18 พ.ย. 2026): เหตุผลที่ Pause · Pause ไม่นับ downtime · ตรวจ log ใน Settings
 - Pause เครื่องต้องใส่เหตุผล (ปุ่ม Pause หน้าแรก / Settings / ช่อง "เหตุผลที่ Pause" ในฟอร์ม) เก็บใน puller.yaml `targets[].pause: {reason, at, by}` · แสดงในตาราง / การ์ด / สไลด์ / Settings · ลง Activity log
 - Availability: ช่วงที่ Pause ไม่นับเป็นทั้ง uptime และ downtime (ตัดออกจากตัวหาร) · puller บันทึกช่วง Pause ตอน Resume ลง `data/state/pauses.json` · หน้า sensor Availability แสดงเวลา Pause + ตารางช่วง Pause พร้อมเหตุผล

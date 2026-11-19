@@ -40,8 +40,15 @@
         const kind = e.source === "software" ? "software" : e.level;
         return (cfg.levels || []).includes(kind);
     }
+    /* Priority -> ป๊อปอัปแสดงนานเท่าไร (ms) · 0 = ค้างจนกดปิด · null = ไม่ขึ้นป๊อปอัป (ยังส่ง Teams / บันทึก log ตามปกติ) */
+    function showMs(e, cls) {
+        const p = Number(e.priority) || 3;
+        return p >= 5 ? 0 : p === 4 ? 60000 : p === 3 ? (cls === "bad" ? 30000 : 15000) : p === 2 ? 8000 : null;
+    }
     function toast(e) {
         const [icon, label, cls] = LV[e.level] || LV.info;
+        const ms = showMs(e, cls);
+        if (ms === null) return;
         const title = [e.web, e.sensor].filter(Boolean).join(" · ") || "Central Monitor";
         const msg = String(e.message || "").replace(new RegExp(`^${(e.web || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} · `), "");
         if (osOn()) {
@@ -59,7 +66,8 @@
         stack.prepend(el);
         requestAnimationFrame(() => el.classList.add("in"));
         [...stack.querySelectorAll(".cmToast")].slice(MAX_TOASTS).forEach(close);
-        let t = setTimeout(() => close(el), cls === "bad" ? 30000 : 10000);
+        if (!ms) { el.classList.add("sticky"); return; }
+        let t = setTimeout(() => close(el), ms);
         el.addEventListener("mouseenter", () => clearTimeout(t));
         el.addEventListener("mouseleave", () => { t = setTimeout(() => close(el), 6000); });
     }
