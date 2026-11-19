@@ -527,6 +527,38 @@ class Backend(unittest.TestCase):
         finally:
             logs_service._visible, logs_service._metrics_cached = orig, orig_mc
 
+    def test_log_names(self):
+        """ชื่อ log = ชื่อเรียกใน Settings > Log: จากชื่อไฟล์ (__=ชื่อ) / จาก puller.yaml (log เก่า) / ชื่อ source"""
+        import logs_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "ln-01", "host": "10.0.0.61", "ssh": {"user": "cp"}, "logs": [
+            {"name": "application", "path": "/opt/a/x_*.log", "type": "ImportArkheion"},
+            {"name": "auth", "path": "/var/log/auth.log", "type": "auth"},
+            {"name": "logapp", "path": "/opt/b.log", "type": "Billing"}, {"name": "logapp", "path": "/opt/c.log", "type": "Orders"}]})
+        logs_service._LABEL_CACHE["at"] = 0
+        n = logs_service.log_name
+        self.assertEqual(n("s__ln-01__application__20261119T010000Z__0-9__ab__=Import%2DX.log", "application"), "Import-X")
+        self.assertEqual(n("s__ln-01__application__20261119T010000Z__0-9__ab.log", "application"), "ImportArkheion")   # log เก่า
+        self.assertEqual(n("s__ln-01__logapp__20261119T010000Z__0-9__ab.log", "logapp"), "logapp")      # 2 ชื่อ -> ไม่เดา
+        self.assertEqual(n("s__ln-01__auth__20261119T010000Z__0-9__ab.log", "loginuser"), "auth")
+        self.assertEqual(n("agent__win-01__eventlog__System", "eventlog"), "eventlog")
+        rows = [{"id": f"r{i}", "web": "ln-01", "level": "ERROR", "type": "application", "name": nm, "timestamp": "2026-11-19T01:00:00Z",
+                 "_ts": 100 + i, "message": f"boom {nm}", "fp": "f" + nm[:3].lower(), "source_file": ""}
+                for i, nm in enumerate(["ImportArkheion", "ImportArkheion", "auth"])]
+        orig, orig_mc = logs_service._visible, logs_service._metrics_cached
+        logs_service._visible = lambda web, include_acked=False: list(rows)
+        logs_service._metrics_cached = lambda ts, web: {"cpu": 1.0}
+        try:
+            st = logs_service.get_log_stats("ln-01")
+            self.assertEqual(st["names"], {"ImportArkheion": 2, "auth": 1, "Billing": 0, "Orders": 0})
+            g = logs_service.get_grouped_logs("ln-01", types="auth")
+            self.assertEqual([x["names"] for x in g], [["auth"]])
+        finally:
+            logs_service._visible, logs_service._metrics_cached = orig, orig_mc
+        c.delete("/api/targets/ln-01")
+        logs_service._LABEL_CACHE["at"] = 0
+
     def test_ack_by_fingerprint(self):
         import log_ack_service, logs_service, time as _t
         rows = self._fake_logs()

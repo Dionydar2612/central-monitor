@@ -522,9 +522,7 @@ function showProblemModal(problem) {
                     <div class="problem-modal-subtitle">
                         ${escapeHtml(problem.web || "-")}
                         ·
-                        ${escapeHtml(
-                            problem.type || "application"
-                        )}
+                        ${escapeHtml(problem.name || problem.type || "application")}${problem.name && problem.type && problem.name !== problem.type ? ` <span class="st-mut">(parser: ${escapeHtml(problem.type)})</span>` : ""}
                     </div>
 
                 </div>
@@ -1304,7 +1302,7 @@ function logsHtml(rows, multi) {
     SL.cur = rows || [];
     return !rows ? `<div class="sllog-empty">กำลังโหลด log...</div>`
         : !rows.length ? `<div class="sllog-empty ok">✓ ไม่มี ERROR / WARN</div>`
-        : rows.map((r, k) => `<button type="button" class="sllog${multi ? " multi" : ""} ${r.level === "ERROR" ? "cr" : "wr"}" data-sll="${k}"><span class="lv">${escapeHtml(r.level)}</span><time>${escapeHtml(formatTimestamp(r.timestamp))}</time>${multi ? `<b>${escapeHtml(r.web || "")}</b>` : ""}<em>${escapeHtml(r.type || "")}</em><span class="msg">${escapeHtml(String(r.message || "").slice(0, 300))}</span></button>`).join("");
+        : rows.map((r, k) => `<button type="button" class="sllog${multi ? " multi" : ""} ${r.level === "ERROR" ? "cr" : "wr"}" data-sll="${k}"><span class="lv">${escapeHtml(r.level)}</span><time>${escapeHtml(formatTimestamp(r.timestamp))}</time>${multi ? `<b>${escapeHtml(r.web || "")}</b>` : ""}<em>${escapeHtml(r.name || r.type || "")}</em><span class="msg">${escapeHtml(String(r.message || "").slice(0, 300))}</span></button>`).join("");
 }
 function machineSlide(w) {
     const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", ""];
@@ -2247,8 +2245,8 @@ function setupServicePicker() {
 function canAckLogs() { return canOperate() && !S.info; }
 function renderLogHead(selectable, grouped) {
     q("#plogHead").innerHTML = grouped
-        ? `<tr><th>Last seen</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}${selectable ? `<th class="gack">Acknowledge</th>` : ""}</tr>`
-        : `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th>Type</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
+        ? `<tr><th>Last seen</th><th>WEB</th><th>Level</th><th title="ชื่อเรียกที่ตั้งใน Settings > Log (ชี้ดูชนิด parser)">ชื่อ log</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}${selectable ? `<th class="gack">Acknowledge</th>` : ""}</tr>`
+        : `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th title="ชื่อเรียกที่ตั้งใน Settings > Log (ชี้ดูชนิด parser)">ชื่อ log</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
 }
 function logCols(selectable, grouped) { return 5 + (selectable ? 1 : 0) + (S.showMetrics ? 1 : 0) + (grouped ? 1 : 0); }
 /* รวมกลุ่มอยู่ไหม: เปิดสวิตช์ + ไม่ได้ค้นหา / ไม่ได้ดู INFO */
@@ -2276,7 +2274,7 @@ function renderGroups(list) {
         const span = g.count > 1 ? `ครั้งแรก ${formatTimestamp(g.first)} · ล่าสุด ${formatTimestamp(g.last)}` : "";
         const webs = g.machines > 1 ? ` <span class="gmore" title="${escapeHtml((g.webs || []).join(", "))}">+${g.machines - 1} เครื่อง</span>` : "";
         const ackTag = g.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${g.ack.by || "-"}${g.ack.until ? " · ถึง " + new Date(g.ack.until * 1000).toLocaleString("en-GB") : ""}${g.ack.note ? " · " + g.ack.note : ""}`)}">ACK</span>` : "";
-        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td>${escapeHtml((g.types || []).join(", ") || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}${selectable ? `<td class="gack">${groupAckHtml(g)}</td>` : ""}`;
+        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td class="lname" title="${escapeHtml("parser: " + ((g.types || []).join(", ") || p.type || "application"))}">${escapeHtml((g.names || []).join(", ") || p.name || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}${selectable ? `<td class="gack">${groupAckHtml(g)}</td>` : ""}`;
         tr.addEventListener("change", e => {
             const sel = e.target.closest("select[data-gack]");
             if (sel && sel.value) ackGroup(sel);
@@ -2472,7 +2470,7 @@ function renderProblems(list) {
         if (p.ack) tr.className = "acked";
         const ackTag = p.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${p.ack.by || "-"} · ${p.ack.at ? new Date(p.ack.at * 1000).toLocaleString("en-GB") : ""}${p.ack.note ? " · " + p.ack.note : ""}`)}">ACK</span>` : "";
         const sel = selectable ? `<td class="sel">${p.id ? `<input type="checkbox" data-sel="${escapeHtml(p.id)}"${S.sel.has(p.id) ? " checked" : ""} aria-label="Select log">` : ""}</td>` : "";
-        tr.innerHTML = `${sel}<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}${ackTag}</td><td>${escapeHtml(p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}`;
+        tr.innerHTML = `${sel}<td>${escapeHtml(formatTimestamp(p.timestamp))}</td><td>${escapeHtml(p.web || "-")}</td><td class="lv ${String(p.level || "").toLowerCase()}">${escapeHtml(p.level || "INFO")}${ackTag}</td><td class="lname" title="${escapeHtml("parser: " + (p.type || "application"))}">${escapeHtml(p.name || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${p.highlight ? hlHtml(p.highlight) : escapeHtml(p.message || "")}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}`;
         tr.addEventListener("click", e => {
             if (e.target.closest("td.sel")) {
                 const cb = tr.querySelector("input[data-sel]"); if (!cb) return;
@@ -2524,12 +2522,14 @@ function renderLogFilter(stats) {
         setText("ackedCnt", stats && stats.acknowledged ? `(${stats.acknowledged})` : "");
         b.setAttribute("aria-pressed", !S.info && k === S.lv);
     });
-    const types = Object.keys((stats && stats.types) || {}).sort();
-    if (S.lt !== "ALL" && !types.includes(S.lt)) types.push(S.lt);     // ชนิดที่เลือกอยู่ต้องไม่หายไปจากรายการ
+    /* ชื่อ log = ชื่อเรียกที่ตั้งใน Settings > Log (ชื่อใหม่ / log ที่เพิ่งเพิ่มขึ้นในรายการเองทันที แม้ยังไม่มี log = 0) */
+    const cnt = (stats && (stats.names || stats.types)) || {};
+    const types = Object.keys(cnt).sort((a, b) => (cnt[b] > 0) - (cnt[a] > 0) || a.localeCompare(b));
+    if (S.lt !== "ALL" && !types.includes(S.lt)) types.push(S.lt);     // ชื่อที่เลือกอยู่ต้องไม่หายไปจากรายการ
     const sel = q("#ltSel");
     if (document.activeElement === sel) return;          // กำลังเลือกอยู่ ห้ามวาดใหม่ทับ (รีเฟรชทุก 10 วินาที)
-    sel.innerHTML = `<option value="ALL">All types</option>` +
-        types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}${stats && stats.types[t] != null ? ` (${stats.types[t]})` : ""}</option>`).join("");
+    sel.innerHTML = `<option value="ALL">ทุกชื่อ log</option>` +
+        types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}${cnt[t] != null ? ` (${cnt[t]})` : ""}</option>`).join("");
     sel.value = S.lt;
 }
 

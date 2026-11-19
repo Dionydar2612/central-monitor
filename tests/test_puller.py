@@ -313,6 +313,26 @@ class PauseRecord(unittest.TestCase):
         self.assertEqual((rows[0]["web"], rows[0]["start"], rows[0]["reason"]), ("w", 1000.0, "ปิดซ่อมบำรุง"))
 
 
+class BufferLabel(unittest.TestCase):
+    """ชื่อเรียกต่อท้ายชื่อไฟล์ buffer: ห้ามไปตรงกับ glob *__<source>__* ของ otel"""
+
+    def test_label_segment(self):
+        try:
+            import log_puller
+        except ImportError:
+            self.skipTest("ต้องมี prometheus_client")
+        f = log_puller.label_segment
+        self.assertEqual(f("", "application"), "")
+        self.assertEqual(f("application", "application"), "")
+        self.assertEqual(f("ImportArkheion", "application"), "__=ImportArkheion")
+        self.assertEqual(f("my_app", "application"), "__=my%5Fapp")
+        for lb in ("logapp", "a__logapp__b", "x/y"):
+            name = "site__web-01__application__20261119T010000Z__0-9__ab" + f(lb, "application") + ".log"
+            self.assertNotIn("__logapp__", name)
+            self.assertNotIn("/", name)
+            self.assertEqual(name.count("__application__"), 1)
+
+
 class LogCheck(unittest.TestCase):
     """ปุ่ม "ตรวจ log": คำสั่งปลอดภัย (quote) + แปลผล"""
 

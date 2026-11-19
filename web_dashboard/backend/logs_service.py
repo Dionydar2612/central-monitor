@@ -41,6 +41,7 @@ log เป็นของเครื่องไหน?
 
 import re
 import time
+import urllib.parse
 from datetime import datetime, timezone
 
 import log_ack_service
@@ -116,6 +117,60 @@ def _resolve_timestamp(timestamp, body, filename):
     return timestamp
 
 
+# ---------------------------------------------------------------------------
+# "ชื่อ log" (ชื่อเรียกที่ตั้งใน Settings > Log = logs[].type) ใช้แสดง / กรองแทนชนิด parser
+#   1. ชื่อไฟล์ buffer มี __=<ชื่อ> (puller รุ่นใหม่ ต่อท้ายให้)            -> ชื่อนั้น
+#   2. log เก่า: เครื่อง + source ตรงกับ logs[] ใน puller.yaml ที่ตั้งชื่อไว้ชื่อเดียว -> ชื่อนั้น
+#   3. ไม่งั้น = ชื่อ source ในชื่อไฟล์ (เช่น auth, eventlog) หรือชนิด parser
+# ไม่แก้ข้อมูลใน OpenSearch (คำนวณตอนแสดงผล)
+# ---------------------------------------------------------------------------
+
+_FILE_LABEL = re.compile(r"__=([A-Za-z0-9.%-]+)\.log$")
+_LABEL_CACHE = {"at": 0.0, "map": {}, "names": []}
+LABEL_TTL = 15
+
+
+def _label_map():
+    """{(เครื่อง, source): ชื่อ หรือ None ถ้าตั้งหลายชื่อ}, [ชื่อทั้งหมดที่ตั้งไว้]"""
+    now = time.time()
+    if now - _LABEL_CACHE["at"] > LABEL_TTL:
+        m, names = {}, {}
+        for t in load_web_targets() or []:
+            if not isinstance(t, dict):
+                continue
+            for src in t.get("logs") or []:
+                if not isinstance(src, dict) or not src.get("name"):
+                    continue
+                label = str(src.get("type") or "").strip() or str(src["name"])
+                key = (str(t.get("name")), str(src["name"]))
+                names.setdefault(key[0], set()).add(label)
+                m[key] = label if m.get(key, label) == label else None
+        _LABEL_CACHE.update(at=now, map=m, names=names)
+    return _LABEL_CACHE["map"], _LABEL_CACHE["names"]
+
+
+def log_name(filename, log_type=""):
+    fn = str(filename or "").rsplit("/", 1)[-1]
+    hit = _FILE_LABEL.search(fn)
+    if hit:
+        try:
+            return urllib.parse.unquote(hit.group(1), errors="strict")
+        except UnicodeDecodeError:
+            pass
+    parts = fn.split("__")
+    web, src = (parts[1], parts[2]) if len(parts) > 2 else ("", "")
+    label = _label_map()[0].get((web, src)) if web else None
+    return label or src or log_type or "application"
+
+
+def configured_log_names(web=None):
+    """ชื่อ log ที่ตั้งไว้ใน puller.yaml (web = เฉพาะเครื่องนั้น / None หรือ all = ทุกเครื่อง)"""
+    names = _label_map()[1]
+    if web and web != "all":
+        return sorted(names.get(resolve_web_name(web), ()))
+    return sorted(set().union(*names.values())) if names else []
+
+
 def _hit_fields(hit):
     source = hit.get("_source", {}) or {}
     attributes = source.get("attributes", {}) or {}
@@ -170,6 +225,7 @@ def _light_entry(web, marker, hit):
         "web": web,
         "level": level,
         "type": resource.get("log.source", "") or "application",
+        "name": log_name(filename, resource.get("log.source", "")),
         "message": body,
         "source_file": filename,
         "fp": fingerprint(body),     # ลายนิ้วมือ: บรรทัดที่ต่างกันแค่เวลา / ตัวเลข / IP = ปัญหาเดียวกัน
@@ -357,7 +413,7 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
     """log ล่าสุดของเครื่อง เรียงใหม่ -> เก่า ไม่เกิน size รายการ
 
     levels : เช่น "ERROR,WARN" หรือ ["ERROR"]  (ว่าง = ทุกระดับ)
-    types  : เช่น "application,loginuser"      (ว่าง = ทุกชนิด)  = resource["log.source"]
+    types  : ชื่อ log (ชื่อเรียกใน Settings > Log) เช่น "ImportArkheion,auth"  (ว่าง = ทุกชื่อ) ดู log_name()
     with_metrics : ไม่ใช้แล้ว (คงไว้ให้เรียกแบบเดิมได้) -> แสดงเฉพาะ log ที่มี metrics เสมอ (_visible)
     """
     wanted_levels = _clean_levels(levels)
@@ -375,7 +431,7 @@ def get_logs(web, size=200, levels=None, types=None, start=None, end=None, with_
         if wanted_levels and entry["level"] not in wanted_levels:
             continue
 
-        if wanted_types and entry["type"] not in wanted_types:
+        if wanted_types and entry.get("name") not in wanted_types:
             continue
 
         row = _public(entry)
@@ -398,7 +454,7 @@ def _filtered(web, levels=None, types=None, start=None, end=None, include_acked=
     return [e for e in _visible(web, include_acked)
             if _in_range(e, start, end)
             and (not wanted_levels or e["level"] in wanted_levels)
-            and (not wanted_types or e["type"] in wanted_types)]
+            and (not wanted_types or e.get("name") in wanted_types)]
 
 
 def group_entries(entries):
@@ -411,7 +467,7 @@ def group_entries(entries):
         g = groups.get(key)
         if g is None:
             groups[key] = g = {"fp": e.get("fp") or "", "level": e["level"], "sample": e, "count": 0,
-                               "_first": e, "_webs": {}, "_types": set(), "_entries": []}
+                               "_first": e, "_webs": {}, "_types": set(), "_names": set(), "_entries": []}
         g["count"] += 1
         g["_entries"].append(e)
         if e["level"] == "ERROR":
@@ -422,13 +478,14 @@ def group_entries(entries):
             g["_first"] = e
         g["_webs"][e["web"]] = g["_webs"].get(e["web"], 0) + 1
         g["_types"].add(e["type"])
+        g["_names"].add(e.get("name") or e["type"])
     out = []
     for g in groups.values():
         out.append({"fp": g["fp"], "level": g["level"], "sample": g["sample"], "count": g["count"],
                     "first": g["_first"]["timestamp"], "last": g["sample"]["timestamp"],
                     "_first_ts": g["_first"]["_ts"], "_last_ts": g["sample"]["_ts"],
                     "machines": len(g["_webs"]), "webs": sorted(g["_webs"], key=lambda w: -g["_webs"][w])[:20],
-                    "types": sorted(g["_types"]), "_entries": g["_entries"]})
+                    "types": sorted(g["_types"]), "names": sorted(g["_names"]), "_entries": g["_entries"]})
     out.sort(key=lambda g: g["_last_ts"], reverse=True)
     return out
 
@@ -484,6 +541,7 @@ def get_log_detail(web, log_id):
         "web": web,
         "level": detect_log_level(body),
         "type": resource.get("log.source", "") or "application",
+        "name": log_name(filename, resource.get("log.source", "")),
         "message": body,
         "source_file": filename,
         "correlated_metrics": _metrics_cached(timestamp, web),
@@ -618,9 +676,12 @@ def get_log_stats(web, start=None, end=None):
     entries = _not_acked(in_range)
     acked = len(in_range) - len(entries)
 
+    names = {n: 0 for n in configured_log_names(web)}          # ชื่อที่ตั้งไว้แสดงเสมอ (ยังไม่มี log = 0)
     for entry in entries:
         levels[entry["level"]] += 1
         types[entry["type"]] = types.get(entry["type"], 0) + 1
+        n = entry.get("name") or entry["type"]
+        names[n] = names.get(n, 0) + 1
 
     # จำนวน "ชนิด" (fp ไม่ซ้ำ) ข้างจำนวนบรรทัด: error เดียวพ่นพันบรรทัด = 1 ชนิด
     kinds = {name: len({e.get("fp") or e.get("id") for e in entries if e["level"] == name}) for name in LEVELS}
@@ -628,7 +689,7 @@ def get_log_stats(web, start=None, end=None):
     for t in types:
         kind_types[t] = len({e.get("fp") or e.get("id") for e in entries if e["type"] == t})
 
-    return {"levels": levels, "types": types, "total": len(entries), "acknowledged": acked,
+    return {"levels": levels, "types": types, "names": names, "total": len(entries), "acknowledged": acked,
             "kinds": {"levels": kinds, "types": kind_types, "total": len({e.get("fp") or e.get("id") for e in entries})}}
 
 
@@ -714,7 +775,8 @@ def search_logs(query, web=None, levels=None, types=None, start=None, end=None, 
         if wanted_levels and level not in wanted_levels:
             continue
         log_type = resource.get("log.source", "") or "application"
-        if wanted_types and log_type not in wanted_types:
+        name = log_name(filename, log_type)
+        if wanted_types and name not in wanted_types:
             continue
         hl = (hit.get("highlight") or {})
         marked = (hl.get("body") or hl.get("message") or [None])[0]
@@ -725,6 +787,7 @@ def search_logs(query, web=None, levels=None, types=None, start=None, end=None, 
             "web": web or hit_web,
             "level": level,
             "type": log_type,
+            "name": name,
             "message": body,
             "highlight": marked,
             "source_file": filename,
@@ -774,6 +837,7 @@ def get_info_logs(web, lines=500, source=None, start=None, end=None):
             "web": web,
             "level": "INFO",
             "type": item.get("type") or "application",
+            "name": _label_map()[0].get((resolve_web_name(web), str(item.get("type") or ""))) or item.get("type") or "application",
             "message": item.get("message", ""),
             "source_file": item.get("source_file"),
             "correlated_metrics": _metrics_cached(item.get("timestamp"), web),

@@ -21,6 +21,9 @@ journal (logs[].path = journal หรือ journal:<unit>)
 ชื่อไฟล์ใน buffer (otel เลือกอ่านตามชื่อนี้ ห้ามเปลี่ยนรูปแบบ)
     <site>__<เครื่อง>__<source>__<เวลา UTC>__<offsetเริ่ม>-<offsetจบ>__<pull_id>.log
     ตัวอย่าง: production__web-01__logapp__20261002T013000Z__0-5120__ab12cd...log
+    ถ้าตั้ง "ชื่อเรียก" (logs[].type) ต่างจาก <source> ต่อท้ายด้วย __=<ชื่อเรียก แบบ %-encode>
+      production__web-01__application__...__ab12cd__=ImportArkheion.log
+      ("=" นำหน้า -> ไม่มีทางตรงกับ glob *__<source>__* ของ otel · หน้าเว็บใช้แสดง / กรอง "ชื่อ log")
     ส่วน <source> คือ logs[].name ใน puller.yaml -> otel/otelcol.yaml ใช้ glob
     `*__<source>__*.log` เพื่อเลือก parser
 
@@ -80,7 +83,17 @@ def make_pull_id(source_id, start_offset, end_offset):
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def _write_buffer(config, target_name, source_name, source_id, start_offset, end_offset, data):
+def label_segment(label, source_name=""):
+    """ส่วนท้ายชื่อไฟล์ของ "ชื่อเรียก"  ว่าง / เหมือน source -> "" (ชื่อไฟล์แบบเดิม)
+    %-encode ทุกตัวที่ไม่ใช่ A-Z a-z 0-9 . - (รวม _ ) -> ไม่มี "__" / "/" ในส่วนนี้แน่นอน"""
+    label = str(label or "").strip()[:60]
+    if not label or label == source_name:
+        return ""
+    return "__=" + "".join(c if (c.isascii() and c.isalnum()) or c in ".-" else "".join(f"%{b:02X}" for b in c.encode("utf-8"))
+                           for c in label)
+
+
+def _write_buffer(config, target_name, source_name, source_id, start_offset, end_offset, data, label=None):
     """เขียนก้อน log ลง data/buffer แบบ atomic คืน (path, pull_id)"""
     site = config["site"]["name"]
     pull_id = make_pull_id(source_id, start_offset, end_offset)
@@ -92,7 +105,7 @@ def _write_buffer(config, target_name, source_name, source_id, start_offset, end
         f"{source_name.replace('/', '_')}__"
         f"{timestamp}__"
         f"{start_offset}-{end_offset}__"
-        f"{pull_id}.log"
+        f"{pull_id}{label_segment(label, source_name)}.log"
     )
 
     output_file = os.path.join(BUFFER_DIR, filename)
@@ -173,7 +186,7 @@ def pull_journal(config, target, log_source, state):
     output_file, pull_id = None, previous.get("last_pull_id")
     if data:
         output_file, pull_id = _write_buffer(
-            config, target_name, source_name, source_id, start_offset, end_offset, data
+            config, target_name, source_name, source_id, start_offset, end_offset, data, label=log_source.get("type")
         )
 
     state[source_id] = {
@@ -275,7 +288,7 @@ def pull_log(config, target, log_source, state):
     output_file, pull_id = None, state.get(source_id, {}).get("last_pull_id")
     if data:
         output_file, pull_id = _write_buffer(
-            config, target_name, source_name, source_id, start_offset, end_offset, data
+            config, target_name, source_name, source_id, start_offset, end_offset, data, label=log_source.get("type")
         )
 
     # อัปเดต checkpoint "หลัง" ไฟล์อยู่ใน buffer แล้วเท่านั้น

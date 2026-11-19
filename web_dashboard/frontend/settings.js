@@ -182,7 +182,7 @@ function logRow(item) {
     const row = el("div", { class: "st-logrow" },
         mk("n", "ชนิด log (parser)", "name", item.name, "application", "logNames"),
         mk("p", "path", "path", item.path, "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
-        mk("t", "ชื่อเรียก", "type", item.type || "application", "application"),
+        mk("t", "ชื่อเรียก", "type", item.type || "", "ชื่อที่แสดงในหน้า Logs", "logLabels"),
         el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"),
         el("div", { class: "st-logst" }));
     row.dataset.saved = item.path ? `${item.name}\u0000${item.path}` : "";
@@ -413,6 +413,9 @@ function openForm(t) {
     $("f_inst").value = t ? (t.prometheus.instance || "") : "";
     $("f_scheme").value = t && t.prometheus ? (t.prometheus.scheme || "http") : "http";
     $("f_mpath").value = t && t.prometheus ? (t.prometheus.metrics_path || "") : "";
+    /* ชื่อเรียกที่เคยตั้งไว้ (ทุกเครื่อง) ให้เลือกซ้ำได้ ชื่อใหม่พิมพ์เองได้ */
+    const dlb = $("logLabels");
+    if (dlb) { dlb.textContent = ""; [...new Set(S.targets.flatMap(x => (x.logs || []).map(l => l.type)).filter(Boolean))].sort().forEach(v => dlb.append(el("option", { value: v }))); }
     const logs = $("logs"); logs.textContent = "";
     (t && t.logs.length ? t.logs : [null]).forEach(l => logs.append(logRow(l)));
     if (t && t.type !== "agent") loadLogStatus(false);
@@ -946,8 +949,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     $("fa_sens_add")?.addEventListener("click", () => { const tr = sensRow("", {}); $("fa_sens").append(tr); tr.querySelector("input").focus(); });
     const dl = el("datalist", { id: "logNames" });
-    ["application", "logapp", "loginuser", "journal"].forEach(v => dl.append(el("option", { value: v })));
-    document.body.append(dl);
+    ["application", "logapp", "loginuser", "journal", "system", "kernel"].forEach(v => dl.append(el("option", { value: v })));
+    document.body.append(dl, el("datalist", { id: "logLabels" }));
     $("addBtn").onclick = () => openForm(null);
     $("cancelBtn").onclick = closeForm;
     $("saveBtn").onclick = save;

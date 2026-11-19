@@ -4,6 +4,8 @@
 #
 # ไฟล์ใน data/buffer ชื่อ  <site>__<เครื่อง>__<source>__<เวลา>__<offset>__<id>.log
 # ส่วน <source> = logs[].name ใน puller.yaml -> เลือก receiver ด้านล่างจากชื่อนี้
+# ถ้าตั้งชื่อเรียก (logs[].type) ต่างจาก source ชื่อไฟล์ลงท้าย __=<ชื่อเรียก>.log (หน้าเว็บใช้เป็น "ชื่อ log")
+#   ขึ้นต้นด้วย "=" จึงไม่ตรงกับ glob *__<source>__* ด้านล่าง (ไม่ต้องแก้ receiver)
 #
 #   source                         receiver            log.source (ใช้กรอง Type ในหน้าเว็บ)
 #   logapp                         filelog/logapp      logapp
