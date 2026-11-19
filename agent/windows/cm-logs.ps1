@@ -67,8 +67,10 @@ foreach ($ch in $conf.channels) {
 # ---------------- ไฟล์ log: อ่านส่วนที่เพิ่มขึ้น เฉพาะบรรทัด ERROR / WARN
 $errRx  = '(?i)\b(error|fatal|critical|crit|exception|failed|failure|panic)\b'
 $warnRx = '(?i)\b(warn|warning)\b'
+$recent = (Get-Date).AddDays(-2)
 foreach ($pat in $conf.logs) {
-    foreach ($f in @(Get-ChildItem -Path $pat -File -ErrorAction SilentlyContinue)) {
+    # เฉพาะไฟล์ที่เพิ่งเขียนใน 2 วัน (โฟลเดอร์ที่มีไฟล์ย้อนหลังหลายร้อยไฟล์ ไม่อ่าน ERROR เก่าส่งไปทั้งหมด)
+    foreach ($f in @(Get-ChildItem -Path $pat -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $recent })) {
         $key = $f.FullName
         $off = if ($state.files.ContainsKey($key)) { $state.files[$key] } else { [math]::Max(0, $f.Length - 65536) }
         if ($f.Length -lt $off) { $off = 0 }                       # ไฟล์ถูกหมุน / ตัด -> อ่านใหม่
@@ -96,6 +98,8 @@ foreach ($pat in $conf.logs) {
         } catch { }
     }
 }
+
+foreach ($k in @($state.files.Keys)) { if (-not (Test-Path -LiteralPath $k) -or (Get-Item -LiteralPath $k).LastWriteTime -lt $recent.AddDays(-5)) { $state.files.Remove($k) } }
 
 # ---------------- ตัดของเก่า + เขียน textfile (แต่ละ metric ต้องอยู่ติดกัน)
 $cutoff = [int64]([DateTimeOffset]$now.AddHours(-$KeepHours)).ToUnixTimeSeconds()
