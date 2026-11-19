@@ -40,7 +40,8 @@ param(
     [string] $ExporterVersion = "0.32.1",                       # เวอร์ชัน windows_exporter
     [string] $ExporterExe = "",                                 # ไฟล์ windows_exporter-<version>-amd64.exe (ใช้แทนการดาวน์โหลด)
     [switch] $NoExporter,                                       # ไม่ติดตั้ง windows_exporter (ใช้ตัวเก็บในตัว Fluent Bit)
-    [switch] $Pull                                              # โหมด pull: central ดึง metrics จาก windows_exporter เอง (เครื่องนี้ต่อไปหา central ไม่ได้)
+    [switch] $Pull,                                             # โหมด pull: central ดึง metrics จาก windows_exporter เอง (เครื่องนี้ต่อไปหา central ไม่ได้)
+    [ValidateSet(1, 2, 5)] [int] $NetstatInterval = 1           # Netstat Monitor: เก็บ TCP / UDP ทุกกี่วินาที
 )
 
 $ErrorActionPreference = "Stop"
@@ -474,6 +475,29 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
                 Register-ScheduledTask -TaskName "CentralMonitorNetSec" -Action $act4 -Trigger $trg4 -Principal $pr -Settings $set4 -Force | Out-Null
                 Write-Host "   Network & Security (การเชื่อมต่อ / route / firewall / logon): scheduled task 'CentralMonitorNetSec' ทุก 5 นาที"
             } else { Warn "ไม่พบ cm-netsec.ps1 ข้างสคริปต์นี้ -> หน้า Network & Security ของเครื่องนี้จะว่าง (แตก zip ใหม่ทั้งชุด)" }
+            # Netstat Monitor: process เดียวรันค้าง เก็บทุก $NetstatInterval วินาที (cm-netstat.ps1 ข้างสคริปต์นี้)
+            $NsSrc = Join-Path $PSScriptRoot "cm-netstat.ps1"
+            if (Test-Path $NsSrc) {
+                $NsTask = "CentralMonitorNetstat"
+                # ตัวเดิมที่รันอยู่ -> หยุดก่อน (จะได้ใช้สคริปต์ / ค่าใหม่)
+                Stop-ScheduledTask -TaskName $NsTask -ErrorAction SilentlyContinue
+                Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.CommandLine -like "*cm-netstat.ps1*" } |
+                    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                $NsScript = Join-Path $InstallDir "cm-netstat.ps1"
+                Copy-Item $NsSrc $NsScript -Force
+                [IO.File]::WriteAllText((Join-Path $DataDir "cm-netstat.json"), ("{`"interval`":$NetstatInterval}"), (New-Object Text.UTF8Encoding($false)))
+                $act5 = New-ScheduledTaskAction -Execute "powershell.exe" `
+                    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$NsScript`""
+                $trg5a = New-ScheduledTaskTrigger -AtStartup
+                $trg5b = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 5) `
+                    -RepetitionDuration (New-TimeSpan -Days 3650)
+                $set5 = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -MultipleInstances IgnoreNew `
+                    -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+                Register-ScheduledTask -TaskName $NsTask -Action $act5 -Trigger @($trg5a, $trg5b) -Principal $pr -Settings $set5 -Force | Out-Null
+                Start-ScheduledTask -TaskName $NsTask -ErrorAction SilentlyContinue
+                Write-Host "   Netstat Monitor (TCP / UDP / คิว): scheduled task '$NsTask' เก็บทุก $NetstatInterval วินาที (process เดียวรันค้าง)"
+            } else { Warn "ไม่พบ cm-netstat.ps1 ข้างสคริปต์นี้ -> Netstat Monitor ของเครื่องนี้จะไม่มีข้อมูล (แตก zip ใหม่ทั้งชุด)" }
         } catch { Warn "สร้าง scheduled task '$InvTask' ไม่ได้: $($_.Exception.Message) (รายการโปรแกรมจะไม่อัปเดต)" }
         $listen = Get-NetTCPConnection -LocalPort $ExporterPort -State Listen -ErrorAction SilentlyContinue |
                   Select-Object -ExpandProperty LocalAddress -Unique
@@ -768,6 +792,27 @@ if ($UseExporter) {
     Metrics_Path     /metrics
     Scrape_Interval  15s
 
+# Netstat Monitor: เฉพาะ cm_netstat_* ทุก 5 วินาที (ตัด cm_netstat_* ออกจากชุด 15 วิ ไม่ให้ส่งซ้ำ)
+[INPUT]
+    Name             prometheus_scrape
+    Tag              cm.ns
+    Host             127.0.0.1
+    Port             $ExporterPort
+    Metrics_Path     /metrics?collect[]=textfile
+    Scrape_Interval  5s
+
+[FILTER]
+    Name             metrics_selector
+    Match            cm.win
+    Metric_Name      /^cm_netstat_/
+    Action           exclude
+
+[FILTER]
+    Name             metrics_selector
+    Match            cm.ns
+    Metric_Name      /^cm_netstat_/
+    Action           include
+
 
 "@
 } else {
@@ -788,6 +833,7 @@ $conf += (Output "cm.event" "eventlog" "") + "`r`n"
 if ($logPaths.Count -gt 0) { $conf += (Output "cm.file" "application" "") + "`r`n" }
 $conf += (Output "cm.hb" "agent" "    add_label        cm_web $Name") + "`r`n"
 $conf += (Output "cm.win" "metrics" "    add_label        cm_web $Name") + "`r`n"
+if ($UseExporter) { $conf += (Output "cm.ns" "metrics" "    add_label        cm_web $Name") + "`r`n" }
 
 # collector ที่อยากได้ (process = รายการ process ที่กิน CPU/RAM) ถ้าเวอร์ชันนี้ไม่รู้จัก จะถอยไปใช้ชุดปริยาย
 $Collectors = "cpu,cpu_info,os,net,logical_disk,cs,thermalzone,logon,system,service,memory,paging_file,process"

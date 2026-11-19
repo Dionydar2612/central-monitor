@@ -760,6 +760,133 @@ class Backend(unittest.TestCase):
         bad = c.post("/api/alert-rules/test", json={"name": "x", "metric": "cpu", "warning": 1})
         self.assertEqual(bad.status_code, 400)                            # ยังไม่มีช่อง Teams
 
+    def test_netstat(self):
+        """Netstat Monitor: เครื่อง Windows · เลือกพอร์ต + เกณฑ์ · dashboard (Unavailable ไม่ใช่ 0) · history · SSE · สิทธิ์"""
+        import json as _j, time as _t, netstat_service, clients
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        r = c.post("/api/targets", json={"name": "ns-win", "type": "agent", "host": "10.9.0.5",
+                                         "agent": {"mode": "pull", "logs": [], "channels": ["System"]}})
+        self.assertEqual(r.status_code, 201, r.json)
+        c.post("/api/targets", json={"name": "ns-lx", "host": "10.9.0.6", "ssh": {"user": "cp"}, "logs": []})
+        c.post("/api/users", json={"username": "nsop", "password": "password1", "role": "operator"})
+        c.post("/api/users", json={"username": "nsview", "password": "password1", "role": "viewer"})
+        self.assertNotIn(c.get("/netstat").status_code, (302, 401, 403))
+        hosts = c.get("/api/netstat/hosts").json
+        self.assertEqual([h["web"] for h in hosts["hosts"]], ["ns-win"])                     # เฉพาะ Windows
+        self.assertEqual((hosts["hosts"][0]["status"], hosts["hosts"][0]["enabled"]), ("unknown", False))
+        # ตรวจค่า: Critical ต้องมากกว่า Warning, พอร์ต 1-65535, ไม่ซ้ำ, interval 1/2/5
+        bad = c.put("/api/netstat/hosts/ns-win", json={"enabled": True, "interval": 3, "ports": [
+            {"port": 1433, "queue": {"warning": 80, "critical": 50}}, {"port": 70000}, {"port": 443}, {"port": 443}]}).json["fields"]
+        self.assertEqual(set(bad), {"interval", "ports.0.queue.critical", "ports.1.port", "ports.3.port"})
+        body = {"enabled": True, "interval": 1, "ports": [
+            {"port": 1433, "proto": "tcp", "queue": {"warning": 50, "critical": 80}, "conn": {"warning": 200, "critical": 300}},
+            {"port": 443, "queue": {"warning": 100, "critical": 150}, "conn": {"warning": 500, "critical": 800}},
+            {"port": 8080, "enabled": False}]}
+        self.assertEqual(c.put("/api/netstat/hosts/ns-win", json=body).status_code, 200)
+        self.assertEqual(c.put("/api/netstat/hosts/ns-lx", json=body).status_code, 404)    # ไม่ใช่ Windows
+        y = open(os.path.join(self.tmp, "puller.yaml")).read()
+        self.assertIn("netstat:", y)
+        self.assertIn("{warning: 50, critical: 80}", y)
+        # แก้เครื่องจากหน้า Settings แล้ว netstat ต้องไม่หาย
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "ns-win"][0]
+        self.assertLess(c.put("/api/targets/ns-win", json=dict(t, group="WIN")).status_code, 300)
+        self.assertIn("netstat:", open(os.path.join(self.tmp, "puller.yaml")).read())
+        # ค่าสดจาก puller (live.json): 1433 ไม่มีคิว -> None, 443 มีคิว
+        now = _t.time()
+        os.makedirs(netstat_service.NETSTAT_DIR, exist_ok=True)
+        row = lambda key, port, conn, q, st: {"key": key, "port": port, "proto": "tcp", "dir": "in", "enabled": True, "conn": conn,
+                                               "established": conn, "queue": q, "util": None, "states": {"established": conn},
+                                               "listening": True, "proc": "sqlservr", "pid": 10, "status": st,
+                                               "queue_note": "" if q is not None else "Unsupported: x", "conn_th": {"warning": 200}}
+        live = {"updated": now, "hosts": {"ns-win": {
+            "web": "ns-win", "online": True, "stale": False, "has_data": True, "last_seen": now, "os": "Windows Server 2022",
+            "support": {"recv": False, "send": False, "accept": True},
+            "rows": [row("tcp/in/1433", 1433, 230, None, "warning"), row("tcp/in/443", 443, 12, 4, "normal")],
+            "ports": [{"key": "tcp/in/1433", "port": 1433, "proto": "tcp", "dir": "in", "listening": True, "states": {"established": 230},
+                       "total": 230, "proc": "sqlservr", "pid": 10, "addr": "0.0.0.0", "peers": []},
+                      {"key": "tcp/in/3389", "port": 3389, "proto": "tcp", "dir": "in", "listening": True, "states": {},
+                       "total": 0, "proc": "svchost", "pid": 11, "addr": "0.0.0.0", "peers": []}]}},
+            "active": [{"akey": "ns-win::tcp/in/1433::conn", "kind": "conn", "web": "ns-win", "level": "warning", "port": 1433,
+                        "value": 230, "threshold": 200, "first": now - 60, "last": now, "status": "active"}]}
+        with open(netstat_service.LIVE_FILE, "w") as f:
+            _j.dump(live, f)
+        with open(netstat_service.ALERTS_FILE, "w") as f:
+            _j.dump({"active": live["active"], "history": [{"akey": "ns-win::host", "kind": "host_offline", "web": "ns-win",
+                                                            "level": "critical", "first": now - 900, "last": now - 800,
+                                                            "recovered_at": now - 790, "status": "recovered"}]}, f)
+        d = c.get("/api/netstat/dashboard").json
+        self.assertEqual(d["summary"], {"hosts": 1, "online": 1, "connections": 230, "listening": 2, "warning": 1, "critical": 0})
+        r1433 = [x for x in d["rows"] if x["port"] == 1433][0]
+        self.assertIsNone(r1433["queue"])                                                   # Unavailable ไม่ใช่ 0
+        self.assertEqual(len(c.get("/api/netstat/dashboard?status=alert").json["rows"]), 1)
+        self.assertEqual(len(c.get("/api/netstat/dashboard?port=443").json["rows"]), 1)
+        det = c.get("/api/netstat/hosts/ns-win").json
+        ports = {p["key"]: p for p in det["ports"]}
+        self.assertTrue(ports["tcp/in/1433"]["selected"])
+        self.assertFalse(ports["tcp/in/3389"]["selected"])
+        self.assertTrue(ports["tcp/in/8080"]["missing"] and not ports["tcp/in/8080"]["selected"])   # เลือกไว้แต่ไม่พบ
+        self.assertEqual(c.get("/api/netstat/hosts").json["hosts"][0]["status"], "online")
+        # agent offline -> ค่าปัจจุบันเป็น None สถานะ offline
+        live["hosts"]["ns-win"]["online"] = False
+        with open(netstat_service.LIVE_FILE, "w") as f:
+            _j.dump(live, f)
+        os.utime(netstat_service.LIVE_FILE, (now + 1, now + 1))
+        d = c.get("/api/netstat/dashboard").json
+        self.assertEqual((d["summary"]["online"], {x["status"] for x in d["rows"]}, d["rows"][0]["conn"]), (0, {"offline"}, None))
+        self.assertEqual(c.get("/api/netstat/hosts").json["hosts"][0]["status"], "offline")
+        # alerts
+        self.assertEqual(len(c.get("/api/netstat/alerts").json["alerts"]), 1)
+        self.assertEqual(len(c.get("/api/netstat/alerts?status=all").json["alerts"]), 2)
+        # history (Prometheus)
+        calls = []
+        saved = netstat_service.prometheus_query_range
+
+        def fake(q, s, e, step):
+            calls.append(q)
+            if "accept_queue" in q or "state=" in q and False:
+                return {"data": {"result": []}}
+            if "by (state)" in q:
+                return {"data": {"result": [{"metric": {"state": "established"}, "values": [[s, "5"], [e, "7"]]}]}}
+            return {"data": {"result": [{"metric": {}, "values": [[s, "5"], [e, "7"]]}]}}
+        netstat_service.prometheus_query_range = fake
+        try:
+            h = c.get("/api/netstat/history?web=ns-win&key=tcp/in/1433&range=6h").json
+            self.assertEqual((h["conn"][-1][1], h["queue_supported"], h["queue"]), (7.0, False, []))
+            self.assertIn('cm_web="ns-win",dir="in",port="1433"', calls[0])
+            self.assertEqual(h["end"] - h["start"], 6 * 3600)
+            self.assertEqual(c.get("/api/netstat/history?web=ns-win&key=tcp/in/1433&start=100&end=50").status_code, 400)
+            self.assertEqual(c.get("/api/netstat/history?web=ns-win&key=bad").status_code, 400)
+            self.assertEqual(c.get("/api/netstat/history?web=nope&key=tcp/in/1").status_code, 404)
+        finally:
+            netstat_service.prometheus_query_range = saved
+        # SSE: ข้อความแรก = snapshot ของ dashboard
+        self.api.NS_STREAM_SECONDS = 0.5
+        r = c.get("/api/netstat/stream?every=1", buffered=False)
+        self.assertEqual(r.mimetype, "text/event-stream")
+        first = b""
+        for chunk in r.response:
+            first += chunk
+            if b"event: snapshot" in first and first.endswith(b"\n\n"):
+                break
+        r.close()
+        self.assertIn(b"retry: 1000", first)
+        self.assertIn(b'"summary"', first)
+        # สิทธิ์: viewer ดูได้ แก้ไม่ได้ · operator แก้ได้
+        self.assertEqual(self.login("nsview", "password1"), 200)
+        self.assertEqual(c.get("/api/netstat/dashboard").status_code, 200)
+        self.assertEqual(c.put("/api/netstat/hosts/ns-win", json=body).status_code, 403)
+        self.assertEqual(self.login("nsop", "password1"), 200)
+        self.assertEqual(c.put("/api/netstat/hosts/ns-win", json=dict(body, enabled=False)).status_code, 200)
+        c.post("/api/logout")
+        self.assertEqual(c.get("/api/netstat/dashboard").status_code, 401)
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
+        self.assertIn("netstat.update", acts)
+        for f in (netstat_service.LIVE_FILE, netstat_service.ALERTS_FILE):
+            os.remove(f)
+        c.delete("/api/targets/ns-win"); c.delete("/api/targets/ns-lx")
+
     def test_password_hash(self):
         import users_service as u
         h = u.hash_password("secret-pass")

@@ -64,11 +64,13 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     POST /api/targets/host-key    สแกน SSH host key ของ host:port (ยังไม่เก็บ)
 """
 
+import json
 import re
+import threading
 import time
 
 from ruamel.yaml import YAMLError
-from flask import Flask, g, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, session, stream_with_context
 
 import settings
 from auth import AUTH_USERNAME, check_credentials, session_role
@@ -85,6 +87,7 @@ import notify_service
 import alert_rules_service
 import host_details
 import netsec_service
+import netstat_service
 import ui_order_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
@@ -178,6 +181,8 @@ def _required_role(method, path):
     """role ขั้นต่ำของแต่ละเส้นทาง (ไม่ระบุ = viewer)"""
     if _PAUSE_PATH.match(path) or _NETSEC_REFRESH.match(path):
         return "operator"
+    if path.startswith("/api/netstat/") and method != "GET":
+        return "operator"                          # Netstat Monitor: เปิด / ปิด Monitoring, เลือกพอร์ต, เกณฑ์
     if path == "/api/ui-order" and method != "GET":
         return "operator"                          # ลากจัดลำดับเครื่อง / กลุ่ม
     if _SERVICES_PATH.match(path):
@@ -223,6 +228,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
     ("PUT", re.compile(r"^/api/ui-order$"), "ui.order", ()),
+    ("PUT", re.compile(r"^/api/netstat/hosts/(?P<t>[^/]+)$"), "netstat.update", ("enabled", "interval")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/group$"), "target.group", ("group",)),
     ("POST", re.compile(r"^/api/groups/move$"), "group.move", ("from", "parent")),
     ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
@@ -270,7 +276,7 @@ def no_stale_frontend(response):
     กันอาการ "อัปเดตแล้วแต่หน้าเว็บยังเป็นแบบเก่า" ที่ต้องกด Ctrl+F5"""
     if request.method == "GET" and not request.path.startswith("/api/") and "Cache-Control" not in response.headers:
         p = request.path
-        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/login") or p.endswith((".js", ".css", ".html")):
+        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/netstat", "/login") or p.endswith((".js", ".css", ".html")):
             response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -587,6 +593,102 @@ def groups_move():
 def network_page():
     """หน้า Network & Security (frontend/network.html)"""
     return send_from_directory(STATIC_DIR, "network.html")
+
+
+# ============================================================
+# Netstat Monitor (Apps & Web > Netstat Monitor) - เครื่อง Windows
+#   ค่าสดจาก puller (data/state/netstat/live.json) ส่งต่อแบบ Server-Sent Events
+# ============================================================
+
+@app.get("/netstat")
+def netstat_page():
+    return send_from_directory(STATIC_DIR, "netstat.html")
+
+
+@app.get("/api/netstat/hosts")
+def netstat_hosts():
+    return jsonify(netstat_service.host_rows())
+
+
+@app.get("/api/netstat/hosts/<web>")
+def netstat_host(web):
+    d = netstat_service.host_detail(web)
+    return (jsonify(d), 200) if d is not None else (jsonify({"error": "not found"}), 404)
+
+
+@app.put("/api/netstat/hosts/<web>")
+def netstat_host_save(web):
+    """body: {enabled, interval: 1|2|5, ports: [{port, proto, dir, enabled, queue: {warning, critical}, conn: {...}}]}"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        out = netstat_service.save_host(web, body)
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if out is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(out)
+
+
+def _netstat_filters():
+    return {k: request.args.get(k, "") for k in ("host", "port", "proto", "status")}
+
+
+@app.get("/api/netstat/dashboard")
+def netstat_dashboard():
+    return jsonify(netstat_service.dashboard(_netstat_filters()))
+
+
+@app.get("/api/netstat/history")
+def netstat_history():
+    try:
+        d = netstat_service.history(request.args.get("web", ""), request.args.get("key", ""), request.args.get("range", "1h"),
+                                    request.args.get("start"), request.args.get("end"))
+    except ValidationError as e:
+        return _bad_request(e)
+    return (jsonify(d), 200) if d is not None else (jsonify({"error": "not found"}), 404)
+
+
+@app.get("/api/netstat/alerts")
+def netstat_alerts():
+    return jsonify({"alerts": netstat_service.alerts(request.args.get("status", "active"), request.args.get("web") or None)})
+
+
+_NS_STREAMS = threading.BoundedSemaphore(4)      # ต่อ worker: SSE ถือ thread ไว้ตลอดการเชื่อมต่อ
+NS_STREAM_SECONDS = 55                           # ตัดแล้วให้ browser ต่อใหม่เอง (EventSource) -> คืน thread เป็นระยะ
+
+
+@app.get("/api/netstat/stream")
+def netstat_stream():
+    """Server-Sent Events: ส่ง dashboard ทุก every วินาที (1 / 2 / 5 / 10) เมื่อมีค่าใหม่  เต็ม -> 503 (หน้าเว็บถอยไปใช้ polling)"""
+    try:
+        every = float(request.args.get("every", "2"))
+    except ValueError:
+        every = 2.0
+    every = every if every in (1, 2, 5, 10) else 2.0
+    if not _NS_STREAMS.acquire(blocking=False):
+        return jsonify({"error": "busy", "fallback": "poll"}), 503
+    filters = _netstat_filters()
+
+    def gen():
+        try:
+            yield f"retry: {int(every * 1000)}\n\n"
+            last, sent_at, until = None, 0.0, time.time() + NS_STREAM_SECONDS
+            while time.time() < until:
+                m = netstat_service.live_mtime()
+                now = time.time()
+                if m != last or now - sent_at >= 15:          # ค่าใหม่ หรือ heartbeat ทุก 15 วิ (ให้หน้าเว็บรู้ว่ายังต่ออยู่)
+                    last, sent_at = m, now
+                    yield "event: snapshot\ndata: " + json.dumps(netstat_service.dashboard(filters), ensure_ascii=False) + "\n\n"
+                time.sleep(every)
+        finally:
+            _NS_STREAMS.release()
+
+    return Response(stream_with_context(gen()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/netsec")

@@ -1016,5 +1016,170 @@ class TeamsNotify(unittest.TestCase):
         self.assertFalse(notify.settings({})["enabled"])
 
 
+# ----------------------------------------------------------------------------
+# Netstat Monitor (puller/netstat.py)
+# ----------------------------------------------------------------------------
+import netstat  # noqa: E402
+
+NS_TEXT = """# TYPE cm_netstat_info gauge
+cm_netstat_info{interval="1",os="Windows Server 2019 (10.0.17763.0)",version="1"} 1
+cm_netstat_heartbeat_seconds __HB__
+cm_netstat_listen{proto="tcp",port="1433",addr="0.0.0.0",pid="1888",proc="sqlservr"} 1
+cm_netstat_listen{proto="tcp",port="443",addr="0.0.0.0",pid="4",proc="System (HTTP.sys)"} 1
+cm_netstat_listen{proto="tcp",port="3389",addr="0.0.0.0",pid="1100",proc="svchost"} 1
+cm_netstat_listen{proto="udp",port="53",addr="0.0.0.0",pid="900",proc="dns"} 1
+cm_netstat_conn{proto="tcp",dir="in",port="1433",state="established"} __EST__
+cm_netstat_conn{proto="tcp",dir="in",port="1433",state="time_wait"} 5
+cm_netstat_conn{proto="tcp",dir="in",port="443",state="syn_received"} 2
+cm_netstat_conn{proto="tcp",dir="out",port="5432",state="established"} 3
+cm_netstat_conn_total{proto="tcp",dir="in",port="1433"} __TOT__
+cm_netstat_conn_total{proto="tcp",dir="in",port="443"} 2
+cm_netstat_conn_total{proto="tcp",dir="in",port="3389"} 0
+cm_netstat_conn_total{proto="tcp",dir="out",port="5432"} 3
+cm_netstat_conn_peak{proto="tcp",dir="in",port="1433"} __TOT__
+cm_netstat_peer{dir="in",port="1433",remote="10.0.0.7"} 9
+cm_netstat_proc{dir="out",port="5432",pid="777",proc="java"} 1
+cm_netstat_queue_supported{kind="recv"} 0
+cm_netstat_queue_supported{kind="send"} 0
+cm_netstat_queue_supported{kind="accept"} 1
+cm_netstat_accept_queue{proto="tcp",port="443",source="http.sys"} __Q__
+cm_netstat_accept_queue_peak{proto="tcp",port="443",source="http.sys"} __Q__
+cm_netstat_accept_queue_limit{proto="tcp",port="443",source="http.sys"} 1000
+cm_netstat_collect_ms 12
+""".replace("__HB__", "__HB__")
+
+
+def ns_text(hb=1000.0, est=40, q=3):
+    return (NS_TEXT.replace("__HB__", str(hb)).replace("__EST__", str(est)).replace("__TOT__", str(est + 5))
+            .replace("__Q__", str(q)))
+
+
+NS_TARGET = {"name": "db-01", "type": "agent", "host": "10.0.0.5", "agent": {"mode": "pull", "exporter": "10.0.0.5:9182"},
+             "netstat": {"enabled": True, "interval": 1, "ports": [
+                 {"port": 1433, "proto": "tcp", "queue": {"warning": 50, "critical": 80}, "conn": {"warning": 200, "critical": 300}},
+                 {"port": 443, "proto": "tcp", "queue": {"warning": 100, "critical": 150}, "conn": {"warning": 500, "critical": 800}},
+                 {"port": 8080, "proto": "tcp", "conn": {"warning": 10}},
+                 {"port": 5432, "proto": "tcp", "dir": "out", "enabled": False}]}}
+
+
+class NetstatParse(unittest.TestCase):
+    def test_snapshot(self):
+        snap = netstat.snapshot(netstat.parse_text(ns_text()))
+        self.assertEqual((snap["heartbeat"], snap["interval"]), (1000.0, 1))
+        self.assertEqual(snap["support"], {"recv": False, "send": False, "accept": True})
+        p = snap["ports"]["tcp/in/1433"]
+        self.assertEqual((p["listening"], p["proc"], p["pid"], p["total"]), (True, "sqlservr", 1888, 45))
+        self.assertEqual((p["states"]["established"], p["states"]["time_wait"], p["states"]["close_wait"]), (40, 5, 0))
+        self.assertIsNone(p["accept_queue"])                                   # ไม่ใช่ HTTP.sys -> ไม่มีคิว (ไม่ใช่ 0)
+        self.assertEqual(snap["ports"]["tcp/in/443"]["accept_queue"], 3)
+        self.assertEqual(snap["ports"]["tcp/in/3389"]["total"], 0)               # LISTEN ไม่มีใครต่อ = 0 จริง
+        self.assertEqual(snap["ports"]["tcp/out/5432"]["proc"], "java")
+        self.assertTrue(snap["ports"]["udp/in/53"]["listening"])
+        self.assertIsNone(snap["ports"]["udp/in/53"]["total"])                   # UDP ไม่มีจำนวนการเชื่อมต่อ
+        self.assertIsNone(netstat.snapshot(netstat.parse_text("windows_cpu_time_total 1\n")))
+        self.assertTrue(netstat.exporter_url("10.0.0.5:9182").endswith("/metrics?collect%5B%5D=textfile"))
+
+    def test_config_and_levels(self):
+        hc = netstat.host_config(NS_TARGET)
+        self.assertEqual([p["key"] for p in hc["ports"]], ["tcp/in/1433", "tcp/in/443", "tcp/in/8080", "tcp/out/5432"])
+        self.assertFalse(hc["ports"][3]["enabled"])
+        th = {"warning": 50, "critical": 80}
+        self.assertEqual([netstat.level_of(v, th) for v in (49, 50, 79, 80, None)], [None, "warning", "warning", "critical", None])
+
+    def test_evaluate(self):
+        hc = netstat.host_config(NS_TARGET)
+        snap = netstat.snapshot(netstat.parse_text(ns_text(est=210, q=120)))
+        rows, conds = netstat.evaluate("db-01", "10.0.0.5", hc, snap, True, False, 0, {})
+        r = {x["key"]: x for x in rows}
+        self.assertEqual((r["tcp/in/1433"]["conn"], r["tcp/in/1433"]["conn_level"], r["tcp/in/1433"]["status"]), (215, "warning", "warning"))
+        self.assertIsNone(r["tcp/in/1433"]["queue"])                            # Unsupported -> None ไม่ใช่ 0
+        self.assertIn("Unsupported", r["tcp/in/1433"]["queue_note"])
+        self.assertEqual((r["tcp/in/443"]["queue"], r["tcp/in/443"]["util"], r["tcp/in/443"]["queue_level"]), (120, 12.0, "warning"))
+        self.assertEqual((r["tcp/in/8080"]["listening"], r["tcp/in/8080"]["status"]), (False, "critical"))
+        c = {x["akey"]: x for x in conds}
+        self.assertEqual(c["db-01::tcp/in/8080::listen"]["level"], "critical")
+        self.assertIsNone(c["db-01::tcp/in/1433::queue"]["level"])
+        self.assertNotIn("db-01::tcp/out/5432::conn", c)                       # ปิดกฎไว้ -> ไม่แจ้ง
+        # เครื่องไม่ตอบ: ค่าเป็น None ทั้งหมด + host_offline
+        rows, conds = netstat.evaluate("db-01", "10.0.0.5", hc, snap, False, False, 0, {})
+        self.assertTrue(all(x["conn"] is None and x["status"] == "offline" for x in rows))
+        self.assertEqual({x["akey"]: x["level"] for x in conds}, {"db-01::host": "critical", "db-01::stale": None})
+
+    def test_alert_engine(self):
+        eng = netstat.AlertEngine()
+        cond = lambda lv, v: [{"akey": "w::tcp/in/1433::conn", "kind": "conn", "web": "w", "ip": "1.1.1.1", "port": 1433,
+                               "proto": "tcp", "dir": "in", "process": "sqlservr", "level": lv, "value": v,
+                               "threshold": 200 if lv == "warning" else 300, "message": "x"}]
+        ev = []
+        for i in range(2):
+            ev += eng.step(cond("warning", 210), i)[0]
+        self.assertEqual(ev, [])                                                # ยังไม่ครบ 3 ครั้ง
+        ev, ch = eng.step(cond("warning", 220), 2)
+        self.assertEqual([e[0] for e in ev], ["open"])
+        for i in range(3, 10):                                                  # ยังเกินอยู่ทุกวินาที -> ไม่สร้างซ้ำ
+            self.assertEqual(eng.step(cond("warning", 230 + i), i)[0], [])
+        a = eng.active["w::tcp/in/1433::conn"]
+        self.assertEqual((a["first"], a["last"], a["peak"]), (2, 9, 239))
+        for i in range(10, 13):
+            ev = eng.step(cond("critical", 350), i)[0]
+        self.assertEqual([(e[0], e[1]["level"]) for e in ev], [("escalate", "critical")])
+        self.assertEqual(eng.step(cond(None, 10), 13)[0], [])
+        self.assertEqual(eng.step(cond(None, 10), 14)[0], [])
+        ev = eng.step(cond(None, 10), 15)[0]
+        self.assertEqual([e[0] for e in ev], ["recovered"])
+        self.assertEqual((eng.history[-1]["duration"], eng.history[-1]["status"]), (13, "recovered"))
+        self.assertEqual(eng.active, {})
+        # เลิกเลือกพอร์ต -> ปิดเงียบ ๆ ไม่มี event
+        for i in range(3):
+            eng.step(cond("warning", 210), 20 + i)
+        ev, ch = eng.step([], 30, scope={"w"})
+        self.assertEqual((ev, ch, eng.history[-1]["status"]), ([], True, "removed"))
+        sys_ev = netstat.to_system_events([("open", dict(a, level="critical", threshold=300))], {"w": "DB"}, {"w": 5})
+        self.assertEqual((sys_ev[0]["to"], sys_ev[0]["level"], sys_ev[0]["priority"], sys_ev[0]["group"]), ("error", "error", 5, "DB"))
+        self.assertIn("เกณฑ์ 300", sys_ev[0]["message"])
+
+
+class NetstatMonitorLoop(unittest.TestCase):
+    def test_tick(self):
+        import tempfile as _tf
+        d = _tf.mkdtemp()
+        saved = (netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config)
+        netstat.LIVE_FILE, netstat.ALERTS_FILE = os.path.join(d, "live.json"), os.path.join(d, "alerts.json")
+        state = {"hb": 1000.0, "fail": False}
+        emitted = []
+
+        def fetch(exporter):
+            if state["fail"]:
+                raise OSError("timed out")
+            return netstat.parse_text(ns_text(hb=state["hb"]))
+        netstat.load_config = lambda: {"targets": [NS_TARGET, {"name": "lx", "host": "1.1.1.1"}]}
+        try:
+            m = netstat.Monitor(fetch_pull=fetch, fetch_push=lambda w: [], emit=lambda ev, cfg: emitted.extend(ev))
+            t = 100.0
+            for i in range(8):
+                state["hb"] += 1
+                m.tick(t + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
+            live = json.load(open(netstat.LIVE_FILE))
+            h = live["hosts"]["db-01"]
+            self.assertEqual(list(live["hosts"]), ["db-01"])                       # เฉพาะเครื่อง Windows
+            self.assertTrue(h["online"] and not h["stale"] and h["has_data"])
+            self.assertEqual(h["os"], "Windows Server 2019 (10.0.17763.0)")
+            self.assertEqual([e["sensor"] for e in emitted], ["Netstat :8080/tcp Not listening"])
+            # heartbeat ไม่เปลี่ยน > 10 วิ -> agent หยุดส่ง
+            for i in range(8, 24):
+                m.tick(t + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
+            self.assertIn("Netstat Agent stopped", [e["sensor"] for e in emitted])
+            # ติดต่อไม่ได้ -> Host offline
+            state["fail"] = True
+            for i in range(24, 30):
+                m.tick(t + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
+            self.assertIn("Netstat Host offline", [e["sensor"] for e in emitted])
+            self.assertFalse(json.load(open(netstat.LIVE_FILE))["hosts"]["db-01"]["online"])
+            alerts = json.load(open(netstat.ALERTS_FILE))
+            self.assertIn("db-01::host", [a["akey"] for a in alerts["active"]])
+        finally:
+            netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config = saved
+
+
 if __name__ == "__main__":
     unittest.main()

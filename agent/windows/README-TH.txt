@@ -41,6 +41,10 @@
 ถอนการติดตั้ง
   powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge] [-KeepExporter]
 
+Netstat Monitor (Apps & Web > Netstat Monitor บน central)
+  scheduled task CentralMonitorNetstat (cm-netstat.ps1) process เดียวรันค้าง เก็บ TCP / UDP / คิว ทุก 1 วินาที
+  เปลี่ยนเป็น 2 หรือ 5 วินาที: ติดตั้งซ้ำโดยเพิ่ม -NetstatInterval 2  (ใช้ได้ทั้ง push และ pull)
+
 
 โหมด pull (เครื่องนี้ต่อไปหา central ไม่ได้ แต่ central ต่อเข้ามาได้) - metrics + log (ERROR / WARN)
   log: scheduled task CentralMonitorLogs (cm-logs.ps1) ทุก 1 นาที เก็บไว้บนเครื่อง ~3 ชม. central ดึงไปทาง :9182 ทุกรอบ log

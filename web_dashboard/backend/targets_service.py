@@ -293,6 +293,34 @@ def clean_sensor_settings(value, errors, field="alert.sensors"):
 SENSOR_KEY_RE = re.compile(r"^[A-Za-z0-9_.:$@ /\\()&+-]{1,120}\*?$")
 
 
+def set_netstat(name, cfg):
+    """Netstat Monitor ของเครื่อง (targets[].netstat) cfg ผ่าน netstat_service.clean_host แล้ว  ไม่มีเครื่อง -> None
+    ปิด Monitoring และไม่มีพอร์ต + interval ปริยาย -> ลบ key ทิ้ง"""
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        node = _find_target(doc, name)
+        if node is None:
+            return None
+        if not cfg.get("enabled") and not cfg.get("ports") and int(cfg.get("interval") or 1) == 1:
+            _set_or_drop(node, "netstat", None)
+        else:
+            m = CommentedMap()
+            m["enabled"] = bool(cfg.get("enabled"))
+            m["interval"] = int(cfg.get("interval") or 1)
+            ports = CommentedSeq()
+            for p in cfg.get("ports") or []:
+                item = CommentedMap()
+                for k, v in p.items():
+                    item[k] = _flow(v) if isinstance(v, dict) else v
+                item.fa.set_flow_style()
+                ports.append(item)
+            m["ports"] = ports
+            node["netstat"] = m
+        _write_doc(y, doc)
+    return cfg
+
+
 def set_sensor_disabled(name, sensor, disabled):
     """ปิด / เปิด sensor เดียวของเครื่อง (targets[].alert.disabled_sensors)  ไม่มีเครื่อง -> None"""
     sensor = str(sensor or "").strip()

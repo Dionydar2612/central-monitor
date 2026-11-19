@@ -16,6 +16,14 @@ if (Get-ScheduledTask -TaskName "CentralMonitorNetSec" -ErrorAction SilentlyCont
     Unregister-ScheduledTask -TaskName "CentralMonitorNetSec" -Confirm:$false
     Write-Host "ลบ scheduled task CentralMonitorNetSec แล้ว"
 }
+# Netstat Monitor (process รันค้าง -> หยุดก่อนลบ task)
+if (Get-ScheduledTask -TaskName "CentralMonitorNetstat" -ErrorAction SilentlyContinue) {
+    Stop-ScheduledTask -TaskName "CentralMonitorNetstat" -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "CentralMonitorNetstat" -Confirm:$false
+    Write-Host "ลบ scheduled task CentralMonitorNetstat แล้ว"
+}
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*cm-netstat.ps1*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 # log ของโหมด pull
 if (Get-ScheduledTask -TaskName "CentralMonitorLogs" -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName "CentralMonitorLogs" -Confirm:$false

@@ -1,3 +1,11 @@
+# เพิ่มเติม (19 พ.ย. 2026): Netstat Monitor (Windows Server)
+- Apps & Web มีเมนูย่อย **Applications Monitor / Web Monitor / Netstat Monitor** · หน้าใหม่ `/netstat` (Dashboard real-time, Hosts & Ports, Alerts, History)
+- agent: `cm-netstat.ps1` process เดียวรันค้าง เก็บทุก 1 / 2 / 5 วิ (`-NetstatInterval`) · scheduled task `CentralMonitorNetstat` · โหมด push ส่ง cm_netstat_* ทุก 5 วิ
+- puller: `netstat.py` อ่านสด + ตัวแจ้งเตือน (กันซ้ำ, Recovery) · backend: `netstat_service.py` + `/api/netstat/*` + SSE · central-api threads 4 -> 8
+- Recv-Q / Send-Q บน Windows = Unsupported · Listening Queue อ่านได้เฉพาะพอร์ตของ IIS / HTTP.sys · รายละเอียด `docs/NETSTAT-TH.md`
+
+---
+
 # เพิ่มเติม (19 พ.ย. 2026): Acknowledge = รับทราบ ไม่ซ่อน · เลือกหลายรายการ
 - เอาเมนู "Ack · ซ่อน…" (ซ่อนตามเวลา) ออก · ตาราง Logs ทั้งแบบรวมกลุ่มและไม่รวม มีช่องติ๊กเลือกหลายแถว -> **Acknowledge selected** / **Unacknowledge**
 - log ที่ ack แล้วยังแสดงในตาราง (ป้าย ACK สีจาง) ไม่ต้องติ๊ก Show acknowledged อีก (เอาช่องนี้ออก) · ไม่นับเป็นปัญหาใหม่ (New Log Entries / Problem logs / จุดบนกราฟ)

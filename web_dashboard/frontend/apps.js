@@ -157,8 +157,11 @@ function closeDetail() {
     try { history.replaceState(null, "", "/apps"); } catch (e) { /* ignore */ }
 }
 
+/* เมนูย่อย Apps & Web: ?view=apps = Applications Monitor (โปรแกรม / service / พอร์ต / docker) · ?view=web = Web Monitor · ไม่ระบุ = ทั้งหมด */
+const VIEW = new URLSearchParams(location.search).get("view") || "";
+function inView(x) { return VIEW === "web" ? x.type === "web" : VIEW === "apps" ? x.type !== "web" : true; }
 function render() {
-    const items = A.items;
+    const items = A.items.filter(inView);
     const bad = items.filter(x => BAD.includes(x.status) || WARN.includes(x.status));
     const hero = $("apHero");
     const okN = items.filter(x => x.status === "ok").length, waitN = items.length - okN - bad.length;
@@ -345,6 +348,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         $("apAddBtn").hidden = A.role !== "admin";
     } catch (e) { return; }
     $("logoutButton").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.href = "/login"; };
+    document.querySelectorAll("#apNav a").forEach(a => { if (VIEW && a.getAttribute("href").endsWith("view=" + VIEW)) a.setAttribute("aria-current", "page"); });
+    document.querySelectorAll("#apBar [data-f]").forEach(b => {
+        const f = b.dataset.f;
+        if ((VIEW === "web" && !["all", "problem", "web"].includes(f)) || (VIEW === "apps" && f === "web")) b.hidden = true;
+    });
     $("apBar").addEventListener("click", e => {
         const b = e.target.closest("[data-f]"); if (!b) return;
         A.filter = b.dataset.f;
