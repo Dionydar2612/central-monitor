@@ -30,7 +30,10 @@
                 + `<input class="tcL" value="${esc(t.labels[f] || "")}" placeholder="${esc(d.fields[f])}" ${on ? "" : "disabled"}>`
                 + `<button type="button" class="st-btn sm" data-mv="-1" ${on ? "" : "disabled"}>↑</button><button type="button" class="st-btn sm" data-mv="1" ${on ? "" : "disabled"}>↓</button></div>`;
         }).join("");
-        $("tcVars").textContent = d.vars.map(v => `{${v}}`).join("  ");
+        const mo = (d.mute_options || {})[C.cat] || {};
+        $("tcMuteF").hidden = !Object.keys(mo).length;
+        $("tcMute").innerHTML = Object.entries(mo).map(([k, v]) => `<label class="st-check"><input type="checkbox" value="${k}" ${(t.mute || []).includes(k) ? "checked" : ""}> ${esc(v)}</label>`).join("");
+                $("tcVars").textContent = d.vars.map(v => `{${v}}`).join("  ");
         preview();
     }
     function preview() {
@@ -50,6 +53,7 @@
         const t = cur();
         t.title = $("tcTitle").value; t.note = $("tcNote").value;
         t.fields = [...$("tcFields").querySelectorAll(".tcF")].filter(r => r.querySelector("input[type=checkbox]").checked).map(r => r.dataset.f);
+        t.mute = [...$("tcMute").querySelectorAll("input:checked")].map(x => x.value);
         t.labels = {};
         $("tcFields").querySelectorAll(".tcF").forEach(r => { const v = r.querySelector(".tcL").value.trim(); if (v) t.labels[r.dataset.f] = v; });
     }
@@ -59,6 +63,7 @@
     }
     function bind() {
         $("tcCat").onchange = () => { readForm(); C.cat = $("tcCat").value; draw(); };
+        $("tcMute").onchange = () => readForm();
         $("tcTitle").oninput = $("tcNote").oninput = () => { readForm(); preview(); };
         $("tcFields").oninput = $("tcFields").onchange = e => { readForm(); if (e.target.type === "checkbox") draw(); else preview(); };
         $("tcFields").onclick = e => {

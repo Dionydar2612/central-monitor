@@ -141,10 +141,14 @@ class Backend(unittest.TestCase):
                                                                          "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}"}}})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json["cards"]["queue"], {"title": "{machine} {port}", "fields": ["device", "port"],
-                                                    "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}"})
+                                                    "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}", "mute": []})
         self.assertEqual(r.json["custom"], ["queue"])
         self.assertIn("cards:", open(os.path.join(self.tmp, "puller.yaml"), encoding="utf-8").read())
         self.assertEqual(c.put("/api/notify-settings/cards", json={"cards": {"zzz": {}}}).status_code, 400)
+        r = c.put("/api/notify-settings/cards", json={"cards": {"netstat": {"title": "", "fields": ["device"], "mute": ["agent_stale", "bad"]}}})
+        self.assertEqual(r.json["cards"]["netstat"]["mute"], ["agent_stale"])
+        self.assertIn("agent_stale", r.json["mute_options"]["netstat"])
+        c.put("/api/notify-settings/cards", json={"reset": ["netstat"]})
         self.assertEqual(c.put("/api/notify-settings/cards", json={"reset": ["queue"]}).json["custom"], [])
         self.assertEqual(c.post("/api/notify-settings/cards/test", json={"cat": "queue"}).status_code, 400)   # ยังไม่มี URL
         import card_templates

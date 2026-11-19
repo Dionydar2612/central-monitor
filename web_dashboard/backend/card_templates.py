@@ -36,6 +36,11 @@ DEFAULTS = {
     "software": {"title": "{prefix}: {machine} [Software] {count} change(s)", "fields": ["device", "changes", "time"]},
 }
 
+# เรื่องที่เลือก "ไม่ต้องแจ้ง" ได้ (ยังเก็บใน Alerts / History แต่ไม่ส่ง Teams และไม่เด้งป๊อปอัป)
+MUTE = {"netstat": {"agent_stale": "Agent stopped (agent หยุดส่งข้อมูล)", "host_offline": "Host offline (เครื่องไม่ตอบ)",
+                    "not_listening": "Port ไม่ LISTEN", "queue_spike": "Queue spike (คิวพุ่ง)",
+                    "queue": "Queue เกินเกณฑ์", "conn": "Connections เกินเกณฑ์"}}
+
 # ตัวแปรที่ใช้ในหัวเรื่อง / ข้อความท้ายการ์ดได้
 VARS = ("prefix", "machine", "host", "group", "sensor", "level", "status", "value", "threshold", "port", "output",
         "message", "url", "duration", "time", "count", "icon")
@@ -60,7 +65,9 @@ def template(cat, cards=None):
     fields = [f for f in c.get("fields") or [] if f in FIELDS] if isinstance(c.get("fields"), list) else list(d["fields"])
     labels = {k: str(v) for k, v in (c.get("labels") or {}).items() if k in FIELDS and str(v).strip()} \
         if isinstance(c.get("labels"), dict) else {}
-    return {"title": str(c.get("title") or d["title"]), "fields": fields, "labels": labels, "note": str(c.get("note") or "")}
+    mute = [m for m in c.get("mute") or [] if m in MUTE.get(cat, {})] if isinstance(c.get("mute"), list) else []
+    return {"title": str(c.get("title") or d["title"]), "fields": fields, "labels": labels, "note": str(c.get("note") or ""),
+            "mute": mute}
 
 
 def clean(cards):
@@ -83,7 +90,8 @@ def clean(cards):
         labels = {k: str(v).strip()[:MAX_LABEL] for k, v in (c.get("labels") or {}).items()
                   if k in FIELDS and str(v).strip() and str(v).strip() != FIELDS[k]} if isinstance(c.get("labels"), dict) else {}
         out[cat] = {"title": title, "fields": list(dict.fromkeys(fields)), "labels": labels,
-                    "note": str(c.get("note") or "").strip()[:MAX_NOTE]}
+                    "note": str(c.get("note") or "").strip()[:MAX_NOTE],
+                    "mute": [m for m in MUTE.get(cat, {}) if m in (c.get("mute") or [])] if isinstance(c.get("mute"), list) else []}
     return out, errors
 
 

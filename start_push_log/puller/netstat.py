@@ -34,6 +34,7 @@ netstat.py - Netstat Monitor (Windows Server): TCP / UDP / คิว ต่อ�
     ค่าที่อ่านไม่ได้ = None (หน้าเว็บแสดง Unavailable / Unsupported) ไม่ใช่ 0 และไม่แจ้งเตือน
 """
 
+import card_templates
 import json
 import os
 import re
@@ -724,6 +725,8 @@ class Monitor:
         if changed:
             _write(ALERTS_FILE, self.engine.dump())
             self.dirty = True
+        mute = set(card_templates.template("netstat", ((cfg_all.get("notify") or {}).get("teams") or {}).get("cards"))["mute"])
+        events = [ev for ev in events if ev[1].get("kind") not in mute]   # เรื่องที่ตั้งไม่แจ้ง: เก็บใน Alerts แต่ไม่ส่ง Teams / ป๊อปอัป
         if events and self.emit:
             groups = {w: h.get("group", "") for w, h in self.hosts.items()}
             prios = {w: h.get("priority", 3) for w, h in self.hosts.items()}

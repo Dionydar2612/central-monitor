@@ -136,7 +136,7 @@ def get_cards():
     t = _teams(targets_service._load_doc(targets_service._yaml()))
     cards = t.get("cards") if isinstance(t.get("cards"), dict) else {}
     return {"categories": card_templates.CATEGORIES, "fields": card_templates.FIELDS, "vars": list(card_templates.VARS),
-            "defaults": card_templates.DEFAULTS, "samples": card_templates.SAMPLE,
+            "defaults": card_templates.DEFAULTS, "samples": card_templates.SAMPLE, "mute_options": card_templates.MUTE,
             "cards": {c: card_templates.template(c, cards) for c in card_templates.CATEGORIES},
             "custom": [c for c in card_templates.CATEGORIES if c in cards]}
 
