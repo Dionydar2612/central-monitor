@@ -157,7 +157,8 @@ def snapshot(samples):
     if not any(n == "cm_netstat_heartbeat_seconds" for n, _, _ in samples):
         return None
     snap = {"heartbeat": None, "interval": None, "os": "", "version": "", "collect_ms": None,
-            "support": {"recv": False, "send": False, "accept": False}, "ports": {}, "apps": {}, "app_events": []}
+            "support": {"recv": False, "send": False, "accept": False}, "ports": {}, "apps": {}, "app_events": [],
+            "app_sources": [], "app_every": None}
     ports = snap["ports"]
     apps = snap["apps"]
 
@@ -226,6 +227,12 @@ def snapshot(samples):
         elif name in ("cm_netstat_app_state", "cm_netstat_app_size", "cm_netstat_app_critical", "cm_netstat_app_port",
                       "cm_netstat_app_peak", "cm_netstat_app_since"):
             A(lb)[name[len("cm_netstat_app_"):]] = int(v)
+        elif name == "cm_netstat_app_source":
+            snap["app_sources"].append({"path": lb.get("path", ""), "files": int(lb.get("files") or 0) if str(lb.get("files") or "").isdigit() else 0,
+                                        "recent": int(lb.get("recent") or 0) if str(lb.get("recent") or "").isdigit() else 0,
+                                        "newest": lb.get("newest", ""), "lines": int(v)})
+        elif name == "cm_netstat_app_every_seconds":
+            snap["app_every"] = int(v)
         elif name == "cm_netstat_app_count":
             A(lb)["counts"][lb.get("kind", "?")] = int(v)
         elif name == "cm_netstat_app_ep":
@@ -332,7 +339,14 @@ def port_row(cfg_port, snap):
                established=p["states"].get("established") if p["total"] is not None else None,
                syn_backlog=p["states"].get("syn_received") if p["total"] is not None else None,
                peers=p["peers"][:3], addr=p["addr"])
-    if p["accept_queue"] is not None:
+    app = next((a for a in ((snap or {}).get("apps") or {}).values() if a.get("port") == cfg_port["port"]), None)
+    if p["accept_queue"] is None and app is not None and app.get("size") is not None:
+        # คิวของโปรแกรมจาก log (เช่น THMux Output[n] ที่ port change มาที่พอร์ตนี้) ใช้เป็น Listening Queue ของพอร์ต
+        row.update(queue=app["size"], accept_q=app["size"], accept_limit=app.get("critical"), queue_kind=f"{app['log']} {app['ch']}",
+                   app_state=app.get("state"))
+        if app.get("critical"):
+            row["util"] = round(app["size"] * 100.0 / app["critical"], 1)
+    elif p["accept_queue"] is not None:
         row.update(accept_q=p["accept_queue"], accept_peak=p["accept_peak"], accept_limit=p["accept_limit"],
                    queue=p["accept_queue"], queue_kind=f"accept ({p['queue_source'] or 'listen'})")
         if p["accept_limit"]:
@@ -751,7 +765,8 @@ class Monitor:
                               agent_interval=snap.get("interval"), collect_ms=snap.get("collect_ms"),
                               support=snap.get("support"), ports=ports, has_data=bool(snap),
                               apps=sorted(snap.get("apps", {}).values(), key=lambda a: (a["log"], a["ch"])),
-                              app_events=(snap.get("app_events") or [])[:40])
+                              app_events=(snap.get("app_events") or [])[:40], app_sources=snap.get("app_sources") or [],
+                              app_every=snap.get("app_every"))
         _write(LIVE_FILE, {"updated": now, "hosts": hosts, "active": list(self.engine.active.values())})
         self.written_at, self.dirty = now, False
 

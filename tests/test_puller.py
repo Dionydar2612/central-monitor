@@ -1193,6 +1193,21 @@ cm_netstat_app_event{seq="4",log="THMux",ch="Output[2]",level="WARN",msg="queue 
         self.assertEqual(eng2.app_episode("w", "", a2, a2["episodes"][0], hc["apps"], 3000), ([], False))
         self.assertTrue(eng2.app_close_all("x", 1) is False)
 
+    def test_sources_and_port_queue(self):
+        """agent บอกว่าอ่านไฟล์ไหน (ทำไมยังว่าง) · Output ที่ port change มาที่พอร์ตที่ Monitor -> ใช้เป็น Listening Queue ของพอร์ตนั้น"""
+        text = self.TEXT + """cm_netstat_app_every_seconds 30
+cm_netstat_app_source{path="D:/THMux/*.txt",files="3",recent="1",newest="20261119.txt"} 37
+cm_netstat_listen{proto="tcp",port="37518",addr="0.0.0.0",pid="7988",proc="THMux"} 1
+cm_netstat_conn_total{proto="tcp",dir="in",port="37518"} 1
+"""
+        snap = netstat.snapshot(netstat.parse_text(text))
+        self.assertEqual(snap["app_every"], 30)
+        self.assertEqual(snap["app_sources"], [{"path": "D:/THMux/*.txt", "files": 3, "recent": 1, "newest": "20261119.txt", "lines": 37}])
+        cp = netstat.host_config({"netstat": {"enabled": True, "ports": [{"port": 37518, "queue": {"warning": 400, "critical": 1000}}]}})["ports"][0]
+        row = netstat.port_row(cp, snap)
+        self.assertEqual((row["queue"], row["accept_limit"], row["queue_kind"], row["util"]), (499, 500, "THMux Output[2]", 99.8))
+        self.assertEqual(netstat.level_of(row["queue"], cp["queue"]), "warning")
+
 
 class NetstatMonitorLoop(unittest.TestCase):
     def test_live_heartbeat_when_disabled(self):

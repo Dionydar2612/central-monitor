@@ -72,7 +72,9 @@ Queue เกิน Warning / Critical · Connections เกิน Warning / Crit
 
 ## Application Queue (คิวของโปรแกรมจาก log เช่น THMux)
 
-agent อ่านไฟล์ log ที่ตั้งไว้แล้วสำหรับเก็บ log (Settings > ไฟล์ log / `set-logs.bat`) เองทุกรอบ ไม่ต้องตั้ง path ซ้ำ
+agent อ่านไฟล์ log ที่ตั้งไว้แล้วสำหรับเก็บ log (Settings > ไฟล์ log / `set-logs.bat`) ทุก 30 วินาที ไม่ต้องตั้ง path ซ้ำ
+- Output ที่ `port change` มาที่พอร์ตที่เลือก Monitor -> size ของ Output นั้นเป็น Listening Queue ของพอร์ต (ใช้เกณฑ์ Queue ของพอร์ตได้)
+- ไม่มีค่าคิว -> แสดง 0 · ถ้ายังว่าง หน้า Dashboard บอกสาเหตุ (agent รุ่นเก่า / ยังไม่ตั้ง path / ไม่พบไฟล์ / ไม่พบบรรทัด Output[n]) และ check-netstat.bat แสดงไฟล์ที่อ่าน
 แยกตาม `Output[n]` จากบรรทัดรูปแบบ `yyyyMMdd HH:mm:ss| LEVEL|Output[n] ข้อความ`
 
 | บรรทัด | ความหมาย |

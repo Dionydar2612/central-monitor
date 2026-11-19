@@ -27,7 +27,9 @@ if errorlevel 1 (
 if not exist "%PROM%" (
     echo [FAIL] %PROM% not found - collector has not written any data yet
     set "FAIL=1"
-    goto :exporter
+    goto powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$t=Get-Content '%PROM%'; $s=@($t | Select-String '^cm_netstat_app_source'); if (-not ($t | Select-String '^cm_netstat_app_every_seconds')) { Write-Host '[WARN] Application Queue: agent is old - reinstall with the NEW zip from central' } elseif (-not $s) { Write-Host '[INFO] Application Queue: no log file set on this machine - run set-logs.bat' } else { foreach ($l in $s) { if ($l.Line -match 'path=.(.*?).,files=.(\d+).,recent=.(\d+).,newest=.(.*?).\} (\d+)') { Write-Host ('[INFO] Application Queue log ' + $matches[1] + ' : ' + $matches[2] + ' file(s), newest ' + $matches[4] + ', ' + $matches[5] + ' Output[n] lines read (every 30 s)') } } }"
+
+:exporter
 )
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "exit 7" >nul 2>&1
 if not "%errorlevel%"=="7" (

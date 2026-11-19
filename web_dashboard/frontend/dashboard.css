@@ -1779,3 +1779,6 @@ html[data-platforms=windows] .both-only,html[data-platforms=linux] .both-only{di
 .nxAL.ok{background:rgba(16,194,122,.08)}
 .nxW{width:90px!important}
 @media(max-width:720px){.nxAL{grid-template-columns:1fr 1fr}.nxAL .m{grid-column:1/-1}}
+.nxZero{color:var(--mut);cursor:help}
+.nxNotes{display:grid;gap:4px;margin-top:8px}.nxNoteRow{font-size:13px;padding:8px 10px;border-radius:8px;background:rgba(245,180,0,.1)}
+.nxNoteRow small{display:block;color:var(--mut);margin-top:2px;overflow-wrap:anywhere}

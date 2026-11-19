@@ -268,6 +268,24 @@ def _pass(row, f):
     return True
 
 
+def app_status(h, st):
+    """ทำไม Application Queue ของเครื่องยังว่าง: ok / offline / old-agent / no-path / no-file / old-file / no-lines"""
+    if st != "online":
+        return "offline" if st in ("offline", "stale") else "no-data" if st == "no-data" else "unknown"
+    if h.get("app_every") is None:
+        return "old-agent"                   # agent ยังไม่มีส่วนอ่าน log (ติดตั้งชุดเก่า)
+    src = h.get("app_sources") or []
+    if not src:
+        return "no-path"
+    if not any(x.get("files") for x in src):
+        return "no-file"
+    if not any(x.get("recent") for x in src):
+        return "old-file"
+    if not h.get("apps") and not any(x.get("lines") for x in src):
+        return "no-lines"
+    return "ok"
+
+
 def dashboard(filters=None):
     f = filters or {}
     now = time.time()
@@ -301,7 +319,7 @@ def dashboard(filters=None):
                 rows.append(row)
                 for s, v in (row.get("states") or {}).items():
                     states[s] = states.get(s, 0) + (v or 0)
-    apps, app_events = [], []
+    apps, app_events, app_hosts = [], [], []
     for web, t in tmap.items():
         h = hosts.get(web) or {}
         n = _ncfg(t)
@@ -310,6 +328,8 @@ def dashboard(filters=None):
         if f.get("host") and web != f["host"]:
             continue
         st = agent_status(h, upd, now)
+        app_hosts.append({"web": web, "status": app_status(h, st), "sources": h.get("app_sources") or [],
+                          "every": h.get("app_every"), "channels": len(h.get("apps") or [])})
         for a in h.get("apps") or []:
             row = dict(a, web=web, ip=t.get("host") or "", host_status=st, episodes=(a.get("episodes") or [])[-5:])
             if st != "online":                          # เครื่องไม่ตอบ -> ไม่รู้สถานะปัจจุบัน
@@ -330,7 +350,7 @@ def dashboard(filters=None):
                     "warning": sum(1 for a in active if a.get("level") == "warning"),
                     "critical": sum(1 for a in active if a.get("level") == "critical")},
         "rows": rows, "states": states, "top_queue": top_q, "top_conn": top_c, "alerts": recent,
-        "apps": apps, "app_events": app_events[:50],
+        "apps": apps, "app_events": app_events[:50], "app_hosts": app_hosts,
         "hosts": sorted(tmap), "active": active,
     }
 

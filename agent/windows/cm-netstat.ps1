@@ -131,6 +131,8 @@ function Peak($key, $value, $now) {
 # ---------------- คิวของโปรแกรมจาก log ----------------
 $Inv = [Globalization.CultureInfo]::InvariantCulture
 $AppFiles = @{}; $AppState = @{}; $AppSeq = 0; $AppAt = [datetime]::MinValue
+$AppEvery = 30                         # วินาที: อ่านไฟล์ log ของโปรแกรมทุกเท่านี้ (เวลาของแต่ละช่วงมาจาก log จึงไม่คลาดแม้อ่านห่าง)
+$AppSources = @{}                      # pattern -> @{ files; newest; lines }  ให้ central บอกได้ว่าทำไมยังไม่มีข้อมูล
 $AppEvents = New-Object System.Collections.Generic.List[object]
 $AppRx = [regex]'^(\d{8})\s+(\d{2}:\d{2}:\d{2})\|\s*([A-Za-z]+)\s*\|\s*([^\[|]+?)\[(\d+)\]\s*(.*)$'
 function Get-AppPatterns {
@@ -146,21 +148,29 @@ function Get-AppPatterns {
 }
 function Update-AppSources {
     $since = (Get-Date).AddDays(-2)
-    foreach ($pat in (Get-AppPatterns)) {
-        foreach ($f in @(Get-ChildItem -Path $pat -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $since } |
-                         Sort-Object LastWriteTime -Descending | Select-Object -First 2)) {
+    $pats = Get-AppPatterns
+    foreach ($k in @($AppSources.Keys)) { if ($pats -notcontains $k) { $AppSources.Remove($k) } }
+    foreach ($pat in $pats) {
+        $all = @(Get-ChildItem -Path $pat -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+        if (-not $AppSources.ContainsKey($pat)) { $AppSources[$pat] = @{ files = 0; newest = ""; lines = 0; recent = 0 } }
+        $AppSources[$pat].files = $all.Count
+        $AppSources[$pat].newest = if ($all.Count) { $all[0].Name } else { "" }
+        $recent = @($all | Where-Object { $_.LastWriteTime -gt $since } | Select-Object -First 2)
+        $AppSources[$pat].recent = $recent.Count
+        foreach ($f in $recent) {
             if ($AppFiles.ContainsKey($f.FullName)) { continue }
             $b = New-Object byte[] 2; $enc = [Text.Encoding]::UTF8; $skip = 0
             try { $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite'); $n = $fs.Read($b, 0, 2); $fs.Close()
                   if ($n -eq 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE) { $enc = [Text.Encoding]::Unicode; $skip = 2 } } catch { continue }
             $off = [math]::Max($skip, $f.Length - 524288); if ($enc -eq [Text.Encoding]::Unicode -and ($off % 2)) { $off++ }
-            $AppFiles[$f.FullName] = @{ off = [int64]$off; enc = $enc; log = (Split-Path (Split-Path $f.FullName -Parent) -Leaf) }
+            $AppFiles[$f.FullName] = @{ off = [int64]$off; enc = $enc; log = (Split-Path (Split-Path $f.FullName -Parent) -Leaf); pat = $pat }
         }
     }
     $script:AppAt = Get-Date
 }
-function App-Line($log, $line) {
+function App-Line($log, $line, $pat) {
     $m = $AppRx.Match($line); if (-not $m.Success) { return }
+    if ($pat -and $AppSources.ContainsKey($pat)) { $AppSources[$pat].lines++ }
     try { $ts = [int64]([DateTimeOffset][datetime]::ParseExact($m.Groups[1].Value + " " + $m.Groups[2].Value, "yyyyMMdd HH:mm:ss", $Inv)).ToUnixTimeSeconds() } catch { return }
     $lv = $m.Groups[3].Value.ToUpper(); $ch = $m.Groups[4].Value.Trim() + "[" + $m.Groups[5].Value + "]"; $msg = $m.Groups[6].Value.Trim()
     $k = "$log|$ch"
@@ -208,7 +218,7 @@ function Read-AppLogs {
             $cut = $text.LastIndexOf("`n"); if ($cut -lt 0) { continue }
             $text = $text.Substring(0, $cut + 1)
             $e.off += $e.enc.GetByteCount($text)
-            foreach ($line in ($text -split "`r?`n")) { if ($line) { App-Line $e.log $line } }
+            foreach ($line in ($text -split "`r?`n")) { if ($line) { App-Line $e.log $line $e.pat } }
         } catch { }
     }
 }
@@ -225,8 +235,7 @@ while ($true) {
     $now = [double]([DateTimeOffset]$nowDt).ToUnixTimeMilliseconds() / 1000
     if (($nowDt - $PidAt).TotalSeconds -ge 15) { Update-Pids }
     if (($nowDt - $HttpAt).TotalSeconds -ge 300) { Update-Http }
-    if (($nowDt - $AppAt).TotalSeconds -ge 30) { Update-AppSources }
-    Read-AppLogs
+    if (($nowDt - $AppAt).TotalSeconds -ge $AppEvery) { Update-AppSources; Read-AppLogs }
 
     $L = New-Object System.Collections.Generic.List[string]
     $listenAddr = @{}
@@ -346,6 +355,13 @@ while ($true) {
     }
 
     # คิวของโปรแกรมจาก log
+    $L.Add("# TYPE cm_netstat_app_source gauge")
+    foreach ($pat in $AppSources.Keys) {
+        $src = $AppSources[$pat]
+        $L.Add("cm_netstat_app_source{path=`"$(Esc $pat)`",files=`"$($src.files)`",recent=`"$($src.recent)`",newest=`"$(Esc $src.newest)`"} $($src.lines)")
+    }
+    $L.Add("# TYPE cm_netstat_app_every_seconds gauge")
+    $L.Add("cm_netstat_app_every_seconds $AppEvery")
     if ($AppState.Count) {
         foreach ($name in "state", "size", "critical", "port", "peak", "since") {
             $L.Add("# TYPE cm_netstat_app_$name gauge")

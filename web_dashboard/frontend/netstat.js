@@ -119,12 +119,15 @@ function fillHosts(list) {
     });
 }
 function tile(label, n, cls, sub) { return `<div class="ovtile ${cls}"><small>${esc(label)}</small><b>${n ?? "-"}</b>${sub ? `<em>${esc(sub)}</em>` : ""}</div>`; }
+/* ไม่มีค่าคิว -> แสดง 0 (สีจาง ชี้ดูเหตุผล) */
+const zero = why => `<span class="nxZero" title="${esc(why || "")}">0</span>`;
 function queueCell(r, k) {
-    if (k === "recv") return na("Unsupported", r.recv_q_note || "Windows ไม่มี Recv-Q ต่อ socket");
-    if (k === "send") return na("Unsupported", r.send_q_note || "Windows ไม่มี Send-Q ต่อ socket");
-    if (r.queue === null || r.queue === undefined) return na(r.queue_note && r.queue_note.startsWith("Unsupported") ? "Unsupported" : "Unavailable", r.queue_note);
+    if (r.host_status && r.host_status !== "online") return na("Offline", "เครื่องไม่ตอบ");
+    if (k === "recv") return zero("Windows ไม่มี Recv-Q ต่อ socket");
+    if (k === "send") return zero("Windows ไม่มี Send-Q ต่อ socket");
+    if (r.queue === null || r.queue === undefined) return zero(r.queue_note || "ไม่มีคิวของพอร์ตนี้");
     const lv = r.queue_level ? ` ${r.queue_level === "critical" ? "cr" : "wr"}` : "";
-    return `<b class="nxV${lv}">${esc(r.queue)}</b>${r.accept_limit ? `<small> / ${esc(r.accept_limit)} (${esc(r.util)}%)</small>` : ""}`;
+    return `<b class="nxV${lv || (r.app_state ? " cr" : "")}" title="${esc(r.queue_kind || "")}">${Number(r.queue).toLocaleString()}</b>${r.accept_limit ? `<small> / ${Number(r.accept_limit).toLocaleString()}</small>` : ""}`;
 }
 function renderDash() {
     const d = N.data; if (!d) return;
@@ -146,7 +149,7 @@ function renderDash() {
     const bar = (list, v, max, fmt) => list.length ? list.map(r => `<div class="nxBar"><span>${esc(r.web)} · ${esc(portTxt(r))}</span><i><em style="width:${Math.min(100, max ? v(r) * 100 / max : 0)}%"></em></i><b>${fmt(r)}</b></div>`).join("") : `<div class="empty">ไม่มีข้อมูล</div>`;
     const tq = d.top_queue || [];
     $("nxTopQ").innerHTML = tq.length ? bar(tq, r => r.util ?? r.queue, tq[0].util != null ? 100 : Math.max(...tq.map(r => r.queue), 1), r => `${r.queue}${r.util != null ? ` (${r.util}%)` : ""}`)
-        : `<div class="empty">${na("Unsupported", "Windows อ่านคิวได้เฉพาะพอร์ตของ IIS / HTTP.sys")} ไม่มีพอร์ตที่อ่านคิวได้</div>`;
+        : rows.length ? bar(rows.slice(0, 5), () => 0, 1, () => "0") : `<div class="empty">ไม่มีข้อมูล</div>`;
     const tc = d.top_conn || [];
     $("nxTopC").innerHTML = bar(tc, r => r.conn, Math.max(...tc.map(r => r.conn), 1), r => esc(r.conn));
     const st = Object.entries(d.states || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
@@ -161,10 +164,22 @@ function appStatus(a) {
     if (a.state === null || a.state === undefined) return pill(a.host_status === "offline" ? ["Offline", "cr"] : ["Unknown", "na"]);
     return a.state ? pill(["Queue exceed", "cr"]) : pill(["Normal", "ok"]);
 }
+const APP_WHY = {
+    "old-agent": "agent บนเครื่องยังเป็นรุ่นเก่า — ติดตั้ง agent ด้วย zip ชุดใหม่",
+    "no-path": "ยังไม่ได้ตั้งไฟล์ log บนเครื่องนี้ — รัน set-logs.bat แล้วใส่ path ของไฟล์ log (เช่น C:\\LocalUser\\Aspen\\Software\\THMux\\*.txt)",
+    "no-file": "ไม่พบไฟล์ตาม path ที่ตั้งไว้", "old-file": "ไม่มีไฟล์ log ที่อัปเดตใน 2 วันล่าสุด",
+    "no-lines": "อ่านไฟล์แล้ว แต่ยังไม่พบบรรทัดรูปแบบ Output[n] (queue exceed / queue decrease)",
+    offline: "เครื่องไม่ตอบ", "no-data": "ยังไม่มีข้อมูล Netstat จากเครื่องนี้", unknown: "ยังไม่มีข้อมูล" };
 function renderApps(d) {
-    const apps = d.apps || [], ev = d.app_events || [];
-    $("nxAppCard").hidden = !apps.length && !ev.length;
+    const apps = d.apps || [], ev = d.app_events || [], hosts = d.app_hosts || [];
+    $("nxAppCard").hidden = !apps.length && !ev.length && !hosts.length;
     if ($("nxAppCard").hidden) return;
+    const notes = hosts.filter(h => h.status !== "ok" || !h.channels).map(h => {
+        const src = (h.sources || []).map(x => `${x.path} (${x.files} ไฟล์${x.newest ? ", ล่าสุด " + x.newest : ""}, อ่านแล้ว ${x.lines} บรรทัด)`).join(" · ");
+        return `<div class="nxNoteRow"><b>${esc(h.web)}</b> ${esc(APP_WHY[h.status] || "รอข้อมูลรอบถัดไป")}${src ? `<small>${esc(src)}</small>` : ""}</div>`;
+    }).join("");
+    const every = hosts.find(h => h.every) ? `อ่าน log ทุก ${hosts.find(h => h.every).every} วินาที` : "";
+    $("nxAppEvery").textContent = every;
     $("nxApps").innerHTML = apps.map(a => {
         const last = (a.episodes || [])[a.episodes.length - 1];
         const when = a.state ? `เกินมา ${dur(Date.now() / 1000 - a.since)}` : last && last.end ? `กลับปกติ ${fmtT(last.end)} (เกิน ${dur(last.end - last.start)})` : "-";
@@ -172,7 +187,8 @@ function renderApps(d) {
             + `<td class="n">${a.size === null || a.size === undefined ? na() : `<b class="nxV${a.state ? " cr" : ""}">${Number(a.size).toLocaleString()}</b>`}</td>`
             + `<td class="n">${a.critical != null ? Number(a.critical).toLocaleString() : na()}</td><td class="n">${a.peak ? Number(a.peak).toLocaleString() : "-"}</td>`
             + `<td><small>${esc(when)}</small></td><td class="n">${(a.counts || {}).exceed ?? "-"}</td><td class="n">${(a.counts || {}).disconnect ?? "-"}</td></tr>`;
-    }).join("") || `<tr><td colspan="11" class="empty">ยังไม่พบ log รูปแบบ Output[n] ในไฟล์ log ที่ตั้งไว้</td></tr>`;
+    }).join("") || `<tr><td colspan="11" class="empty">${notes ? "ยังไม่มีข้อมูล (ดูหมายเหตุด้านล่าง)" : "Queue 0 · ไม่มี Output ที่คิวเกิน"}</td></tr>`;
+    $("nxAppNotes").innerHTML = notes;
     $("nxAppLog").innerHTML = ev.length ? ev.slice(0, 30).map(e => {
         const [l, c] = APP_LV[e.level] || [e.level, ""];
         return `<div class="nxAL ${c}"><time>${esc(fmtT(e.ts))}</time><b>${esc(e.web)}</b><span>${esc(e.ch)}</span><em class="evst ${c === "cr" ? "dn" : c}">${esc(l)}</em><span class="m">${esc(e.msg)}</span></div>`;
