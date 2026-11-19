@@ -490,6 +490,17 @@ def group_entries(entries):
     return out
 
 
+MAX_FP_ACK = 20000
+
+
+def ids_for_fps(web, fps):
+    """_id ของทุกบรรทัดที่มีอยู่ตอนนี้ของปัญหา (fp) ที่เลือก  web = ขอบเขตของตาราง (ว่าง / all = ทุกเครื่อง)"""
+    fps = {str(f).strip().lower() for f in (fps or []) if str(f).strip()}
+    if not fps:
+        return []
+    return [e["id"] for e in _visible(web or "all", include_acked=True) if e.get("fp") in fps and e.get("id")][:MAX_FP_ACK]
+
+
 def get_grouped_logs(web, size=200, levels=None, types=None, start=None, end=None, include_acked=False):
     """รายการ log แบบรวมกลุ่ม (1 ปัญหา = 1 แถว) ตัวกรองเหมือน get_logs  -> /api/logs/grouped"""
     out = []
@@ -507,11 +518,11 @@ def get_grouped_logs(web, size=200, levels=None, types=None, start=None, end=Non
         if sample is None:
             continue
         row["sample"] = sample
-        fa = log_ack_service.load().get("fp:" + g["fp"]) if g["fp"] else None     # ack ทั้งกลุ่มที่ยังไม่หมดเวลา
-        if fa and (fa.get("until") or 0) > time.time():
-            row["ack"] = fa
-        elif row["sample"].get("ack"):
-            row["ack"] = row["sample"]["ack"]
+        # ACK ทั้งแถว = ทุกบรรทัดในกลุ่ม ack แล้ว (มีบรรทัดใหม่ที่ยังไม่ ack -> แถวกลับมาเป็นปัญหาใหม่)
+        acks, now = log_ack_service.load(), time.time()
+        row["acked"] = sum(1 for e in g["_entries"] if log_ack_service.ack_of(e, acks, now)) if acks else 0
+        if row["acked"] and row["acked"] >= g["count"]:
+            row["ack"] = row["sample"].get("ack") or log_ack_service.ack_of(g["_entries"][0], acks, now)
         out.append(row)
     return out
 
@@ -672,9 +683,9 @@ def get_log_stats(web, start=None, end=None):
     levels = {name: 0 for name in LEVELS}
     types = {}
 
-    in_range = [e for e in _visible(web, include_acked=True) if _in_range(e, start, end)]
-    entries = _not_acked(in_range)
-    acked = len(in_range) - len(entries)
+    # ตารางแสดงทั้งที่ ack แล้วและยังไม่ ack -> ตัวเลขบนปุ่มนับทั้งหมด  acknowledged = จำนวนที่ ack แล้ว
+    entries = [e for e in _visible(web, include_acked=True) if _in_range(e, start, end)]
+    acked = len(entries) - len(_not_acked(entries))
 
     names = {n: 0 for n in configured_log_names(web)}          # ชื่อที่ตั้งไว้แสดงเสมอ (ยังไม่มี log = 0)
     for entry in entries:

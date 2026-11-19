@@ -227,7 +227,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/groups/move$"), "group.move", ("from", "parent")),
     ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
     ("POST", re.compile(r"^/api/sensors/unack$"), "sensor.unack", ("id",)),
-    ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note")),
+    ("POST", re.compile(r"^/api/logs/ack$"), "log.ack", ("web", "note", "fps")),
     ("POST", re.compile(r"^/api/logs/unack$"), "log.unack", ("web",)),
     ("POST", re.compile(r"^/api/logs/ack-fp$"), "log.ack_fp", ("fp", "hours", "web", "note")),
     ("POST", re.compile(r"^/api/logs/unack-fp$"), "log.unack_fp", ("fp",)),
@@ -288,7 +288,7 @@ def audit_changes(response):
         if action == "target.services" and isinstance(body, dict):
             details["count"] = len(body.get("services") or [])
         if action in ("log.ack", "log.unack") and isinstance(body, dict):
-            details["count"] = len(body.get("ids") or [])
+            details["count"] = len(body.get("ids") or body.get("fps") or [])
         if action == "user.update" and isinstance(body, dict) and body.get("password"):
             details["password_changed"] = True
         target = m.groupdict().get("t") or (body.get("name") or body.get("username") or body.get("host") or body.get("id")
@@ -1013,13 +1013,16 @@ def logs_grouped():
 
 @app.post("/api/logs/ack")
 def logs_ack():
-    """รับทราบ log (ซ่อนจากตาราง/ตัวนับ)  body: {"ids": [...], "note": "...", "web": "..."}"""
+    """รับทราบ log (ไม่ซ่อน: แสดงป้าย ACK, ไม่นับเป็นปัญหาใหม่)  body: {"ids": [...]} หรือ {"fps": [...], "scope": เครื่องของตาราง} + note, web"""
     body = _json_body()
     if body is None:
         return jsonify({"error": "json_required"}), 415
+    ids, limit = body.get("ids"), log_ack_service.MAX_PER_REQUEST
+    if body.get("fps"):                     # แบบรวมกลุ่ม: ทุกบรรทัดที่มีอยู่ของปัญหาที่เลือก
+        from logs_service import MAX_FP_ACK, ids_for_fps
+        ids, limit = list(ids or []) + ids_for_fps(body.get("scope"), body.get("fps")), MAX_FP_ACK
     try:
-        n = log_ack_service.acknowledge(body.get("ids"), session.get("username", ""),
-                                        body.get("note"), body.get("web"))
+        n = log_ack_service.acknowledge(ids, session.get("username", ""), body.get("note"), body.get("web"), limit=limit)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"acknowledged": n})
@@ -1053,7 +1056,13 @@ def logs_unack():
     body = _json_body()
     if body is None:
         return jsonify({"error": "json_required"}), 415
-    return jsonify({"removed": log_ack_service.unacknowledge(body.get("ids"))})
+    ids = body.get("ids") or []
+    if body.get("fps"):
+        from logs_service import ids_for_fps
+        ids = list(ids) + ids_for_fps(body.get("scope"), body.get("fps"))
+        for fp in body.get("fps") or []:              # ack แบบเดิม (ตาม fp จนหมดเวลา) ของปัญหานี้ด้วย
+            log_ack_service.unack_fp(fp)
+    return jsonify({"removed": log_ack_service.unacknowledge(ids)})
 
 
 @app.get("/api/log-stats")

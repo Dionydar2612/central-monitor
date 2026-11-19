@@ -578,7 +578,7 @@ class Backend(unittest.TestCase):
             g = logs_service.get_grouped_logs("all", include_acked=True)
             self.assertEqual(g[0]["ack"]["note"], "known issue")
             st = logs_service.get_log_stats("all")
-            self.assertEqual((st["total"], st["acknowledged"]), (1, 50))
+            self.assertEqual((st["total"], st["acknowledged"]), (51, 50))          # ตารางแสดงทั้งหมด (ack ไม่ซ่อน)
             # หมดเวลาแล้วต้องกลับมา
             data = dict(log_ack_service.load()); data["fp:" + fp_err] = dict(data["fp:" + fp_err], until=_t.time() - 1)
             log_ack_service._save(data); log_ack_service._CACHE["mtime"] = None
@@ -593,6 +593,14 @@ class Backend(unittest.TestCase):
             self.c.post("/api/logs/unack", json={"ids": ["w1"]})
             self.assertEqual(self.c.post("/api/logs/ack-fp", json={"fp": "zz!", "hours": 1}).status_code, 400)
             self.assertEqual(self.c.post("/api/logs/ack-fp", json={"fp": fp_err, "hours": 0}).status_code, 400)
+            # เลือกหลายกลุ่มแล้ว Acknowledge selected: ack ทุกบรรทัดที่มีอยู่ของปัญหานั้น (บรรทัดใหม่ภายหลังยังไม่ ack)
+            log_ack_service.unack_fp(fp_err)
+            r = self.c.post("/api/logs/ack", json={"fps": [fp_err], "scope": "all", "note": "รู้แล้ว"})
+            self.assertEqual(r.json["acknowledged"], 50)
+            g = logs_service.get_grouped_logs("all", include_acked=True)
+            self.assertEqual((g[0]["acked"], g[0]["ack"]["note"]), (50, "รู้แล้ว"))
+            self.assertIsNone(log_ack_service.ack_of(new))
+            self.assertEqual(self.c.post("/api/logs/unack", json={"fps": [fp_err], "scope": "all"}).json["removed"], 50)
             acts = [e["action"] for e in self.c.get("/api/events?kind=activity").json["entries"]]
             self.assertIn("log.ack_fp", acts)
         finally:

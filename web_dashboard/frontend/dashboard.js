@@ -764,7 +764,6 @@ const S = {
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
     logGroup: loadPref("cm.logsGroup", true),  // Group duplicates: 1 ปัญหา (fingerprint เดียวกัน) = 1 แถว (ค่าเริ่มต้น = เปิด)
-    showAcked: loadShowAcked(),            // แสดง log ที่ acknowledge แล้วด้วยไหม (ค่าเริ่มต้น = ซ่อน)
     logWeb: "",                            // ตาราง Logs: เครื่องที่ดู ("" = ทุกเครื่อง ค่าเริ่มต้น) แยกจากเครื่องที่เลือกด้านบน
     showMetrics: loadPref("cm.logsMetrics", true),   // คอลัมน์ Metrics ย่อในตาราง Logs (รายละเอียดเต็มอยู่ในหน้าต่าง log)
     sel: new Map(), logRows: []            // log ที่ติ๊กเลือกไว้ (id -> แถว) + แถวที่แสดงอยู่
@@ -909,10 +908,6 @@ function loadPref(key, def) {
     try { const v = localStorage.getItem(key); return v === null ? def : v === "1"; } catch (e) { return def; }
 }
 function savePref(key, on) { try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* ignore */ } }
-
-function loadShowAcked() {
-    try { return localStorage.getItem("cm.logsShowAcked") === "1"; } catch (e) { return false; }
-}
 
 function loadClosedGroups() {
     try { return new Set(JSON.parse(localStorage.getItem("cm.closedGroups") || "[]")); } catch (e) { return new Set(); }
@@ -2240,15 +2235,17 @@ function setupServicePicker() {
 /* ตาราง Logs: 1 แถวต่อ log, คลิกแถว -> openLogDetail
    โหมด INFO (S.info): แสดงแถวที่โหลดสดจากปุ่ม Load INFO log (ไม่ได้มาจาก OpenSearch) */
 /* ตาราง Logs + Acknowledge
-   ติ๊กเลือกแถว (operator ขึ้นไป) -> "Acknowledge selected" = รับทราบแล้ว: log ถูกซ่อนจากตาราง/ตัวนับ/จุดบนกราฟ
-   (ยังอยู่ใน OpenSearch ตามอายุเดิม) ติ๊ก "Show acknowledged" เพื่อดูอีกครั้ง/ยกเลิก */
+   ติ๊กเลือกหลายแถว (operator ขึ้นไป) -> "Acknowledge selected" = รับทราบแล้ว: ยังแสดงในตาราง (ป้าย ACK สีจาง)
+   แต่ไม่นับเป็นปัญหาใหม่ (New Log Entries / Problem logs / จุดบนกราฟ) · ติ๊กแถวที่ ack แล้ว -> Unacknowledge */
 function canAckLogs() { return canOperate() && !S.info; }
 function renderLogHead(selectable, grouped) {
     q("#plogHead").innerHTML = grouped
-        ? `<tr><th>Last seen</th><th>WEB</th><th>Level</th><th title="ชื่อเรียกที่ตั้งใน Settings > Log (ชี้ดูชนิด parser)">ชื่อ log</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}${selectable ? `<th class="gack">Acknowledge</th>` : ""}</tr>`
+        ? `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="เลือกทุกแถว"></th>` : ""}<th>Last seen</th><th>WEB</th><th>Level</th><th title="ชื่อเรียกที่ตั้งใน Settings > Log (ชี้ดูชนิด parser)">ชื่อ log</th><th class="msg">Message</th><th class="gcnt">ครั้ง</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`
         : `<tr>${selectable ? `<th class="sel"><input type="checkbox" id="selAll" aria-label="Select all shown logs"></th>` : ""}<th>Time</th><th>WEB</th><th>Level</th><th title="ชื่อเรียกที่ตั้งใน Settings > Log (ชี้ดูชนิด parser)">ชื่อ log</th><th class="msg">Message</th>${S.showMetrics ? `<th class="pm">Metrics at time</th>` : ""}</tr>`;
 }
 function logCols(selectable, grouped) { return 5 + (selectable ? 1 : 0) + (S.showMetrics ? 1 : 0) + (grouped ? 1 : 0); }
+/* แถวแบบรวมกลุ่มที่เลือกได้: id = "g:<fp>" (ack = ทุกบรรทัดที่มีอยู่ของปัญหานี้) */
+function groupSel(g) { return { id: "g:" + g.fp, fp: g.fp, ack: g.ack, web: (g.webs || []).join(",") }; }
 /* รวมกลุ่มอยู่ไหม: เปิดสวิตช์ + ไม่ได้ค้นหา / ไม่ได้ดู INFO */
 function isGrouped() { return S.logGroup && !S.search && !S.info; }
 
@@ -2256,10 +2253,10 @@ function isGrouped() { return S.logGroup && !S.search && !S.info; }
 function renderGroups(list) {
     const tb = q("#plog"), filtered = S.lv !== "ALL" || S.lt !== "ALL";
     const selectable = canAckLogs();
-    S.logRows = []; S.sel.clear();
+    S.logRows = list.filter(g => g.fp).map(groupSel);
+    [...S.sel.keys()].forEach(id => { if (!S.logRows.some(r => r.id === id)) S.sel.delete(id); });
     renderLogHead(selectable, true);
     renderAckBar();
-    q("#ackBar").hidden = true;                                   /* แบบกลุ่ม: ack ที่ปุ่มท้ายแถว */
     if (!list.length) {
         tb.innerHTML = `<tr><td colspan="${logCols(selectable, true)}" class="empty">${filtered ? "No logs match this filter" : "No ERROR / WARN logs"}</td></tr>`;
         setText("logCnt", ""); renderLogStat(0); return;
@@ -2273,53 +2270,24 @@ function renderGroups(list) {
         tr.className = "grow" + (g.ack ? " acked" : "");
         const span = g.count > 1 ? `ครั้งแรก ${formatTimestamp(g.first)} · ล่าสุด ${formatTimestamp(g.last)}` : "";
         const webs = g.machines > 1 ? ` <span class="gmore" title="${escapeHtml((g.webs || []).join(", "))}">+${g.machines - 1} เครื่อง</span>` : "";
-        const ackTag = g.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${g.ack.by || "-"}${g.ack.until ? " · ถึง " + new Date(g.ack.until * 1000).toLocaleString("en-GB") : ""}${g.ack.note ? " · " + g.ack.note : ""}`)}">ACK</span>` : "";
-        tr.innerHTML = `<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td class="lname" title="${escapeHtml("parser: " + ((g.types || []).join(", ") || p.type || "application"))}">${escapeHtml((g.names || []).join(", ") || p.name || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}${selectable ? `<td class="gack">${groupAckHtml(g)}</td>` : ""}`;
-        tr.addEventListener("change", e => {
-            const sel = e.target.closest("select[data-gack]");
-            if (sel && sel.value) ackGroup(sel);
-        });
+        const ackTag = g.ack ? ` <span class="logack" title="${escapeHtml(`Acknowledged by ${g.ack.by || "-"}${g.ack.at ? " · " + new Date(g.ack.at * 1000).toLocaleString("en-GB") : ""}${g.ack.note ? " · " + g.ack.note : ""}`)}">ACK</span>`
+            : g.acked ? ` <span class="logack part" title="ack แล้ว ${g.acked} จาก ${g.count} บรรทัด (มีบรรทัดใหม่หลัง ack)">ACK ${g.acked}/${g.count}</span>` : "";
+        const sid = g.fp ? "g:" + g.fp : "";
+        const sel = selectable ? `<td class="sel">${sid ? `<input type="checkbox" data-sel="${escapeHtml(sid)}"${S.sel.has(sid) ? " checked" : ""} aria-label="เลือกแถว">` : ""}</td>` : "";
+        tr.innerHTML = `${sel}<td>${escapeHtml(formatTimestamp(g.last))}</td><td>${escapeHtml(p.web || "-")}${webs}</td><td class="lv ${String(g.level || "").toLowerCase()}">${escapeHtml(g.level)}${ackTag}</td><td class="lname" title="${escapeHtml("parser: " + ((g.types || []).join(", ") || p.type || "application"))}">${escapeHtml((g.names || []).join(", ") || p.name || p.type || "application")}</td><td class="msg" title="${escapeHtml(String(p.message || "").slice(0, 2000))}">${escapeHtml(p.message || "")}</td><td class="gcnt" title="${escapeHtml(span)}">${g.count > 1 ? `<b>×${g.count}</b>` : "1"}</td>${S.showMetrics ? `<td class="pm" title="${escapeHtml(buildProblemMetrics(p.correlated_metrics || {}) || "")}">${compactMetrics(p.correlated_metrics)}</td>` : ""}`;
         tr.addEventListener("click", e => {
-            const b = e.target.closest("button[data-gunack]");
-            if (b) { ackGroup(b); return; }
-            if (e.target.closest("td.gack")) return;
+            if (e.target.closest("td.sel")) {
+                const cb = tr.querySelector("input[data-sel]"); if (!cb) return;
+                if (e.target !== cb) cb.checked = !cb.checked;
+                cb.checked ? S.sel.set(sid, groupSel(g)) : S.sel.delete(sid);
+                renderAckBar();
+                return;
+            }
             if (p.id) openLogDetail(p);
         });
         tb.appendChild(tr);
     });
 }
-/* Acknowledge ทั้งกลุ่ม (ตาม fingerprint): รับทราบแล้ว -> ซ่อนปัญหานี้ (รวมบรรทัดที่เข้ามาใหม่) ตามเวลาที่เลือก
-   หมดเวลาแล้วถ้ายังเกิดอยู่จะกลับมาแสดงเอง · ack แล้วแสดง "ซ่อนถึง ..." + ปุ่มยกเลิก */
-const GACK_OPTS = [[1, "1 ชั่วโมง"], [8, "8 ชั่วโมง"], [24, "1 วัน"], [168, "7 วัน"]];
-function groupAckHtml(g) {
-    if (!g.fp) return "";
-    if (g.ack && g.ack.fp) {
-        const until = g.ack.until ? new Date(g.ack.until * 1000) : null;
-        const txt = until ? `ซ่อนถึง ${until.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Ack แล้ว";
-        return `<span class="gackd" title="${escapeHtml(`โดย ${g.ack.by || "-"}${g.ack.note ? " · " + g.ack.note : ""}`)}">${escapeHtml(txt)}</span><button type="button" class="svbtn sm" data-gunack="${escapeHtml(g.fp)}">ยกเลิก</button>`;
-    }
-    return `<select class="gackh" data-gack="${escapeHtml(g.fp)}" aria-label="Acknowledge: ซ่อนปัญหานี้นานเท่าไร"><option value="">Ack · ซ่อน…</option>${GACK_OPTS.map(([h, l]) => `<option value="${h}">ซ่อน ${l}</option>`).join("")}</select>`;
-}
-async function ackGroup(btn) {
-    const on = !!btn.dataset.gack, fp = btn.dataset.gack || btn.dataset.gunack;
-    const hours = on ? Number(btn.value) : 0;
-    let note = "";
-    if (on) {
-        const label = (GACK_OPTS.find(o => o[0] === hours) || [0, `${hours} ชั่วโมง`])[1];
-        note = prompt(`รับทราบปัญหานี้ และซ่อน ${label}\nทุกบรรทัดของปัญหานี้ (รวมที่เข้ามาใหม่) จะไม่แสดงในตารางและตัวนับ · หมดเวลาแล้วถ้ายังเกิดอยู่จะกลับมาแสดง\nโน้ต (ไม่บังคับ):`, "");
-        if (note === null) { btn.value = ""; return; }
-    }
-    btn.disabled = true;
-    try {
-        const r = await fetch(`/api/logs/${on ? "ack-fp" : "unack-fp"}`, {
-            method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(on ? { fp, hours, note, web: "" } : { fp }) });
-        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
-        await reloadLogs();
-        loadHist();
-    } catch (err) { alert("Acknowledge failed: " + err.message); btn.disabled = false; }
-}
-
 /* Metrics ย่อในตาราง: เฉพาะ CPU / Memory / Disk (สีตามเกณฑ์) ที่เหลือดูในหน้าต่างรายละเอียด */
 function compactMetrics(m) {
     m = m || {};
@@ -2349,7 +2317,6 @@ function renderLogWebs(webs) {
 function renderAckBar() {
     const can = canAckLogs();
     q("#ackBar").hidden = !can;
-    q("#showAckedWrap").hidden = !!S.info;
     const sel = [...S.sel.values()], acked = sel.filter(p => p.ack).length;
     q("#ackSel").disabled = sel.length - acked === 0;
     q("#ackSel").textContent = sel.length - acked ? `Acknowledge selected (${sel.length - acked})` : "Acknowledge selected";
@@ -2451,7 +2418,6 @@ function renderProblems(list) {
     const tb = q("#plog");
     const filtered = S.lv !== "ALL" || S.lt !== "ALL";
     const selectable = canAckLogs();
-    if (S.search && !S.showAcked && Array.isArray(list)) list = list.filter(p => !p.ack);
     S.logRows = Array.isArray(list) ? list.filter(p => p.id) : [];
     [...S.sel.keys()].forEach(id => { if (!S.logRows.some(p => p.id === id)) S.sel.delete(id); });
     renderLogHead(selectable);
@@ -2500,7 +2466,7 @@ function statsUrl() { return `/api/log-stats?${logRange(new URLSearchParams({ we
 
 function logUrl() {
     const p = logRange(new URLSearchParams({ web: S.logWeb || "all", size: "300" }));
-    if (S.showAcked) p.set("acked", "1");
+    p.set("acked", "1");                 /* ack แล้วยังแสดง (ป้าย ACK) ไม่ซ่อน */
     if (S.lv !== "ALL") p.set("level", S.lv);
     if (S.lt !== "ALL") p.set("type", S.lt);
     return `${S.logGroup && !S.info ? "/api/logs/grouped" : "/api/problems"}?${p}`;
@@ -2519,7 +2485,6 @@ function renderLogFilter(stats) {
         const main = S.logGroup && hasValue(kd) ? kd : n;
         b.innerHTML = hasValue(main) ? `${label}<i>${main}</i>` : label;
         b.title = hasValue(kd) && hasValue(n) ? `${kd} ชนิด · ${n} บรรทัด` : "";
-        setText("ackedCnt", stats && stats.acknowledged ? `(${stats.acknowledged})` : "");
         b.setAttribute("aria-pressed", !S.info && k === S.lv);
     });
     /* ชื่อ log = ชื่อเรียกที่ตั้งใน Settings > Log (ชื่อใหม่ / log ที่เพิ่งเพิ่มขึ้นในรายการเองทันที แม้ยังไม่มี log = 0) */
@@ -2607,13 +2572,15 @@ async function ackLogs(on) {
     if (!rows.length) return;
     let note = "";
     if (on) {
-        note = prompt(`Acknowledge ${rows.length} log(s)?\nThey will be hidden from the table and counters (still kept in storage).\nNote (optional):`, "");
+        note = prompt(`Acknowledge ${rows.length} รายการ?\nรับทราบแล้ว: ยังแสดงในตาราง (ป้าย ACK) แต่ไม่นับเป็นปัญหาใหม่${rows.some(r => r.fp) ? "\nแบบรวมกลุ่ม = ทุกบรรทัดที่มีอยู่ตอนนี้ของปัญหานั้น" : ""}\nโน้ต (ไม่บังคับ):`, "");
         if (note === null) return;
     }
+    const groups = rows.filter(r => r.fp), lines = rows.filter(r => !r.fp);
     try {
         const r = await fetch(`/api/logs/${on ? "ack" : "unack"}`, {
             method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids: rows.map(p => p.id), note, web: [...new Set(rows.map(p => p.web))].join(",") }) });
+            body: JSON.stringify({ ids: lines.map(p => p.id), fps: groups.map(g => g.fp), scope: S.logWeb || "all", note,
+                                   web: [...new Set(rows.flatMap(p => String(p.web || "").split(",")).filter(Boolean))].join(",") }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
         S.sel.clear();
         await reloadLogs();            /* ค้นอยู่ -> reloadLogs ค้นซ้ำให้ */
@@ -2965,12 +2932,6 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#infoBtn").addEventListener("click", loadInfo);
     q("#logSearch").addEventListener("submit", e => { e.preventDefault(); runSearch(false); });
     q("#logClear").addEventListener("click", clearSearch);
-    q("#showAcked").checked = S.showAcked;
-    q("#showAcked").addEventListener("change", e => {
-        S.showAcked = e.target.checked;
-        try { localStorage.setItem("cm.logsShowAcked", S.showAcked ? "1" : "0"); } catch (err) { /* ignore */ }
-        if (S.search) renderProblems(S.search.rows); else reloadLogs();
-    });
     q("#plogHead").addEventListener("change", e => {
         if (e.target.id !== "selAll") return;
         S.logRows.forEach(p => e.target.checked ? S.sel.set(p.id, p) : S.sel.delete(p.id));

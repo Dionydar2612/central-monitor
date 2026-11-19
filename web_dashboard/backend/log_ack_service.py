@@ -2,10 +2,11 @@
 log_ack_service.py - Acknowledge log (รับทราบแล้ว) เพื่อไม่ให้ตาราง Logs รก
 ==========================================================================
 
-log ที่ acknowledge แล้ว
-    - ถูกซ่อนจากตาราง Logs, ไม่นับในตัวเลข All / Error / Warn, Problem logs, Errors 15m และจุดบนกราฟ
+log ที่ acknowledge แล้ว (= รับทราบแล้ว ไม่ซ่อน)
+    - ยังแสดงในตาราง Logs (ป้าย ACK + ใครรับทราบ + โน้ต, สีจาง) ยกเลิกได้
+    - ไม่นับเป็นปัญหาใหม่: New Log Entries / Problem logs / Errors 15m / จุดบนกราฟ
     - ยังอยู่ใน OpenSearch ตามเดิม (ลบเองตามอายุ OPENSEARCH_LOG_RETENTION)
-    - ดูได้อีกโดยติ๊ก "Show acknowledged" (มีป้าย ACK + ใครรับทราบ + โน้ต) และยกเลิกได้
+    - ติ๊กหลายแถวแล้วกด Acknowledge selected ได้ (แบบรวมกลุ่ม = ทุกบรรทัดที่มีอยู่ของปัญหานั้น บรรทัดใหม่ที่เข้ามาภายหลังยังไม่ ack)
 เก็บที่ data/state/log_acks.json
     {OpenSearch _id: {by, at, note, web}}                     ack ทีละบรรทัด (แบบเดิม)
     {"fp:<fp>": {by, at, note, web, until, fp}}               ack ทั้งกลุ่มตาม fingerprint (ขั้นที่ 3)
@@ -75,8 +76,8 @@ def _save(data):
         pass
 
 
-def acknowledge(ids, user, note="", web=None):
-    ids = [str(i) for i in (ids or []) if str(i).strip()][:MAX_PER_REQUEST]
+def acknowledge(ids, user, note="", web=None, limit=MAX_PER_REQUEST):
+    ids = [str(i) for i in (ids or []) if str(i).strip()][:limit]
     if not ids:
         raise ValueError("ไม่มีรายการที่เลือก")
     now = time.time()
