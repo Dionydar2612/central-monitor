@@ -140,7 +140,7 @@ def host_detail(web):
     ac = n.get("apps") if isinstance(n.get("apps"), dict) else {}
     apps_cfg = {"enabled": ac.get("enabled", True) is not False, "notify_after": ac.get("notify_after", 10),
                 "critical_size": ac.get("critical_size")}
-    return dict(row, support=h.get("support"), ports=ports, rows=h.get("rows") or [], apps=h.get("apps") or [],
+    return dict(row, support=h.get("support"), ports=ports, rows=h.get("rows") or [], apps=queue_apps(h.get("apps")),
                 app_events=h.get("app_events") or [], apps_cfg=apps_cfg,
                 active=[a for a in alerts.get("active") or [] if a.get("web") == web],
                 history=[a for a in (alerts.get("history") or [])[-500:] if a.get("web") == web][-50:][::-1])
@@ -268,6 +268,11 @@ def _pass(row, f):
     return True
 
 
+def queue_apps(apps):
+    """เฉพาะ Output ที่มีข้อมูลคิว (เคยมี size / queue exceed) ตัดชื่อที่ไม่ใช่คิว เช่น "Clear output[1]", "Input[1]" """
+    return [a for a in apps or [] if a.get("size") is not None or (a.get("counts") or {}).get("exceed")]
+
+
 def app_status(h, st):
     """ทำไม Application Queue ของเครื่องยังว่าง: ok / offline / old-agent / no-path / no-file / old-file / no-lines"""
     if st != "online":
@@ -281,7 +286,7 @@ def app_status(h, st):
         return "no-file"
     if not any(x.get("recent") for x in src):
         return "old-file"
-    if not h.get("apps") and not any(x.get("lines") for x in src):
+    if not queue_apps(h.get("apps")) and not any(x.get("lines") for x in src):
         return "no-lines"
     return "ok"
 
@@ -329,8 +334,8 @@ def dashboard(filters=None):
             continue
         st = agent_status(h, upd, now)
         app_hosts.append({"web": web, "status": app_status(h, st), "sources": h.get("app_sources") or [],
-                          "every": h.get("app_every"), "channels": len(h.get("apps") or [])})
-        for a in h.get("apps") or []:
+                          "every": h.get("app_every"), "channels": len(queue_apps(h.get("apps")))})
+        for a in queue_apps(h.get("apps")):
             row = dict(a, web=web, ip=t.get("host") or "", host_status=st, episodes=(a.get("episodes") or [])[-5:])
             if st != "online":                          # เครื่องไม่ตอบ -> ไม่รู้สถานะปัจจุบัน
                 row.update(state=None, size=None)
