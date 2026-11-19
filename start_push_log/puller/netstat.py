@@ -501,7 +501,7 @@ class AlertEngine:
         level = "critical" if crit is not None and ep["peak"] >= crit else "warning"
         end = ep["end"] or None
         dur = (end or now) - ep["start"]
-        notify = dur >= (cfg.get("notify_after") or 0) or (crit is not None and ep["peak"] >= crit)
+        notify = True                                       # แจ้งทันทีที่คิวเกิน และแจ้งอีกครั้งเมื่อกลับปกติ
         events, a = [], self.active.get(akey)
         if a is not None and a.get("ep") != epid:          # ช่วงก่อนหน้าไม่เห็น "กลับปกติ" (log หาย) -> ปิด
             del self.active[akey]
@@ -560,7 +560,7 @@ class AlertEngine:
 
 
 KIND_TEXT = {"queue": "Queue", "conn": "Connections", "not_listening": "Not listening", "host_offline": "Host offline",
-             "agent_stale": "Agent stopped", "queue_spike": "Queue spike", "app_queue": "Queue exceed"}
+             "agent_stale": "Agent stopped", "queue_spike": "Queue spike", "app_queue": "Queue exceed", "app_error": "Log ERROR"}
 
 
 def to_system_events(events, groups=None, priorities=None):
@@ -582,6 +582,9 @@ def to_system_events(events, groups=None, priorities=None):
             msg = f"{a['web']} · {a.get('message') or name} · กลับปกติแล้วหลัง {int(a.get('duration') or 0)} วินาที"
         elif a["kind"] == "app_queue":
             msg = f"{a['web']} · {a.get('message') or name}"
+        elif a["kind"] == "app_error":
+            name = f"Netstat {a.get('log', '')} {a.get('ch', '')} ERROR"
+            msg = f"{a['web']} · {a.get('log', '')} {a.get('ch', '')} ERROR: {a.get('message', '')}"
         else:
             msg = f"{a['web']} · {name}: {a.get('message') or ''}{th}" + (f" · {a['process']}" if a.get("process") else "")
         e = {"source": "netstat", "level": "recovered" if what == "recovered" else lv, "web": a["web"],
@@ -623,6 +626,7 @@ class Monitor:
         self.emit = emit
         self.engine = AlertEngine(_read(ALERTS_FILE, {}))
         self.hosts = {}            # web -> สถานะล่าสุด
+        self.err_seen = {}         # web -> เวลาของบรรทัด ERROR ล่าสุดที่แจ้งแล้ว
         self.inflight = {}         # web -> future
         self.next_at = {}
         self.baselines = {}
@@ -719,10 +723,22 @@ class Monitor:
         snap = h.get("snap") or {}
         if not hc["enabled"] or not hc["apps"]["enabled"]:
             return [], self.engine.app_close_all(web, now)
-        if not h.get("online") or h.get("stale") or not snap.get("apps"):
+        if not h.get("online") or h.get("stale") or not (snap.get("apps") or snap.get("app_events")):
             return [], False
         out, changed = [], False
-        for app in snap["apps"].values():
+        seen = self.err_seen.get(web)
+        top = max([e["ts"] for e in snap.get("app_events") or []] or [0])
+        if seen is not None:                            # บรรทัด ERROR ใหม่ใน log -> แจ้ง 1 ครั้งต่อบรรทัด (ไม่มี "กลับปกติ")
+            for e in sorted(snap.get("app_events") or [], key=lambda x: (x["ts"], x["seq"])):
+                if e.get("level") == "ERROR" and e["ts"] > seen and now - e["ts"] <= APP_RECENT:
+                    rec = {"akey": f"{web}::err::{e.get('log')}/{e.get('ch')}", "kind": "app_error", "web": web, "ip": h.get("ip", ""),
+                           "log": e.get("log"), "ch": e.get("ch"), "level": "critical", "first": e["ts"], "last": e["ts"],
+                           "message": e.get("msg", ""), "status": "logged", "id": f"{web}::err@{e['ts']}:{e['seq']}"}
+                    self.engine.history.append(rec)
+                    out.append(("logerror", rec))
+                    changed = True
+        self.err_seen[web] = max(top, seen or 0)
+        for app in (snap.get("apps") or {}).values():
             for ep in app["episodes"]:
                 ev, ch = self.engine.app_episode(web, h.get("ip", ""), app, ep, hc["apps"], now)
                 out += ev
