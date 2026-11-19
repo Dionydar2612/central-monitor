@@ -3,7 +3,7 @@ card_templates.py - รูปแบบการ์ด Microsoft Teams ที่�
     ไฟล์นี้มี 2 ชุดที่ต้องเหมือนกันทุกตัวอักษร: start_push_log/puller/ และ web_dashboard/backend/
     (tests ตรวจให้แล้ว)  ค่าที่ตั้งเก็บใน puller.yaml: notify.teams.cards.<หัวข้อ> = {title, fields, labels, note}
 
-การ์ดหน้าตาแบบ PRTG: หัวเรื่องตัวหนาสีตามระดับ แล้วตามด้วย "หัวข้อ:" ตัวหนา และค่าบรรทัดถัดไป
+การ์ดหน้าตาแบบ PRTG: หัวเรื่องตัวหนาสีตามระดับ แล้วบรรทัดละ 1 ช่อง "**หัวข้อ:** ค่า"
 """
 import re
 
@@ -95,6 +95,12 @@ def clean(cards):
     return out, errors
 
 
+def fact_line(label, value):
+    """1 บรรทัด: **หัวข้อ:** ค่า  (หลายค่า = ขึ้นบรรทัดใหม่ใต้หัวข้อ)"""
+    v = str(value)
+    return {"type": "TextBlock", "text": f"**{label}:** " + ("\n\n" + v if "\n" in v else v), "wrap": True, "spacing": "Small"}
+
+
 def card(cat, level, ctx, cards=None, summary=None):
     """สร้าง payload ของ Teams (Adaptive Card 1.4) ตามรูปแบบของหัวข้อ"""
     t = template(cat, cards)
@@ -108,9 +114,7 @@ def card(cat, level, ctx, cards=None, summary=None):
             v = "\n\n".join(str(x) for x in v if x not in (None, ""))
         if v in (None, ""):
             continue
-        body.append({"type": "TextBlock", "text": f"{t['labels'].get(f) or FIELDS[f]}:", "weight": "Bolder",
-                     "wrap": True, "spacing": "Medium"})
-        body.append({"type": "TextBlock", "text": str(v), "wrap": True, "spacing": "None"})
+        body.append(fact_line(t["labels"].get(f) or FIELDS[f], v))
     note = render(t["note"], ctx)
     if note:
         body.append({"type": "TextBlock", "text": note, "wrap": True, "spacing": "Medium", "separator": True})

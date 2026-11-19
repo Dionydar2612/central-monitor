@@ -1789,3 +1789,4 @@ html[data-platforms=windows] .both-only,html[data-platforms=linux] .both-only{di
 .tcPrev{border:1px solid var(--line,#ddd);border-radius:8px;padding:14px 16px;background:var(--card,#fff);font-size:14px;align-self:start}
 .tcPrev .tcTitle{font-weight:700;font-size:16px;margin-bottom:6px}.tcPrev b{display:block;margin-top:10px}.tcPrev hr{border:0;border-top:1px solid var(--line,#ddd);margin:10px 0}
 @media(max-width:900px){.tcWrap{grid-template-columns:1fr}}
+.tcPrev .tcLine{margin-top:8px}.tcPrev .tcLine b{display:inline;margin:0}

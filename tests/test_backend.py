@@ -155,7 +155,7 @@ class Backend(unittest.TestCase):
         p = card_templates.card("queue", "warning", dict(card_templates.SAMPLE["queue"], device="abc86"),
                                 {"queue": {"title": "{machine} {port}", "fields": ["port"], "labels": {"port": "พอร์ต"}, "note": "เคลียร์ {machine}"}})
         body = p["attachments"][0]["content"]["body"]
-        self.assertEqual([b["text"] for b in body], ["abc86 16100/TCP", "พอร์ต:", "16100/TCP", "เคลียร์ abc86"])
+        self.assertEqual([b["text"] for b in body], ["abc86 16100/TCP", "**พอร์ต:** 16100/TCP", "เคลียร์ abc86"])
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         a, b = (open(os.path.join(root, x, "card_templates.py"), "rb").read() for x in ("start_push_log/puller", "web_dashboard/backend"))
         self.assertEqual(a, b)

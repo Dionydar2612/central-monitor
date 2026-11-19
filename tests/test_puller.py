@@ -4,6 +4,7 @@ test_puller.py - ทดสอบส่วนที่ไม่ต้องต่
 ต้องมี: python3 + pyyaml  (prometheus_client ไม่บังคับ: ถ้าไม่มี จะข้ามเทสต์ scheduler)
 """
 
+import re
 import json
 import os
 import sys
@@ -33,9 +34,10 @@ import netsec             # noqa: E402
 def _facts(body):
     """การ์ดแบบ PRTG (หัวข้อตัวหนา + ค่าบรรทัดถัดไป) -> {"หัวข้อ:": ค่า}"""
     out = {}
-    for a, b in zip(body[1:], body[2:]):
-        if a.get("weight") == "Bolder" and str(a.get("text", "")).endswith(":") and b.get("spacing") == "None":
-            out[a["text"]] = b["text"]
+    for a in body[1:]:
+        m = re.match(r"^\*\*(.+?:)\*\* (?:\n\n)?(.*)$", str(a.get("text", "")), re.S)
+        if m:
+            out[m.group(1)] = m.group(2)
     return out
 
 class SensorGrade(unittest.TestCase):

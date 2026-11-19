@@ -138,9 +138,8 @@ def fact_card(title, level, facts, summary=None):
     body = [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True,
              "color": COLOR.get(level, "Default")},
 ]
-    for r in rows:                                   # แบบ PRTG: หัวข้อตัวหนา แล้วค่าบรรทัดถัดไป
-        body += [{"type": "TextBlock", "text": r["title"], "weight": "Bolder", "wrap": True, "spacing": "Medium"},
-                 {"type": "TextBlock", "text": r["value"], "wrap": True, "spacing": "None"}]
+    for r in rows:                                   # แบบ PRTG: **หัวข้อ:** ค่า บรรทัดเดียว
+        body.append(card_templates.fact_line(r["title"].rstrip(":"), r["value"]))
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
             "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": summary or title, "body": body}
     return {"type": "message", "summary": summary or title, "attachments": [

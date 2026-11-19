@@ -43,7 +43,7 @@
             let v = ctx[f];
             if (Array.isArray(v)) v = v.join("\n");
             if (v == null || v === "") return;
-            h += `<b>${esc(t.labels[f] || d.fields[f])}:</b><div>${esc(v).replace(/\n/g, "<br>")}</div>`;
+            h += `<div class="tcLine"><b>${esc(t.labels[f] || d.fields[f])}:</b> ${String(v).includes("\n") ? "<br>" : ""}${esc(v).replace(/\n/g, "<br>")}</div>`;
         });
         const note = render(t.note, ctx);
         if (note) h += `<hr><div>${esc(note)}</div>`;
