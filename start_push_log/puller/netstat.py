@@ -8,7 +8,7 @@ netstat.py - Netstat Monitor (Windows Server): TCP / UDP / คิว ต่อ�
     puller (ไฟล์นี้) อ่านต่อเนื่องในเธรดแยก:
       - โหมด pull (central เข้าถึงพอร์ต exporter ได้): GET http://<exporter>/metrics?collect[]=textfile ทุก netstat.interval วินาที
       - โหมด push (เครื่องส่งมาเอง): ถาม Prometheus (Fluent Bit ส่ง cm_netstat_* ทุก 5 วินาที)
-    เครื่องที่ยังไม่เปิด Monitoring: อ่านทุก 30 วินาทีเพื่อค้นพบพอร์ต (ไม่แจ้งเตือน)
+    เครื่องที่ยังไม่เปิด Monitoring: อ่านทุก 10 วินาทีเพื่อค้นพบพอร์ต (ไม่แจ้งเตือน)
 
 ตั้งค่า (puller.yaml ต่อเครื่อง)  แก้จากหน้า Apps & Web > Netstat Monitor
     netstat:
@@ -46,7 +46,8 @@ ALERTS_FILE = os.path.join(NETSTAT_DIR, "alerts.json")
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 
 INTERVALS = (1, 2, 5)
-DISCOVERY_EVERY = 30          # วินาที: เครื่องที่ยังไม่เปิด Monitoring
+DISCOVERY_EVERY = 10          # วินาที: เครื่องที่ยังไม่เปิด Monitoring (ค้นพบพอร์ต)
+LIVE_HEARTBEAT = 5            # วินาที: เขียน live.json อย่างน้อยทุกเท่านี้
 PUSH_EVERY = 2                # วินาที: ถาม Prometheus (ข้อมูล push มาทุก 5 วิ)
 FETCH_TIMEOUT = 3
 CONFIRM = 3                   # ต้องผิดปกติต่อเนื่องกี่ครั้งก่อนเปิด alert
@@ -572,7 +573,9 @@ class Monitor:
                 self.emit(to_system_events(events, groups, prios), cfg_all)
             except Exception as e:
                 print(f"[NETSTAT] emit error {e}")
-        if self.dirty and now - self.written_at >= 1:
+        # มีค่าใหม่ -> เขียนไม่เกินวินาทีละครั้ง · ไม่มีอะไรเปลี่ยน (เช่นยังไม่เปิด Monitoring อ่านทุก 10 วิ) -> เขียนทุก LIVE_HEARTBEAT วิ
+        # ให้หน้าเว็บรู้ว่า puller ยังทำงาน (หน้าเว็บถือว่า live.json เก่ากว่า 15 วิ = ข้อมูลไม่อัปเดต)
+        if (self.dirty and now - self.written_at >= 1) or now - self.written_at >= LIVE_HEARTBEAT:
             self.write_live(now)
         return events
 

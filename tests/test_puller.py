@@ -1140,6 +1140,30 @@ class NetstatParse(unittest.TestCase):
 
 
 class NetstatMonitorLoop(unittest.TestCase):
+    def test_live_heartbeat_when_disabled(self):
+        """ยังไม่เปิด Monitoring (อ่านทุก 10 วิ) live.json ต้องอัปเดตอย่างน้อยทุก 5 วิ ไม่งั้นหน้าเว็บขึ้น "ข้อมูลไม่อัปเดต" """
+        import tempfile as _tf
+        d = _tf.mkdtemp()
+        saved = (netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config)
+        netstat.LIVE_FILE, netstat.ALERTS_FILE = os.path.join(d, "live.json"), os.path.join(d, "alerts.json")
+        off = dict(NS_TARGET, netstat={"enabled": False})
+        netstat.load_config = lambda: {"targets": [off]}
+        try:
+            m = netstat.Monitor(fetch_pull=lambda e: netstat.parse_text(ns_text()), fetch_push=lambda w: [], emit=None)
+            ups = []
+            for i in range(0, 13):
+                m.tick(500.0 + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
+                with open(netstat.LIVE_FILE) as f:
+                    ups.append(json.load(f)["updated"])
+            gaps = [b - a for a, b in zip(sorted(set(ups)), sorted(set(ups))[1:])]
+            self.assertTrue(gaps and max(gaps) <= netstat.LIVE_HEARTBEAT, gaps)
+            with open(netstat.LIVE_FILE) as f:
+                h = json.load(f)["hosts"]["db-01"]
+            self.assertTrue(h["online"] and h["has_data"] and not h["enabled"])     # ค้นพบพอร์ตได้แม้ยังไม่เปิด
+            self.assertTrue(any(p["port"] == 1433 for p in h["ports"]))
+        finally:
+            netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config = saved
+
     def test_tick(self):
         import tempfile as _tf
         d = _tf.mkdtemp()
