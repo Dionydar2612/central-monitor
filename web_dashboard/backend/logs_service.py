@@ -39,6 +39,7 @@ log เป็นของเครื่องไหน?
     - ผู้เรียก: api.py (/api/problems, /api/problems/detail, /api/log-stats, /api/summary)
 """
 
+import os
 import re
 import threading
 import time
@@ -310,7 +311,28 @@ def all_webs():
     return [str(t.get("name")) for t in load_web_targets() if t.get("name")]
 
 
+_VIS_CACHE = {}      # (web, include_acked) -> (รุ่นชุดเอกสาร, mtime ไฟล์ ack, หมดอายุ, ผล)
+
+
 def _visible(web, include_acked=False):
+    """log ที่แสดงได้ (ผ่าน cache: หน้า Dashboard เรียกเครื่องละ 4 ครั้งต่อคำขอ ทุก 10 วิ ต่อแท็บ)"""
+    ver, _ = _raw_hits()
+    try:
+        amt = os.path.getmtime(log_ack_service.ACK_FILE)
+    except OSError:
+        amt = 0
+    key, now = (str(web or ""), bool(include_acked)), time.time()
+    c = _VIS_CACHE.get(key)
+    if c and c[0] == ver and c[1] == amt and c[2] > now:
+        return c[3]
+    out = _visible_calc(web, include_acked)
+    if len(_VIS_CACHE) > 500:
+        _VIS_CACHE.clear()
+    _VIS_CACHE[key] = (ver, amt, now + SCAN_TTL, out)
+    return out
+
+
+def _visible_calc(web, include_acked=False):
     """log ที่แสดงได้: มี metrics + (ยังไม่ acknowledge)   web ว่าง/"all" = รวมทุกเครื่อง ใหม่ -> เก่า"""
     if is_all(web):
         merged = []
