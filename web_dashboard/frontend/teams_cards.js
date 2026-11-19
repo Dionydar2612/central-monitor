@@ -13,10 +13,12 @@
     function render(t, ctx) {
         return String(t || "").replace(/\{(\w+)\}/g, (m, k) => ctx[k] == null ? "" : String(ctx[k])).replace(/[ \t]{2,}/g, " ").replace(/\[\]/g, "").trim();
     }
-    function ctxOf(cat) {
-        const s = C.data.samples[cat] || {};
-        return { prefix: "Central Monitor Notification", ...s, device: s.machine + (s.host ? ` [${s.host}]` : ""),
-            time: new Date().toLocaleString("en-US"), duration: "5 นาที" };
+    /* ตัวอย่างการ์ด: หลัง ":" แสดงชื่อช่อง (เช่น Device_Name) แทนค่าจริง · การ์ดที่ส่งจริงใส่ค่าจริง */
+    const NAMES = { machine: "Device_Name", host: "IP_Address", group: "Group_Name", sensor: "Sensor_Name", level: "Level",
+        status: "Status", value: "Last_Value", threshold: "Threshold", port: "Port", output: "Output_Name", message: "Message",
+        url: "URL", duration: "Duration", time: "Time", count: "Count", icon: "", changes: ["Change_1", "Change_2"] };
+    function ctxOf() {
+        return { prefix: "Central Monitor Notification", ...NAMES, device: "Device_Name [IP_Address]" };
     }
     function draw() {
         const d = C.data, t = cur(), all = Object.keys(d.fields);
@@ -37,7 +39,7 @@
         preview();
     }
     function preview() {
-        const t = cur(), ctx = ctxOf(C.cat), d = C.data;
+        const t = cur(), ctx = ctxOf(), d = C.data;
         let h = `<div class="tcTitle" style="color:${COLOR[C.cat]}">${esc(render(t.title, ctx) || render(d.defaults[C.cat].title, ctx))}</div>`;
         t.fields.forEach(f => {
             let v = ctx[f];

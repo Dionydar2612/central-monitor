@@ -124,18 +124,16 @@ def card(cat, level, ctx, cards=None, summary=None):
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": content}]}
 
 
-SAMPLE = {
-    "alert": {"machine": "DEV_ARKHEION", "host": "172.25.20.51", "sensor": "CPU", "level": "WARNING",
-              "status": "WARNING – CPU ใช้ไป 82% (เกณฑ์ 80%)", "value": "82 %", "threshold": "Warning ≥ 80% · Error ≥ 95%"},
-    "rule": {"machine": "web-01", "host": "10.0.0.5", "sensor": "RAM สูง (กฎ)", "level": "ERROR",
-             "status": "ERROR – RAM ใช้ไป 93%", "value": "93 %", "threshold": "Error ≥ 90%", "message": "แจ้งทีม DBA"},
-    "queue": {"machine": "abc86", "host": "172.25.16.94", "sensor": "THMux Output[1]", "port": "16100/TCP", "output": "Output[1]",
-              "level": "WARNING", "status": "WARNING – เหลือง (WARN)", "value": "511",
-              "message": "queue exceed <Set On Stage> (size=511, CRITICAL SIZE=500)"},
-    "netstat": {"machine": "abc86", "host": "172.25.16.94", "sensor": "Netstat :16100/tcp Connections", "port": "16100/TCP",
-                "level": "ERROR", "status": "ERROR – Connections 520", "value": "520", "threshold": "500"},
-    "web": {"machine": "Intranet", "sensor": "Web check", "level": "DOWN", "status": "DOWN – เว็บ Intranet ล่ม (HTTP 502)",
-            "url": "https://intranet.local", "value": "HTTP 502"},
-    "software": {"machine": "abc86", "host": "172.25.16.94", "count": 2,
-                 "changes": ["ติดตั้ง: 7-Zip 23.01", "อัปเดต: Google Chrome 129 → 130"]},
+SAMPLE = {   # การ์ดตัวอย่าง (ส่งทดสอบ): หลัง ":" เป็นชื่อช่อง ไม่ใช่ค่าจริง
+    "alert": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "level": "WARNING",
+              "status": "Status", "value": "Last_Value", "threshold": "Threshold", "message": "Message"},
+    "rule": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "level": "ERROR",
+             "status": "Status", "value": "Last_Value", "threshold": "Threshold", "message": "Message"},
+    "queue": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "port": "Port", "output": "Output_Name",
+              "level": "WARNING", "status": "Status", "value": "Last_Value", "message": "Message"},
+    "netstat": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "port": "Port",
+                "level": "ERROR", "status": "Status", "value": "Last_Value", "threshold": "Threshold"},
+    "web": {"machine": "Device_Name", "sensor": "Sensor_Name", "level": "DOWN", "status": "Status",
+            "url": "URL", "value": "Last_Value"},
+    "software": {"machine": "Device_Name", "host": "IP_Address", "count": 2, "changes": ["Change_1", "Change_2"]},
 }

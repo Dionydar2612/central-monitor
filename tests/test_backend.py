@@ -152,10 +152,10 @@ class Backend(unittest.TestCase):
         self.assertEqual(c.put("/api/notify-settings/cards", json={"reset": ["queue"]}).json["custom"], [])
         self.assertEqual(c.post("/api/notify-settings/cards/test", json={"cat": "queue"}).status_code, 400)   # ยังไม่มี URL
         import card_templates
-        p = card_templates.card("queue", "warning", dict(card_templates.SAMPLE["queue"], device="abc86"),
+        p = card_templates.card("queue", "warning", dict(card_templates.SAMPLE["queue"], machine="abc86", device="abc86"),
                                 {"queue": {"title": "{machine} {port}", "fields": ["port"], "labels": {"port": "พอร์ต"}, "note": "เคลียร์ {machine}"}})
         body = p["attachments"][0]["content"]["body"]
-        self.assertEqual([b["text"] for b in body], ["abc86 16100/TCP", "**พอร์ต:** 16100/TCP", "เคลียร์ abc86"])
+        self.assertEqual([b["text"] for b in body], ["abc86 Port", "**พอร์ต:** Port", "เคลียร์ abc86"])
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         a, b = (open(os.path.join(root, x, "card_templates.py"), "rb").read() for x in ("start_push_log/puller", "web_dashboard/backend"))
         self.assertEqual(a, b)
