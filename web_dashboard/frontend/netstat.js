@@ -131,7 +131,16 @@ function renderDash() {
     const d = N.data; if (!d) return;
     const s = d.summary || {}, now = Date.now() / 1000, fh = $("fHost").value;
     const rows = (d.lights || []).filter(l => !fh || l.web === fh).map(l => ({ ...l, out: `${l.log} ${l.ch}` }));
-    (d.alerts || []).filter(a => a.status === "active" && !String(a.kind).startsWith("app_") && (!fh || a.web === fh))
+    (d.rows || []).filter(r => !fh || r.web === fh).forEach(r => {       // พอร์ตที่เลือก Monitor ไว้ = แถวละ 1 พอร์ต
+        const color = { normal: "green", warning: "yellow" }[r.status] || (r.status === "unknown" ? "yellow" : "red");
+        const q = r.queue != null ? ` · Queue ${r.queue}` : "";
+        const msg = r.status === "offline" || r.status === "stale" ? (STATUS[r.status] || [r.status])[0]
+            : r.listening === false ? "พอร์ตไม่ LISTEN" : `Connections ${r.conn ?? 0}${r.established != null ? ` (EST ${r.established})` : ""}${q}`;
+        const k = `${r.web}|${r.key}`, ps = N.portSince || (N.portSince = {});
+        if (!ps[k] || ps[k].c !== color) ps[k] = { c: color, t: now };
+        rows.push({ web: r.web, ip: r.ip, port: portTxt(r), out: r.proc || "-", color, msg, ts: r.last_update, changed: ps[k].t });
+    });
+    (d.alerts || []).filter(a => a.status === "active" && !a.port && !String(a.kind).startsWith("app_") && (!fh || a.web === fh))
         .forEach(a => rows.push({ web: a.web, ip: a.ip, port: a.port, out: a.process || "-", color: a.level === "critical" ? "red" : "yellow",
             msg: `${KIND[a.kind] || a.kind}${a.message ? " · " + a.message : ""}`, ts: a.last || a.first, changed: a.first }));
     const ord = { red: 0, yellow: 1, green: 2 };
@@ -249,7 +258,7 @@ function appHostHtml(d, ed) {
         + `<label>แจ้งเมื่อเกินนาน ≥ <input class="nxTh" id="apAfter" inputmode="numeric" value="${esc(c.notify_after ?? 10)}"${dis}> วินาที</label>`
         + `<label>หรือ size ≥ <input class="nxTh nxW" id="apCrit" inputmode="numeric" placeholder="ไม่ตั้ง" value="${esc(c.critical_size ?? "")}"${dis}> = Critical</label>`
         + `<small class="st-mut">สั้นกว่านี้ = บันทึกใน Alerts อย่างเดียว</small></div>`
-        + (apps.length ? `<div class="tblw"><table class="st-tbl nxTbl"><thead><tr><th>Log</th><th>Output</th><th>Port</th><th>Status</th><th class="n">Size</th><th class="n">Critical</th><th class="n">Exceed</th><th class="n">Disconnect</th><th class="n">Unknown Socket</th><th class="n">Drop</th></tr></thead><tbody>`
+        + (apps.length ? `<div class="tblw"><table class="st-tbl nxTbl"><thead><tr><th>Log</th><th>Output / Process</th><th>Port</th><th>Status</th><th class="n">Size</th><th class="n">Critical</th><th class="n">Exceed</th><th class="n">Disconnect</th><th class="n">Unknown Socket</th><th class="n">Drop</th></tr></thead><tbody>`
             + apps.map(a => `<tr><td>${esc(a.log)}</td><td>${esc(a.ch)}</td><td>${a.port ?? na()}</td><td>${a.state ? pill(["Queue exceed", "cr"]) : pill(["Normal", "ok"])}</td><td class="n">${a.size != null ? Number(a.size).toLocaleString() : na()}</td><td class="n">${a.critical != null ? Number(a.critical).toLocaleString() : na()}</td>`
                 + ["exceed", "disconnect", "unknown_socket", "drop"].map(k => `<td class="n">${(a.counts || {})[k] ?? "-"}</td>`).join("") + `</tr>`).join("") + `</tbody></table></div>`
             : `<div class="empty">ยังไม่พบ — ตั้ง path ของไฟล์ log บนเครื่องนี้ก่อน (set-logs.bat หรือ Settings > ไฟล์ log แล้วติดตั้งซ้ำ)</div>`);
