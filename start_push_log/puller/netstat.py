@@ -563,10 +563,24 @@ KIND_TEXT = {"queue": "Queue", "conn": "Connections", "not_listening": "Not list
              "agent_stale": "Agent stopped", "queue_spike": "Queue spike", "app_queue": "Queue exceed", "app_error": "Log ERROR"}
 
 
+COLOR_TH = {"green": "เขียว ปกติ", "yellow": "เหลือง WARN", "red": "แดง ERROR / CRITICAL"}
+
+
 def to_system_events(events, groups=None, priorities=None):
     """เหตุการณ์ของ AlertEngine -> รายการ System log (+ ข้อมูลการ์ด Teams แบบเดียวกับ sensor)"""
     out = []
     for what, a in events:
+        if what == "light":
+            lv = {"red": "error", "yellow": "warning"}.get(a["color"], "recovered")
+            pv = {"red": "error", "yellow": "warning"}.get(a["prev"], "ok")
+            name = f"Netstat {a['log']} {a['ch']}" + (f" port {a['port']}" if a.get("port") else "")
+            out.append({"source": "netstat", "level": lv, "web": a["web"], "group": (groups or {}).get(a["web"], ""),
+                        "sensor": name, "kind": "custom", "sid": f"{a['web']}::light::{a['key']}", "from": pv,
+                        "to": "ok" if lv == "recovered" else lv, "value": a.get("size"), "unit": "", "host": a.get("ip"),
+                        "priority": (priorities or {}).get(a["web"], 4 if lv == "error" else 3),
+                        "message": f"{a['web']} ({a.get('ip', '')}) · {name} · {COLOR_TH[a['color']]} · {a['msg']}",
+                        "netstat_event": "light"})
+            continue
         lv = {"critical": "error", "warning": "warning"}.get(a["level"], "warning")
         if a["kind"] in ("host_offline", "agent_stale"):
             lv = "down" if a["level"] == "critical" else lv
@@ -627,6 +641,8 @@ class Monitor:
         self.engine = AlertEngine(_read(ALERTS_FILE, {}))
         self.hosts = {}            # web -> สถานะล่าสุด
         self.err_seen = {}         # web -> เวลาของบรรทัด ERROR ล่าสุดที่แจ้งแล้ว
+        self.lights = {w: {l["key"]: l for l in h.get("lights") or []}           # web -> {log/ch: สถานะล่าสุด (สี)}
+                       for w, h in (_read(LIVE_FILE, {}).get("hosts") or {}).items()}
         self.inflight = {}         # web -> future
         self.next_at = {}
         self.baselines = {}
@@ -735,15 +751,45 @@ class Monitor:
                            "log": e.get("log"), "ch": e.get("ch"), "level": "critical", "first": e["ts"], "last": e["ts"],
                            "message": e.get("msg", ""), "status": "logged", "id": f"{web}::err@{e['ts']}:{e['seq']}"}
                     self.engine.history.append(rec)
-                    out.append(("logerror", rec))
                     changed = True
         self.err_seen[web] = max(top, seen or 0)
         for app in (snap.get("apps") or {}).values():
             for ep in app["episodes"]:
-                ev, ch = self.engine.app_episode(web, h.get("ip", ""), app, ep, hc["apps"], now)
-                out += ev
+                ev, ch = self.engine.app_episode(web, h.get("ip", ""), app, ep, hc["apps"], now)   # เก็บประวัติ (Alerts / History)
                 changed = changed or ch
-        return out, changed
+        lev = self._lights(web, h, hc, now)
+        return lev, changed or bool(lev)
+
+    def _lights(self, web, h, hc, now):
+        """สถานะล่าสุดของแต่ละ Output (เขียว / เหลือง / แดง) จากบรรทัด log ล่าสุด · แจ้งเตือนทุกครั้งที่สีเปลี่ยน"""
+        snap = h.get("snap") or {}
+        crit = hc["apps"].get("critical_size")
+        last = {}
+        for e in sorted(snap.get("app_events") or [], key=lambda x: (-x["ts"], -x["seq"])):
+            last.setdefault(f"{e.get('log')}/{e.get('ch')}", e)
+        cur, out = self.lights.setdefault(web, {}), []
+        for app in (snap.get("apps") or {}).values():
+            k = app["key"]
+            if app.get("size") is None and not app.get("state") and k not in last:
+                continue                                   # ไม่ใช่คิว (เช่น "Clear output[1]")
+            e = last.get(k)
+            lv = (e or {}).get("level", "")
+            color = "red" if lv == "ERROR" else "yellow" if lv.startswith("WARN") else "green" if e else ("yellow" if app.get("state") else "green")
+            if color == "yellow" and not app.get("state") and lv.startswith("WARN") and app.get("size") is not None \
+                    and app.get("critical") and app["size"] < app["critical"]:
+                color = "green"                            # คิวลดลงแล้วแม้ไม่มีบรรทัด Clear
+            if app.get("state") and crit and (app.get("size") or 0) >= crit:
+                color = "red"
+            msg = (e or {}).get("msg") or ("ปกติ" if color == "green" else "queue exceed")
+            ts = (e or {}).get("ts") or app.get("since") or now
+            old = cur.get(k)
+            row = {"key": k, "log": app["log"], "ch": app["ch"], "port": app.get("port"), "size": app.get("size"),
+                   "critical": app.get("critical"), "color": color, "msg": msg, "ts": ts,
+                   "changed": old["changed"] if old and old["color"] == color else now}
+            cur[k] = row
+            if (old is None and color != "green") or (old is not None and old["color"] != color):
+                out.append(("light", dict(row, web=web, ip=h.get("ip", ""), prev=(old or {}).get("color", "green"))))
+        return out
 
     def _update(self, web, samples, err, now):
         h = self.hosts.get(web)
@@ -782,7 +828,8 @@ class Monitor:
                               support=snap.get("support"), ports=ports, has_data=bool(snap),
                               apps=sorted(snap.get("apps", {}).values(), key=lambda a: (a["log"], a["ch"])),
                               app_events=(snap.get("app_events") or [])[:40], app_sources=snap.get("app_sources") or [],
-                              app_every=snap.get("app_every"))
+                              app_every=snap.get("app_every"),
+                              lights=sorted((self.lights.get(web) or {}).values(), key=lambda l: (l["log"], l["ch"])))
         _write(LIVE_FILE, {"updated": now, "hosts": hosts, "active": list(self.engine.active.values())})
         self.written_at, self.dirty = now, False
 

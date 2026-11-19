@@ -126,28 +126,24 @@ function queueCell(r, k) {
     const lv = r.queue_level ? ` ${r.queue_level === "critical" ? "cr" : "wr"}` : "";
     return `<b class="nxV${lv || (r.app_state ? " cr" : "")}" title="${esc(r.queue_kind || "")}">${Number(r.queue).toLocaleString()}</b>${r.accept_limit ? `<small> / ${Number(r.accept_limit).toLocaleString()}</small>` : ""}`;
 }
+const LIGHT = { red: ["แดง", "dn"], yellow: ["เหลือง", "wr"], green: ["เขียว", "ok"] };
 function renderDash() {
     const d = N.data; if (!d) return;
-    const s = d.summary || {}, now = Date.now() / 1000;
-    const fh = $("fHost").value, al = (d.alerts || []).filter(a => !fh || a.web === fh);
-    const act = al.filter(a => a.status === "active");
+    const s = d.summary || {}, now = Date.now() / 1000, fh = $("fHost").value;
+    const rows = (d.lights || []).filter(l => !fh || l.web === fh).map(l => ({ ...l, out: `${l.log} ${l.ch}` }));
+    (d.alerts || []).filter(a => a.status === "active" && !String(a.kind).startsWith("app_") && (!fh || a.web === fh))
+        .forEach(a => rows.push({ web: a.web, ip: a.ip, port: a.port, out: a.process || "-", color: a.level === "critical" ? "red" : "yellow",
+            msg: `${KIND[a.kind] || a.kind}${a.message ? " · " + a.message : ""}`, ts: a.last || a.first, changed: a.first }));
+    const ord = { red: 0, yellow: 1, green: 2 };
+    rows.sort((x, y) => ord[x.color] - ord[y.color] || String(x.web).localeCompare(y.web));
+    const n = c => rows.filter(r => r.color === c).length;
     $("nxTiles").innerHTML = tile("เครื่องทั้งหมด", s.hosts, "tot", "Windows Server") + tile("ออนไลน์", s.online, "up", `${(s.hosts || 0) - (s.online || 0)} ไม่ตอบ`)
-        + tile("Critical", s.critical, s.critical ? "dn" : "tot", "ยังเกิดอยู่") + tile("Warning", s.warning, s.warning ? "nok" : "tot", "ยังเกิดอยู่");
-    $("nxNow").innerHTML = act.length ? act.map(a => `<tr><td>${alertLevel(a)}</td><td><b>${esc(a.web)}</b></td><td>${esc(a.ip || "")}</td><td>${esc(what(a))}</td>`
-        + `<td class="n">${a.value === null || a.value === undefined ? "-" : `<b class="nxV ${a.level === "critical" ? "cr" : "wr"}">${Number(a.value).toLocaleString()}</b>`}</td>`
-        + `<td>${esc(fmtT(a.first))}</td><td>${esc(dur(now - a.first))}</td></tr>`).join("")
-        : `<tr><td colspan="7" class="empty">ทุกเครื่องปกติ</td></tr>`;
-    const feed = [];
-    al.forEach(a => {
-        if (a.kind === "app_error") return feed.push({ t: a.first, a, k: "err" });
-        feed.push({ t: a.first, a, k: "open" });
-        if (a.status === "recovered") feed.push({ t: a.recovered_at || a.last, a, k: "ok" });
-    });
-    feed.sort((x, y) => y.t - x.t);
-    $("nxFeed").innerHTML = feed.length ? feed.slice(0, 40).map(({ t, a, k }) => {
-        const c = k === "ok" ? "ok" : a.level === "critical" ? "cr" : "wr", l = k === "ok" ? "กลับปกติ" : k === "err" ? "ERROR" : "เกิดปัญหา";
-        return `<div class="nxAL ${c}"><time>${esc(fmtT(t))}</time><b>${esc(a.web)}</b><em class="evst ${c === "cr" ? "dn" : c}">${l}</em><span class="m">${esc(what(a))}${k === "ok" && a.duration ? ` · เป็นอยู่ ${esc(dur(a.duration))}` : ""}</span></div>`;
-    }).join("") : `<div class="empty">ยังไม่มีการแจ้งเตือน</div>`;
+        + tile("แดง", n("red"), n("red") ? "dn" : "tot", "ERROR / CRITICAL") + tile("เหลือง", n("yellow"), n("yellow") ? "nok" : "tot", "WARN") + tile("เขียว", n("green"), "up", "ปกติ");
+    $("nxNow").innerHTML = rows.length ? rows.map(r => {
+        const [t, c] = LIGHT[r.color] || LIGHT.green;
+        return `<tr class="nxLt ${c}"><td><span class="evst ${c}">${t}</span>${r.offline ? ` <small>เครื่องไม่ตอบ</small>` : ""}</td><td><b>${esc(r.web)}</b></td><td>${esc(r.ip || "")}</td>`
+            + `<td>${r.port ?? "-"}</td><td>${esc(r.out)}</td><td class="m">${esc(r.msg || "")}</td><td>${esc(fmtT(r.ts))}</td><td>${r.changed ? esc(dur(now - r.changed)) : "-"}</td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="empty">ยังไม่มีข้อมูล</td></tr>`;
 }
 function what(a) {
     if (a.kind === "app_queue") return `${a.log} ${a.ch} คิวเกิน${a.peak ? ` (สูงสุด ${Number(a.peak).toLocaleString()}${a.threshold ? ` / ${Number(a.threshold).toLocaleString()}` : ""})` : ""}${a.port ? ` · port ${a.port}` : ""}`;

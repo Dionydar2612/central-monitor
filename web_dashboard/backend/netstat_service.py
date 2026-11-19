@@ -326,7 +326,7 @@ def dashboard(filters=None):
                 rows.append(row)
                 for s, v in (row.get("states") or {}).items():
                     states[s] = states.get(s, 0) + (v or 0)
-    apps, app_events, app_hosts = [], [], []
+    apps, app_events, app_hosts, lights = [], [], [], []
     for web, t in tmap.items():
         h = hosts.get(web) or {}
         n = _ncfg(t)
@@ -343,6 +343,7 @@ def dashboard(filters=None):
                 row.update(state=None, size=None)
             apps.append(row)
         app_events += [dict(e, web=web) for e in h.get("app_events") or []]
+        lights += [dict(l, web=web, ip=t.get("host") or "", offline=st != "online") for l in h.get("lights") or []]
     app_events.sort(key=lambda e: -(e.get("ts") or 0))
     alerts = load_alerts()
     active = [a for a in live.get("active") or alerts.get("active") or []
@@ -358,6 +359,7 @@ def dashboard(filters=None):
                     "critical": sum(1 for a in active if a.get("level") == "critical")},
         "rows": rows, "states": states, "top_queue": top_q, "top_conn": top_c, "alerts": recent,
         "apps": apps, "app_events": app_events[:50], "app_hosts": app_hosts,
+        "lights": sorted(lights, key=lambda l: ({"red": 0, "yellow": 1}.get(l["color"], 2), l["web"], l["log"], l["ch"])),
         "hosts": sorted(tmap), "active": active,
     }
 

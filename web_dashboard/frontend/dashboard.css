@@ -1782,3 +1782,4 @@ html[data-platforms=windows] .both-only,html[data-platforms=linux] .both-only{di
 .nxZero{color:var(--mut);cursor:help}
 .nxNotes{display:grid;gap:4px;margin-top:8px}.nxNoteRow{font-size:13px;padding:8px 10px;border-radius:8px;background:rgba(245,180,0,.1)}
 .nxNoteRow small{display:block;color:var(--mut);margin-top:2px;overflow-wrap:anywhere}
+.nxLt .evst::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor;margin-right:6px}.nxLt.dn{background:rgba(229,72,77,.07)}.nxLt.wr{background:rgba(194,124,0,.07)}.nxLt .m{overflow-wrap:anywhere;max-width:520px}

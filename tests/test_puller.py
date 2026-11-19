@@ -1184,15 +1184,30 @@ cm_netstat_app_event{seq="4",log="THMux",ch="Output[2]",level="WARN",msg="queue 
         self.assertEqual(sys_ev[0]["sensor"], "Netstat THMux Output[4] Queue exceed")
         # บรรทัด ERROR ใหม่ใน log -> แจ้ง 1 ครั้ง (ไม่แจ้งของที่มีอยู่ก่อนเริ่ม)
         m = netstat.Monitor.__new__(netstat.Monitor)
-        m.engine, m.err_seen = netstat.AlertEngine(), {}
+        m.engine, m.err_seen, m.lights = netstat.AlertEngine(), {}, {}
         h = {"online": True, "ip": "1.1.1.1", "snap": {"apps": {}, "app_events": [{"seq": 1, "ts": 990, "log": "THMux", "ch": "Output[1]", "level": "ERROR", "msg": "old"}]}}
         hc2 = {"enabled": True, "apps": {"enabled": True}}
         self.assertEqual(m._apps("w", h, hc2, 1000)[0], [])
         h["snap"]["app_events"].append({"seq": 2, "ts": 995, "log": "THMux", "ch": "Output[1]", "level": "ERROR", "msg": "socket fail"})
         ev2 = m._apps("w", h, hc2, 1000)[0]
-        self.assertEqual([(e[0], e[1]["message"]) for e in ev2], [("logerror", "socket fail")])
-        self.assertIn("ERROR: socket fail", netstat.to_system_events(ev2)[0]["message"])
-        self.assertEqual(m._apps("w", h, hc2, 1001)[0], [])
+        self.assertEqual(ev2, [])                          # ERROR ไม่แจ้งแยก แต่รวมเป็นสีแดง
+        self.assertEqual([r["status"] for r in m.engine.history], ["logged"])
+        # ไฟสถานะ: แจ้งทุกครั้งที่สีเปลี่ยน
+        m.lights = {}
+        app = {"key": "THMux/Output[1]", "log": "THMux", "ch": "Output[1]", "state": 1, "size": 600, "critical": 500, "port": 16100}
+        ev = lambda lv, ts: {"seq": ts, "ts": ts, "log": "THMux", "ch": "Output[1]", "level": lv, "msg": lv.lower()}
+        h = {"online": True, "ip": "1.1.1.1", "snap": {"apps": {"THMux/Output[1]": dict(app, episodes=[])}, "app_events": [ev("WARN", 10)]}}
+        hc3 = {"enabled": True, "apps": {"enabled": True, "critical_size": None}}
+        l1 = m._lights("w", h, hc3, 20)
+        self.assertEqual([(e[1]["color"], e[1]["prev"], e[1]["port"]) for e in l1], [("yellow", "green", 16100)])
+        self.assertEqual(m._lights("w", h, hc3, 21), [])                       # สีเดิม ไม่แจ้งซ้ำ
+        h["snap"]["app_events"].append(ev("ERROR", 30))
+        self.assertEqual([e[1]["color"] for e in m._lights("w", h, hc3, 31)], ["red"])
+        h["snap"]["app_events"].append(ev("RECOVER", 40)); h["snap"]["apps"]["THMux/Output[1]"].update(state=0, size=499)
+        l3 = m._lights("w", h, hc3, 41)
+        self.assertEqual([(e[1]["color"], e[1]["prev"]) for e in l3], [("green", "red")])
+        se = netstat.to_system_events(l3)[0]
+        self.assertEqual((se["level"], se["from"], se["sensor"]), ("recovered", "error", "Netstat THMux Output[1] port 16100"))
         # เพิ่งจบ + size เกิน critical_size ที่ตั้ง -> แจ้งครั้งเดียวแบบ "กลับปกติแล้ว" ระดับ critical
         cfg = dict(hc["apps"], critical_size=1000000)
         ev = eng.app_episode("w", "", a2, dict(a2["episodes"][0], start=2000, end=2001, id="2000"), cfg, 2010)[0]
