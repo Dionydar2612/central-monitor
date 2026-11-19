@@ -65,6 +65,7 @@ MAX_PORTS = 400               # ต่อเครื่องใน live.json
 SPIKE_FACTOR = 3.0            # คิวพุ่ง: ค่าปัจจุบัน >= 3 เท่าของค่าเฉลี่ยเคลื่อนที่
 SPIKE_MIN = 10
 APP_NOTIFY_AFTER = 10        # วินาที: คิวของโปรแกรมเกินนานเท่านี้ขึ้นไปจึงแจ้ง (สั้นกว่า = บันทึกอย่างเดียว)
+ERR_HOLD = 300               # วินาที: ERROR ใน log ไม่มีบรรทัด "กลับปกติ" -> แดงไว้เท่านี้นับจาก ERROR ล่าสุด แล้วกลับเป็นเขียว
 APP_RECENT = 300             # วินาที: ช่วงที่จบไปแล้วที่เพิ่งเห็นครั้งแรก แจ้งเฉพาะที่จบภายในเท่านี้ (ไม่แจ้งของเก่าตอนเริ่มระบบ)
 STATES = ("established", "syn_sent", "syn_received", "fin_wait1", "fin_wait2", "time_wait",
           "close_wait", "last_ack", "closing")
@@ -760,6 +761,20 @@ class Monitor:
         lev = self._lights(web, h, hc, now)
         return lev, changed or bool(lev)
 
+    @staticmethod
+    def _light_port(app, hc, snap):
+        """Output / Input ของโปรแกรมนี้เป็นพอร์ตไหน: จาก log ("port change --> n") หรือพอร์ตที่ Monitor ไว้ของ process เดียวกัน
+        Output = พอร์ตที่ LISTEN (ขาเข้า) · Input = การเชื่อมต่อขาออก  (มีพอร์ตที่เข้าเงื่อนไขพอดี 1 พอร์ตเท่านั้น)"""
+        mon = [p for p in hc.get("ports") or [] if p.get("enabled", True)]
+        if app.get("port"):
+            m = [p for p in mon if p["port"] == app["port"]]
+            return (m[0]["key"] if m else None), app["port"]
+        d = "in" if app["ch"].lower().startswith("output") else "out" if app["ch"].lower().startswith("input") else None
+        sp = (snap or {}).get("ports") or {}
+        name = (app.get("log") or "").lower()
+        m = [p for p in mon if p["dir"] == d and name and name in str((sp.get(p["key"]) or {}).get("proc") or "").lower()]
+        return (m[0]["key"], m[0]["port"]) if len(m) == 1 else (None, None)
+
     def _lights(self, web, h, hc, now):
         """สถานะล่าสุดของแต่ละ Output (เขียว / เหลือง / แดง) จากบรรทัด log ล่าสุด · แจ้งเตือนทุกครั้งที่สีเปลี่ยน"""
         snap = h.get("snap") or {}
@@ -780,10 +795,13 @@ class Monitor:
                 color = "green"                            # คิวลดลงแล้วแม้ไม่มีบรรทัด Clear
             if app.get("state") and crit and (app.get("size") or 0) >= crit:
                 color = "red"
+            if color == "red" and lv == "ERROR" and not app.get("state") and now - e["ts"] > ERR_HOLD:
+                color = "green"                            # ERROR ผ่านไปนานแล้ว ไม่มีซ้ำ = กลับปกติ
             msg = (e or {}).get("msg") or ("ปกติ" if color == "green" else "queue exceed")
             ts = (e or {}).get("ts") or app.get("since") or now
             old = cur.get(k)
-            row = {"key": k, "log": app["log"], "ch": app["ch"], "port": app.get("port"), "size": app.get("size"),
+            pk, port = self._light_port(app, hc, snap)
+            row = {"key": k, "log": app["log"], "ch": app["ch"], "port": port, "pkey": pk, "size": app.get("size"),
                    "critical": app.get("critical"), "color": color, "msg": msg, "ts": ts,
                    "changed": old["changed"] if old and old["color"] == color else now}
             cur[k] = row

@@ -130,7 +130,8 @@ const LIGHT = { red: ["แดง", "dn"], yellow: ["เหลือง", "wr"], 
 function renderDash() {
     const d = N.data; if (!d) return;
     const s = d.summary || {}, now = Date.now() / 1000, fh = $("fHost").value;
-    const rows = (d.lights || []).filter(l => !fh || l.web === fh).map(l => ({ ...l, out: `${l.log} ${l.ch}` }));
+    const ord = { red: 0, yellow: 1, green: 2 }, rows = [];
+    const lights = (d.lights || []).filter(l => !fh || l.web === fh), used = new Set();
     (d.rows || []).filter(r => !fh || r.web === fh).forEach(r => {       // พอร์ตที่เลือก Monitor ไว้ = แถวละ 1 พอร์ต
         const color = { normal: "green", warning: "yellow" }[r.status] || (r.status === "unknown" ? "yellow" : "red");
         const q = r.queue != null ? ` · Queue ${r.queue}` : "";
@@ -138,12 +139,19 @@ function renderDash() {
             : r.listening === false ? "พอร์ตไม่ LISTEN" : `Connections ${r.conn ?? 0}${r.established != null ? ` (EST ${r.established})` : ""}${q}`;
         const k = `${r.web}|${r.key}`, ps = N.portSince || (N.portSince = {});
         if (!ps[k] || ps[k].c !== color) ps[k] = { c: color, t: now };
-        rows.push({ web: r.web, ip: r.ip, port: portTxt(r), out: r.proc || "-", color, msg, ts: r.last_update, changed: ps[k].t });
+        let row = { web: r.web, ip: r.ip, port: portTxt(r), out: r.proc || "-", color, msg, ts: r.last_update, changed: ps[k].t };
+        lights.filter(l => l.web === r.web && l.pkey === r.key).forEach(l => {   // Output / Input ของพอร์ตนี้ -> เปลี่ยนสีแถวเดิม ไม่สร้างแถวใหม่
+            used.add(l);
+            const chMsg = `${l.ch}: ${l.msg}`;
+            if (ord[l.color] < ord[row.color]) row = { ...row, color: l.color, msg: chMsg, ts: l.ts, changed: l.changed, out: `${l.log} · ${l.ch}` };
+            else if (row.out.indexOf("·") < 0) row.out = `${l.log} · ${l.ch}`;
+        });
+        rows.push(row);
     });
+    lights.filter(l => !used.has(l)).forEach(l => rows.push({ ...l, out: `${l.log} ${l.ch}` }));
     (d.alerts || []).filter(a => a.status === "active" && !a.port && !String(a.kind).startsWith("app_") && (!fh || a.web === fh))
         .forEach(a => rows.push({ web: a.web, ip: a.ip, port: a.port, out: a.process || "-", color: a.level === "critical" ? "red" : "yellow",
             msg: `${KIND[a.kind] || a.kind}${a.message ? " · " + a.message : ""}`, ts: a.last || a.first, changed: a.first }));
-    const ord = { red: 0, yellow: 1, green: 2 };
     rows.sort((x, y) => ord[x.color] - ord[y.color] || String(x.web).localeCompare(y.web));
     const n = c => rows.filter(r => r.color === c).length;
     $("nxTiles").innerHTML = tile("เครื่องทั้งหมด", s.hosts, "tot", "Windows Server") + tile("ออนไลน์", s.online, "up", `${(s.hosts || 0) - (s.online || 0)} ไม่ตอบ`)

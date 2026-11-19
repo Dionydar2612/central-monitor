@@ -1208,6 +1208,17 @@ cm_netstat_app_event{seq="4",log="THMux",ch="Output[2]",level="WARN",msg="queue 
         self.assertEqual([(e[1]["color"], e[1]["prev"]) for e in l3], [("green", "red")])
         se = netstat.to_system_events(l3)[0]
         self.assertEqual((se["level"], se["from"], se["sensor"]), ("recovered", "error", "Netstat THMux Output[1] port 16100"))
+        # ERROR ไม่มี "กลับปกติ": แดงไว้ ERR_HOLD วินาทีแล้วกลับเขียว
+        inp = {"key": "THMux/Input[1]", "log": "THMux", "ch": "Input[1]", "state": 0, "size": None, "port": None, "episodes": []}
+        h["snap"]["apps"]["THMux/Input[1]"] = inp
+        h["snap"]["app_events"].append({"seq": 50, "ts": 50, "log": "THMux", "ch": "Input[1]", "level": "ERROR", "msg": "received notify disconnect."})
+        h["snap"]["ports"] = {"tcp/out/37404": {"proc": "THMux.exe"}, "tcp/in/16100": {"proc": "THMux.exe"}}
+        hc3["ports"] = [{"key": "tcp/in/16100", "port": 16100, "dir": "in", "enabled": True},
+                        {"key": "tcp/out/37404", "port": 37404, "dir": "out", "enabled": True}]
+        l4 = m._lights("w", h, hc3, 60)
+        self.assertEqual([(e[1]["ch"], e[1]["color"], e[1]["pkey"], e[1]["port"]) for e in l4], [("Input[1]", "red", "tcp/out/37404", 37404)])
+        self.assertEqual(m.lights["w"]["THMux/Output[1]"]["pkey"], "tcp/in/16100")
+        self.assertEqual([(e[1]["ch"], e[1]["color"]) for e in m._lights("w", h, hc3, 50 + netstat.ERR_HOLD + 1)], [("Input[1]", "green")])
         # เพิ่งจบ + size เกิน critical_size ที่ตั้ง -> แจ้งครั้งเดียวแบบ "กลับปกติแล้ว" ระดับ critical
         cfg = dict(hc["apps"], critical_size=1000000)
         ev = eng.app_episode("w", "", a2, dict(a2["episodes"][0], start=2000, end=2001, id="2000"), cfg, 2010)[0]
