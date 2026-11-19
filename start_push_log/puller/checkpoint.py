@@ -24,6 +24,8 @@ checkpoint.py - จำว่า "ดึง log ของแต่ละไฟล
 """
 
 import json
+import atexit
+import time
 import os
 import threading
 
@@ -48,22 +50,55 @@ def load_state():
         return {}
 
 
-def save_state(state):
-    """เขียน checkpoint แบบ atomic
+SAVE_EVERY = 2.0                # วินาที: เขียนไฟล์ไม่บ่อยกว่านี้ (เดิมเขียนทั้งไฟล์หลังดึงทุกไฟล์ log -> CPU สูง)
+_PENDING = {"state": None, "at": 0.0}
 
-    เขียนลงไฟล์ .tmp แล้ว os.replace ทับ เพื่อไม่ให้ไฟล์เสียครึ่ง ๆ กลาง ๆ
-    ถ้า container ดับระหว่างเขียน
-    """
+
+def _write(state):
     os.makedirs(STATE_DIR, exist_ok=True)
-
     tmp_file = CHECKPOINT_FILE + ".tmp"
+    snapshot = dict(state)              # คัดลอกก่อน (thread อื่นอาจกำลังเพิ่ม key)
+    with open(tmp_file, "w") as f:
+        json.dump(snapshot, f, separators=(",", ":"))
+    os.replace(tmp_file, CHECKPOINT_FILE)
+    _PENDING.update(state=None, at=time.time())
 
+
+def save_state(state, force=False):
+    """เขียน checkpoint แบบ atomic (.tmp แล้ว os.replace) ไม่ให้ไฟล์เสียครึ่ง ๆ กลาง ๆ ถ้า container ดับ
+    เรียกถี่ ๆ ได้: เขียนจริงไม่เกินทุก SAVE_EVERY วินาที ที่เหลือเขียนโดย thread เบื้องหลัง
+    (ดับระหว่างนั้น = ดึงซ้ำบางส่วนรอบหน้า ซ้ำดีกว่าหาย)"""
     with _WRITE_LOCK:
-        snapshot = dict(state)          # คัดลอกก่อน (thread อื่นอาจกำลังเพิ่ม key)
-        with open(tmp_file, "w") as f:
-            json.dump(snapshot, f, indent=2, sort_keys=True)
+        if force or time.time() - _PENDING["at"] >= SAVE_EVERY:
+            _write(state)
+        else:
+            _PENDING["state"] = state
+    _start_flusher()
 
-        os.replace(tmp_file, CHECKPOINT_FILE)
+
+def flush():
+    with _WRITE_LOCK:
+        if _PENDING["state"] is not None:
+            _write(_PENDING["state"])
+
+
+def _flusher():
+    while True:
+        time.sleep(SAVE_EVERY)
+        try:
+            flush()
+        except Exception as e:
+            print(f"[WARN] checkpoint flush error {e!r}")
+
+
+_FLUSHER = {"t": None}
+
+
+def _start_flusher():
+    if _FLUSHER["t"] is None:
+        _FLUSHER["t"] = threading.Thread(target=_flusher, daemon=True, name="checkpoint-flush")
+        _FLUSHER["t"].start()
+        atexit.register(flush)
 
 
 def prune_state(state, valid_names):

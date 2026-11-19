@@ -99,6 +99,9 @@ def remote_stat(target, path):
     return int(output)
 
 
+RECENT_DAYS = 2                 # wildcard: ดูเฉพาะไฟล์ที่แก้ไขภายในกี่วัน
+
+
 def list_remote_files(target, path_pattern):
     """หาไฟล์ที่ตรงกับ wildcard เช่น /logs/logapp/*.log บนเครื่องปลายทาง
 
@@ -113,6 +116,7 @@ def list_remote_files(target, path_pattern):
         f"-maxdepth 1 "
         f"-type f "
         f"-name '{pattern}' "
+        f"-mtime -{RECENT_DAYS} "     # เฉพาะไฟล์ที่เขียนใน 2 วันล่าสุด (ไฟล์เก่าไม่เปลี่ยนแล้ว ไม่ต้องเข้าไปเช็กทุกรอบ)
         f"-print"
     )
 

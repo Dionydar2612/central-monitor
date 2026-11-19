@@ -40,6 +40,32 @@ def _facts(body):
             out[m.group(1)] = m.group(2)
     return out
 
+class CheckpointSave(unittest.TestCase):
+    def test_throttle_and_flush(self):
+        """เขียน checkpoint ไม่เกินทุก SAVE_EVERY วิ · flush() เขียนค่าล่าสุด · ไฟล์แบบย่อ"""
+        import json
+        import checkpoint
+        checkpoint._PENDING.update(state=None, at=0.0)
+        checkpoint.save_state({"a": 1})
+        checkpoint.save_state({"a": 2})                       # เร็วเกิน -> รอเขียน
+        self.assertEqual(json.load(open(checkpoint.CHECKPOINT_FILE))["a"], 1)
+        checkpoint.flush()
+        self.assertEqual(open(checkpoint.CHECKPOINT_FILE).read(), '{"a":2}')
+        checkpoint.save_state({"a": 3}, force=True)
+        self.assertEqual(json.load(open(checkpoint.CHECKPOINT_FILE))["a"], 3)
+
+    def test_wildcard_recent_only(self):
+        import ssh_client
+        cmds = []
+        orig = ssh_client.run_ssh
+        ssh_client.run_ssh = lambda t, c: cmds.append(c) or "/l/a.log\n"
+        try:
+            self.assertEqual(ssh_client.list_remote_files({}, "/l/*.log"), ["/l/a.log"])
+        finally:
+            ssh_client.run_ssh = orig
+        self.assertIn("-mtime -2", cmds[0])
+
+
 class SensorGrade(unittest.TestCase):
     TH = {"warning": 80, "error": 90}
 
