@@ -930,8 +930,10 @@ class Backend(unittest.TestCase):
         det = c.get("/api/netstat/hosts/aq-win").json
         self.assertEqual(det["apps_cfg"], {"enabled": True, "notify_after": 30, "critical_size": 100000})
         self.assertEqual(det["apps"][0]["port"], 37518)
-        self.assertEqual(d["app_hosts"][0]["status"], "old-agent")          # live ไม่มี app_every = agent รุ่นเก่า
+        self.assertEqual(d["app_hosts"][0]["status"], "ok")                 # มีข้อมูลคิวแล้ว = ok เสมอ (ไม่ขึ้นกับรายงานไฟล์)
         st = netstat_service.app_status
+        self.assertEqual(st({"app_every": 30, "app_sources": [], "apps": [app]}, "online"), "ok")
+        self.assertEqual(st({"apps": []}, "online"), "old-agent")
         self.assertEqual(st({"app_every": 30, "app_sources": []}, "online"), "no-path")
         self.assertEqual(st({"app_every": 30, "app_sources": [{"files": 0}]}, "online"), "no-file")
         self.assertEqual(st({"app_every": 30, "app_sources": [{"files": 2, "recent": 0}]}, "online"), "old-file")

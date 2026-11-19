@@ -277,6 +277,8 @@ def app_status(h, st):
     """ทำไม Application Queue ของเครื่องยังว่าง: ok / offline / old-agent / no-path / no-file / old-file / no-lines"""
     if st != "online":
         return "offline" if st in ("offline", "stale") else "no-data" if st == "no-data" else "unknown"
+    if queue_apps(h.get("apps")):
+        return "ok"                          # มีข้อมูลคิวแล้ว = อ่าน log ได้ (ไม่ต้องดูรายงานไฟล์)
     if h.get("app_every") is None:
         return "old-agent"                   # agent ยังไม่มีส่วนอ่าน log (ติดตั้งชุดเก่า)
     src = h.get("app_sources") or []

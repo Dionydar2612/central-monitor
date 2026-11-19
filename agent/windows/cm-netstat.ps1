@@ -149,14 +149,12 @@ function Get-AppPatterns {
 function Update-AppSources {
     $since = (Get-Date).AddDays(-2)
     $pats = Get-AppPatterns
-    foreach ($k in @($AppSources.Keys)) { if ($pats -notcontains $k) { $AppSources.Remove($k) } }
+    $fresh = @{}                       # สร้างตารางใหม่ทุกรอบแล้วแทนที่ทั้งก้อน (กัน PowerShell 5.1 ไม่อัปเดตตารางเดิม)
     foreach ($pat in $pats) {
         $all = @(Get-ChildItem -Path $pat -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-        if (-not $AppSources.ContainsKey($pat)) { $AppSources[$pat] = @{ files = 0; newest = ""; lines = 0; recent = 0 } }
-        $AppSources[$pat].files = $all.Count
-        $AppSources[$pat].newest = if ($all.Count) { $all[0].Name } else { "" }
         $recent = @($all | Where-Object { $_.LastWriteTime -gt $since } | Select-Object -First 2)
-        $AppSources[$pat].recent = $recent.Count
+        $old = 0; if ($script:AppSources.ContainsKey($pat)) { $old = [int64]$script:AppSources[$pat].lines }
+        $fresh[$pat] = @{ files = $all.Count; newest = $(if ($all.Count) { $all[0].Name } else { "" }); lines = $old; recent = $recent.Count }
         foreach ($f in $recent) {
             if ($AppFiles.ContainsKey($f.FullName)) { continue }
             $b = New-Object byte[] 2; $enc = [Text.Encoding]::UTF8; $skip = 0
@@ -166,11 +164,12 @@ function Update-AppSources {
             $AppFiles[$f.FullName] = @{ off = [int64]$off; enc = $enc; log = (Split-Path (Split-Path $f.FullName -Parent) -Leaf); pat = $pat }
         }
     }
+    $script:AppSources = $fresh
     $script:AppAt = Get-Date
 }
 function App-Line($log, $line, $pat) {
     $m = $AppRx.Match($line); if (-not $m.Success) { return }
-    if ($pat -and $AppSources.ContainsKey($pat)) { $AppSources[$pat].lines++ }
+    if ($pat -and $script:AppSources.ContainsKey($pat)) { $script:AppSources[$pat].lines++ }
     try { $ts = [int64]([DateTimeOffset][datetime]::ParseExact($m.Groups[1].Value + " " + $m.Groups[2].Value, "yyyyMMdd HH:mm:ss", $Inv)).ToUnixTimeSeconds() } catch { return }
     $lv = $m.Groups[3].Value.ToUpper(); $ch = $m.Groups[4].Value.Trim() + "[" + $m.Groups[5].Value + "]"; $msg = $m.Groups[6].Value.Trim()
     $k = "$log|$ch"
@@ -356,9 +355,18 @@ while ($true) {
 
     # คิวของโปรแกรมจาก log
     $L.Add("# TYPE cm_netstat_app_source gauge")
-    foreach ($pat in $AppSources.Keys) {
-        $src = $AppSources[$pat]
-        $L.Add("cm_netstat_app_source{path=`"$(Esc $pat)`",files=`"$($src.files)`",recent=`"$($src.recent)`",newest=`"$(Esc $src.newest)`"} $($src.lines)")
+    $srcRows = @{}
+    foreach ($pat in @($script:AppSources.Keys)) { $srcRows[$pat] = $script:AppSources[$pat] }
+    if (-not $srcRows.Count) {          # สำรอง: รายงานจากไฟล์ที่กำลังอ่านอยู่จริง
+        foreach ($f in @($AppFiles.Values)) {
+            $pk = [string]$f.pat; if (-not $pk) { continue }
+            if (-not $srcRows.ContainsKey($pk)) { $srcRows[$pk] = @{ files = 0; newest = ""; lines = 0; recent = 0 } }
+            $srcRows[$pk].files++; $srcRows[$pk].recent = [math]::Min(2, $srcRows[$pk].files)
+        }
+    }
+    foreach ($pat in @($srcRows.Keys)) {
+        $src = $srcRows[$pat]
+        $L.Add("cm_netstat_app_source{path=`"$(Esc ($pat -replace '\\', '/'))`",files=`"$($src.files)`",recent=`"$($src.recent)`",newest=`"$(Esc $src.newest)`"} $([int64]$src.lines)")
     }
     $L.Add("# TYPE cm_netstat_app_every_seconds gauge")
     $L.Add("cm_netstat_app_every_seconds $AppEvery")
