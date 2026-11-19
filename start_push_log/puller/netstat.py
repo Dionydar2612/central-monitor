@@ -23,6 +23,11 @@ netstat.py - Netstat Monitor (Windows Server): TCP / UDP / คิว ต่อ�
     alerts.json  {"active": [...], "history": [...]}  เก็บ ALERT_RETENTION วัน
     ย้อนหลัง (กราฟ) = Prometheus (cm_netstat_conn_peak / accept_queue_peak ฯลฯ) ไม่สร้างฐานข้อมูลเพิ่ม
 
+คิวของโปรแกรมจาก log (Application Queue) เช่น THMux
+    agent อ่านไฟล์ log ที่ตั้งไว้แล้ว (Settings / set-logs.bat) เอง แยก Output[n]: exceed -> clear (cm_netstat_app_*)
+    แต่ละช่วงที่เกิน (episode) = 1 alert: บันทึกทุกครั้งใน Alerts · แจ้ง Teams / ป๊อปอัปเมื่อเกินนาน >= apps.notify_after วินาที
+    หรือ size >= apps.critical_size (ตั้งที่ netstat.apps ของเครื่อง)  ไม่สนใจ INFO ยกเว้น "queue decrease" ที่บอกว่ากลับปกติ
+
 แจ้งเตือน (ผ่าน System log + Teams + ป๊อปอัป แบบเดียวกับ sensor)
     queue / conn เกิน warning / critical, พอร์ตที่เลือกไม่ LISTEN, เครื่องไม่ตอบ, agent หยุดส่ง, คิวพุ่งผิดปกติ
     ต้องเป็นต่อเนื่อง CONFIRM ครั้งก่อนเปิด alert · เปิดแล้วไม่สร้างซ้ำ (อัปเดต last / value) · ปกติ RECOVER ครั้ง -> Recovery
@@ -59,6 +64,8 @@ MAX_HISTORY = 5000
 MAX_PORTS = 400               # ต่อเครื่องใน live.json
 SPIKE_FACTOR = 3.0            # คิวพุ่ง: ค่าปัจจุบัน >= 3 เท่าของค่าเฉลี่ยเคลื่อนที่
 SPIKE_MIN = 10
+APP_NOTIFY_AFTER = 10        # วินาที: คิวของโปรแกรมเกินนานเท่านี้ขึ้นไปจึงแจ้ง (สั้นกว่า = บันทึกอย่างเดียว)
+APP_RECENT = 300             # วินาที: ช่วงที่จบไปแล้วที่เพิ่งเห็นครั้งแรก แจ้งเฉพาะที่จบภายในเท่านี้ (ไม่แจ้งของเก่าตอนเริ่มระบบ)
 STATES = ("established", "syn_sent", "syn_received", "fin_wait1", "fin_wait2", "time_wait",
           "close_wait", "last_ack", "closing")
 LEVEL_RANK = {None: 0, "warning": 1, "critical": 2}
@@ -107,7 +114,13 @@ def host_config(target):
             th[k] = {"warning": w, "critical": c}
         ports.append({"key": port_key(proto, direction, port), "port": port, "proto": proto, "dir": direction,
                       "enabled": p.get("enabled", True) is not False, **th})
-    return {"enabled": bool(n.get("enabled")), "interval": interval if interval in INTERVALS else 1, "ports": ports}
+    a = n.get("apps") if isinstance(n.get("apps"), dict) else {}
+    apps = {"enabled": a.get("enabled", True) is not False, "notify_after": _num(a.get("notify_after")),
+            "critical_size": _num(a.get("critical_size"))}
+    if apps["notify_after"] is None:
+        apps["notify_after"] = APP_NOTIFY_AFTER
+    return {"enabled": bool(n.get("enabled")), "interval": interval if interval in INTERVALS else 1, "ports": ports,
+            "apps": apps}
 
 
 def windows_targets(config):
@@ -144,8 +157,16 @@ def snapshot(samples):
     if not any(n == "cm_netstat_heartbeat_seconds" for n, _, _ in samples):
         return None
     snap = {"heartbeat": None, "interval": None, "os": "", "version": "", "collect_ms": None,
-            "support": {"recv": False, "send": False, "accept": False}, "ports": {}}
+            "support": {"recv": False, "send": False, "accept": False}, "ports": {}, "apps": {}, "app_events": []}
     ports = snap["ports"]
+    apps = snap["apps"]
+
+    def A(lb):
+        k = f"{lb.get('log', '')}/{lb.get('ch', '')}"
+        if k not in apps:
+            apps[k] = {"key": k, "log": lb.get("log", ""), "ch": lb.get("ch", ""), "state": None, "size": None, "critical": None,
+                       "port": None, "peak": None, "since": None, "counts": {}, "episodes": []}
+        return apps[k]
 
     def P(proto, direction, port):
         try:
@@ -202,6 +223,23 @@ def snapshot(samples):
             if p and not p["proc"]:
                 p["proc"] = lb.get("proc", "")
                 p["pid"] = int(lb["pid"]) if str(lb.get("pid") or "").isdigit() else None
+        elif name in ("cm_netstat_app_state", "cm_netstat_app_size", "cm_netstat_app_critical", "cm_netstat_app_port",
+                      "cm_netstat_app_peak", "cm_netstat_app_since"):
+            A(lb)[name[len("cm_netstat_app_"):]] = int(v)
+        elif name == "cm_netstat_app_count":
+            A(lb)["counts"][lb.get("kind", "?")] = int(v)
+        elif name == "cm_netstat_app_ep":
+            try:
+                A(lb)["episodes"].append({"id": lb.get("id", ""), "start": int(lb.get("start") or 0), "end": int(lb.get("end") or 0),
+                                          "peak": int(lb.get("peak") or 0), "critical": int(lb.get("critical") or 0)})
+            except ValueError:
+                pass
+        elif name == "cm_netstat_app_event":
+            try:
+                snap["app_events"].append({"seq": int(lb.get("seq") or 0), "ts": v, "log": lb.get("log", ""), "ch": lb.get("ch", ""),
+                                           "level": lb.get("level", ""), "msg": lb.get("msg", "")})
+            except ValueError:
+                pass
         elif name in ("cm_netstat_accept_queue", "cm_netstat_accept_queue_peak", "cm_netstat_accept_queue_limit"):
             p = P(lb.get("proto", "tcp"), "in", lb.get("port"))
             if p:
@@ -209,6 +247,9 @@ def snapshot(samples):
                          "cm_netstat_accept_queue_limit": "accept_limit"}[name]
                 p[field] = int(v)
                 p["queue_source"] = lb.get("source", "")
+    for a in apps.values():
+        a["episodes"].sort(key=lambda e: e["start"])
+    snap["app_events"].sort(key=lambda e: (-e["ts"], -e["seq"]))
     for p in ports.values():
         p["peers"].sort(key=lambda x: -x["count"])
         if p["proto"] == "tcp" and p["total"] is not None:
@@ -364,6 +405,7 @@ class AlertEngine:
         self.abnormal = {}         # akey -> ครั้งที่ผิดปกติต่อเนื่อง (ระดับใดก็ได้)
         self.same = {}             # akey -> [ระดับ, ครั้งที่เป็นระดับนี้ต่อเนื่อง]
         self.okcount = {}          # akey -> ครั้งที่ปกติต่อเนื่อง
+        self.app_done = {h["ep"] for h in self.history if h.get("ep")}   # ช่วงคิวเกินของโปรแกรมที่บันทึกแล้ว
 
     def dump(self):
         return {"active": list(self.active.values()), "history": self.history[-MAX_HISTORY:]}
@@ -423,7 +465,8 @@ class AlertEngine:
                     self._close(a, now, "recovered", events)
                     changed = True
         # เงื่อนไขที่หายไป (เลิกเลือกพอร์ต / ปิด Monitoring / ลบเครื่อง) -> ปิดเงียบ ๆ
-        for k in [k for k in self.active if k not in seen and (scope is None or self.active[k]["web"] in scope)]:
+        for k in [k for k in self.active if k not in seen and self.active[k].get("kind") != "app_queue"
+                  and (scope is None or self.active[k]["web"] in scope)]:
             a = self.active.pop(k)
             self._close(a, now, "removed", events)
             changed = True
@@ -434,8 +477,76 @@ class AlertEngine:
         return events, changed
 
 
+    def app_episode(self, web, ip, app, ep, cfg, now):
+        """1 ช่วงที่คิวของโปรแกรมเกิน (จาก log) -> alert  คืน (เหตุการณ์, มีการเปลี่ยนไหม)"""
+        akey = f"{web}::app::{app['key']}"
+        epid = f"{web}|{app['key']}|{ep['start']}"
+        if epid in self.app_done:
+            return [], False
+        crit = cfg.get("critical_size")
+        level = "critical" if crit is not None and ep["peak"] >= crit else "warning"
+        end = ep["end"] or None
+        dur = (end or now) - ep["start"]
+        notify = dur >= (cfg.get("notify_after") or 0) or (crit is not None and ep["peak"] >= crit)
+        events, a = [], self.active.get(akey)
+        if a is not None and a.get("ep") != epid:          # ช่วงก่อนหน้าไม่เห็น "กลับปกติ" (log หาย) -> ปิด
+            del self.active[akey]
+            self._close(a, now, "recovered" if a.get("notified") else "ended", events)
+            self.app_done.add(a["ep"])
+            a = None
+        msg = (f"{app['log']} {app['ch']} คิวเกิน size {ep['peak']:,} (CRITICAL SIZE {ep['critical']:,})"
+               + (f" · port {app['port']}" if app.get("port") else ""))
+        if end is None:
+            if a is None:
+                a = {"akey": akey, "kind": "app_queue", "web": web, "ip": ip, "port": app.get("port"), "proto": "tcp", "dir": "in",
+                     "process": app["log"], "log": app["log"], "ch": app["ch"], "ep": epid, "level": level, "first": ep["start"],
+                     "last": now, "value": app.get("size"), "peak": ep["peak"], "threshold": ep["critical"] or None,
+                     "message": msg, "status": "active", "notified": False, "id": f"{akey}@{ep['start']}"}
+                self.active[akey] = a
+            a.update(last=now, value=app.get("size"), peak=max(a.get("peak") or 0, ep["peak"]), message=msg,
+                     duration=round(dur, 1), port=app.get("port") or a.get("port"))
+            if level != a["level"]:
+                a["level"] = level
+                if a.get("notified"):
+                    events.append(("escalate", a))
+            if notify and not a.get("notified"):
+                a["notified"] = True
+                events.append(("open", a))
+            return events, True
+        # จบแล้ว (เห็น "queue decrease ... Clear")
+        if a is not None:
+            del self.active[akey]
+            a.update(peak=max(a.get("peak") or 0, ep["peak"]), message=msg)
+            self.history.append(dict(a, status="recovered", recovered_at=end, duration=round(end - ep["start"], 1)))
+            if a.get("notified"):
+                events.append(("recovered", self.history[-1]))
+            elif notify:
+                events.append(("episode", self.history[-1]))
+        else:
+            rec = {"akey": akey, "kind": "app_queue", "web": web, "ip": ip, "port": app.get("port"), "proto": "tcp", "dir": "in",
+                   "process": app["log"], "log": app["log"], "ch": app["ch"], "ep": epid, "level": level, "first": ep["start"],
+                   "last": end, "value": ep["peak"], "peak": ep["peak"], "threshold": ep["critical"] or None, "message": msg,
+                   "status": "recovered", "recovered_at": end, "duration": round(end - ep["start"], 1),
+                   "notified": bool(notify and now - end <= APP_RECENT), "id": f"{akey}@{ep['start']}"}
+            self.history.append(rec)
+            if rec["notified"]:
+                events.append(("episode", rec))
+        self.app_done.add(epid)
+        return events, True
+
+    def app_close_all(self, web, now):
+        """ปิด alert คิวของโปรแกรมของเครื่อง (ปิด Monitoring / ปิดการดู log)"""
+        changed = False
+        for k in [k for k, a in self.active.items() if a.get("kind") == "app_queue" and a["web"] == web]:
+            a = self.active.pop(k)
+            self._close(a, now, "removed", [])
+            self.app_done.add(a.get("ep"))
+            changed = True
+        return changed
+
+
 KIND_TEXT = {"queue": "Queue", "conn": "Connections", "not_listening": "Not listening", "host_offline": "Host offline",
-             "agent_stale": "Agent stopped", "queue_spike": "Queue spike"}
+             "agent_stale": "Agent stopped", "queue_spike": "Queue spike", "app_queue": "Queue exceed"}
 
 
 def to_system_events(events, groups=None, priorities=None):
@@ -447,10 +558,16 @@ def to_system_events(events, groups=None, priorities=None):
             lv = "down" if a["level"] == "critical" else lv
         port = f" :{a['port']}/{a.get('proto', 'tcp')}" if a.get("port") else ""
         name = f"Netstat{port} {KIND_TEXT.get(a['kind'], a['kind'])}"
+        if a["kind"] == "app_queue":
+            name = f"Netstat {a.get('log', '')} {a.get('ch', '')} {KIND_TEXT['app_queue']}"
         val = a.get("value")
         th = f" (เกณฑ์ {a['threshold']:g})" if isinstance(a.get("threshold"), (int, float)) else ""
         if what == "recovered":
             msg = f"{a['web']} · {name} กลับปกติ · เป็นอยู่ {int(a.get('duration') or 0)} วินาที"
+        elif what == "episode":                       # เกินแล้วกลับปกติไปแล้ว (เห็นครั้งเดียว)
+            msg = f"{a['web']} · {a.get('message') or name} · กลับปกติแล้วหลัง {int(a.get('duration') or 0)} วินาที"
+        elif a["kind"] == "app_queue":
+            msg = f"{a['web']} · {a.get('message') or name}"
         else:
             msg = f"{a['web']} · {name}: {a.get('message') or ''}{th}" + (f" · {a['process']}" if a.get("process") else "")
         e = {"source": "netstat", "level": "recovered" if what == "recovered" else lv, "web": a["web"],
@@ -547,7 +664,7 @@ class Monitor:
                      enabled=hc["enabled"], interval=hc["interval"], priority=t.get("priority") or 3)
             self.inflight[web] = self.pool.submit(self._poll, t, pull)
         # ประเมิน + แจ้งเตือน (เฉพาะเครื่องที่เปิด Monitoring)
-        conds = []
+        conds, app_ev_all, app_any = [], [], False
         tmap = {t["name"]: t for t in targets}
         for web, h in self.hosts.items():
             t = tmap.get(web)
@@ -559,10 +676,14 @@ class Monitor:
             h["rows"] = rows
             if hc["enabled"] and h.get("checked"):
                 conds += c
+            app_events, app_changed = self._apps(web, h, hc, now)
+            app_ev_all.extend(app_events)
+            app_any = app_any or app_changed
         # เครื่องที่ประเมินรอบนี้ (+ เครื่องที่ถูกลบออกจาก puller.yaml -> ปิด alert ที่ค้าง)
         scope = {w for w, h in self.hosts.items() if h.get("checked")}
         scope |= {a["web"] for a in self.engine.active.values()} - names
         events, changed = self.engine.step(conds, now, scope=scope)
+        events, changed = events + app_ev_all, changed or app_any
         if changed:
             _write(ALERTS_FILE, self.engine.dump())
             self.dirty = True
@@ -578,6 +699,21 @@ class Monitor:
         if (self.dirty and now - self.written_at >= 1) or now - self.written_at >= LIVE_HEARTBEAT:
             self.write_live(now)
         return events
+
+    def _apps(self, web, h, hc, now):
+        """คิวของโปรแกรมจาก log: ทุกช่วงที่เกิน -> AlertEngine.app_episode"""
+        snap = h.get("snap") or {}
+        if not hc["enabled"] or not hc["apps"]["enabled"]:
+            return [], self.engine.app_close_all(web, now)
+        if not h.get("online") or h.get("stale") or not snap.get("apps"):
+            return [], False
+        out, changed = [], False
+        for app in snap["apps"].values():
+            for ep in app["episodes"]:
+                ev, ch = self.engine.app_episode(web, h.get("ip", ""), app, ep, hc["apps"], now)
+                out += ev
+                changed = changed or ch
+        return out, changed
 
     def _update(self, web, samples, err, now):
         h = self.hosts.get(web)
@@ -613,7 +749,9 @@ class Monitor:
                                                  "error", "fetched_at", "last_seen", "rows")}
             hosts[web].update(os=snap.get("os", ""), agent_version=snap.get("version", ""),
                               agent_interval=snap.get("interval"), collect_ms=snap.get("collect_ms"),
-                              support=snap.get("support"), ports=ports, has_data=bool(snap))
+                              support=snap.get("support"), ports=ports, has_data=bool(snap),
+                              apps=sorted(snap.get("apps", {}).values(), key=lambda a: (a["log"], a["ch"])),
+                              app_events=(snap.get("app_events") or [])[:40])
         _write(LIVE_FILE, {"updated": now, "hosts": hosts, "active": list(self.engine.active.values())})
         self.written_at, self.dirty = now, False
 

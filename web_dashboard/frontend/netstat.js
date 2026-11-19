@@ -12,7 +12,8 @@ const STATUS = { normal: ["Normal", "ok"], warning: ["Warning", "wr"], critical:
 const AGENT = { online: ["Online", "ok"], offline: ["Offline", "cr"], stale: ["หยุดส่งข้อมูล", "cr"], "no-data": ["ไม่มีข้อมูล Netstat", "wr"],
     unknown: ["Unknown", "na"], paused: ["Paused", "ps"] };
 const KIND = { queue: "Queue", conn: "Connections", not_listening: "Port ไม่ LISTEN", host_offline: "Host Offline",
-    agent_stale: "Agent หยุดส่งข้อมูล", queue_spike: "Queue เพิ่มสูงผิดปกติ" };
+    agent_stale: "Agent หยุดส่งข้อมูล", queue_spike: "Queue เพิ่มสูงผิดปกติ", app_queue: "Application Queue exceed" };
+const APP_LV = { WARN: ["WARN", "wr"], WARNING: ["WARN", "wr"], ERROR: ["ERROR", "cr"], RECOVER: ["กลับปกติ", "ok"] };
 const STATE_NAME = { established: "Established", syn_sent: "Syn Sent", syn_received: "Syn Received", fin_wait1: "Fin Wait 1",
     fin_wait2: "Fin Wait 2", time_wait: "Time Wait", close_wait: "Close Wait", last_ack: "Last Ack", closing: "Closing", other: "อื่น ๆ" };
 
@@ -70,7 +71,7 @@ function connect() {
         if (es.readyState === EventSource.CLOSED) {          // 503 (เต็ม) / ถูกปฏิเสธ -> polling แล้วลอง SSE ใหม่ใน 30 วิ
             startPoll();
             setTimeout(() => { if (N.poll) connect(); }, 30000);
-        } else setConn("reconnecting");                      // EventSource ต่อใหม่เอง
+        } else if (Date.now() - N.lastMsg > N.every * 2000 + 3000) setConn("reconnecting");   // EventSource ต่อใหม่เอง (ตัดทุก ~55 วิ = ปกติ)
     };
 }
 function startPoll() {
@@ -140,7 +141,7 @@ function renderDash() {
             + `<td>${r.proc ? esc(r.proc) + (r.pid ? ` <small>(${esc(r.pid)})</small>` : "") : na("Unavailable", "ไม่พบ process ของพอร์ตนี้")}</td>`
             + `<td class="n">${r.conn === null || r.conn === undefined ? na() : `<b class="nxV${cl}">${esc(r.conn)}</b>${r.established != null ? `<small> · EST ${esc(r.established)}</small>` : ""}`}</td>`
             + `<td class="n">${queueCell(r, "recv")}</td><td class="n">${queueCell(r, "send")}</td><td class="n">${queueCell(r)}</td>`
-            + `<td>${pill(st)}</td><td>${r.last_update ? esc(fmtT(r.last_update)) : na()}</td></tr>`;
+            + `<td>${pill(st)}</td><td title="${esc(fmtT(r.last_update))}">${r.last_update ? esc(new Date(r.last_update * 1000).toLocaleTimeString("en-GB")) : na()}</td></tr>`;
     }).join("") : `<tr><td colspan="10" class="empty">${(d.summary || {}).hosts ? "ยังไม่ได้เลือกพอร์ต (Hosts & Ports > เปิด Monitoring + เลือกพอร์ต) หรือไม่ตรงกับตัวกรอง" : "ยังไม่มีเครื่อง Windows (agent) ใน Settings"}</td></tr>`;
     const bar = (list, v, max, fmt) => list.length ? list.map(r => `<div class="nxBar"><span>${esc(r.web)} · ${esc(portTxt(r))}</span><i><em style="width:${Math.min(100, max ? v(r) * 100 / max : 0)}%"></em></i><b>${fmt(r)}</b></div>`).join("") : `<div class="empty">ไม่มีข้อมูล</div>`;
     const tq = d.top_queue || [];
@@ -151,8 +152,31 @@ function renderDash() {
     const st = Object.entries(d.states || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
     const stMax = Math.max(1, ...st.map(x => x[1]));
     $("nxStates").innerHTML = st.length ? st.map(([k, v]) => `<div class="nxBar"><span>${esc(STATE_NAME[k] || k)}</span><i><em style="width:${v * 100 / stMax}%"></em></i><b>${v}</b></div>`).join("") : `<div class="empty">ไม่มีการเชื่อมต่อ</div>`;
-    $("nxRecent").innerHTML = (d.alerts || []).length ? `<table class="st-tbl nxMini">${d.alerts.slice(0, 10).map(a => `<tr><td>${alertLevel(a)}</td><td><b>${esc(a.web)}</b>${a.port ? ` :${esc(a.port)}` : ""}<small> ${esc(KIND[a.kind] || a.kind)}</small></td><td>${esc(fmtT(a.last || a.first))}</td><td>${a.status === "active" ? "ยังเกิดอยู่" : "กลับปกติ"}</td></tr>`).join("")}</table>` : `<div class="empty">ไม่มี alert</div>`;
+    $("nxRecent").innerHTML = (d.alerts || []).length ? `<table class="st-tbl nxMini">${d.alerts.slice(0, 10).map(a => `<tr><td>${alertLevel(a)}</td><td><b>${esc(a.web)}</b>${a.kind === "app_queue" ? ` ${esc(a.log)} ${esc(a.ch)}` : a.port ? ` :${esc(a.port)}` : ""}<small> ${esc(KIND[a.kind] || a.kind)}</small></td><td>${esc(fmtT(a.last || a.first))}</td><td>${a.status === "active" ? "ยังเกิดอยู่" : "กลับปกติ"}</td></tr>`).join("")}</table>` : `<div class="empty">ไม่มี alert</div>`;
+    renderApps(d);
     renderGraph();
+}
+/* คิวของโปรแกรมจาก log: สถานะต่อ Output + log (WARN / ERROR / กลับปกติ) */
+function appStatus(a) {
+    if (a.state === null || a.state === undefined) return pill(a.host_status === "offline" ? ["Offline", "cr"] : ["Unknown", "na"]);
+    return a.state ? pill(["Queue exceed", "cr"]) : pill(["Normal", "ok"]);
+}
+function renderApps(d) {
+    const apps = d.apps || [], ev = d.app_events || [];
+    $("nxAppCard").hidden = !apps.length && !ev.length;
+    if ($("nxAppCard").hidden) return;
+    $("nxApps").innerHTML = apps.map(a => {
+        const last = (a.episodes || [])[a.episodes.length - 1];
+        const when = a.state ? `เกินมา ${dur(Date.now() / 1000 - a.since)}` : last && last.end ? `กลับปกติ ${fmtT(last.end)} (เกิน ${dur(last.end - last.start)})` : "-";
+        return `<tr data-app="${esc(a.web)}|app:${esc(a.key)}"><td><b>${esc(a.web)}</b></td><td>${esc(a.log)}</td><td>${esc(a.ch)}</td><td>${a.port ?? na()}</td><td>${appStatus(a)}</td>`
+            + `<td class="n">${a.size === null || a.size === undefined ? na() : `<b class="nxV${a.state ? " cr" : ""}">${Number(a.size).toLocaleString()}</b>`}</td>`
+            + `<td class="n">${a.critical != null ? Number(a.critical).toLocaleString() : na()}</td><td class="n">${a.peak ? Number(a.peak).toLocaleString() : "-"}</td>`
+            + `<td><small>${esc(when)}</small></td><td class="n">${(a.counts || {}).exceed ?? "-"}</td><td class="n">${(a.counts || {}).disconnect ?? "-"}</td></tr>`;
+    }).join("") || `<tr><td colspan="11" class="empty">ยังไม่พบ log รูปแบบ Output[n] ในไฟล์ log ที่ตั้งไว้</td></tr>`;
+    $("nxAppLog").innerHTML = ev.length ? ev.slice(0, 30).map(e => {
+        const [l, c] = APP_LV[e.level] || [e.level, ""];
+        return `<div class="nxAL ${c}"><time>${esc(fmtT(e.ts))}</time><b>${esc(e.web)}</b><span>${esc(e.ch)}</span><em class="evst ${c === "cr" ? "dn" : c}">${esc(l)}</em><span class="m">${esc(e.msg)}</span></div>`;
+    }).join("") : `<div class="empty">ไม่มี WARN / ERROR</div>`;
 }
 function alertLevel(a) { return a.status === "active" ? pill(a.level === "critical" ? ["Critical", "cr"] : ["Warning", "wr"]) : pill(["Recovered", "ok"]); }
 
@@ -206,7 +230,7 @@ async function loadHosts() {
 async function saveHostQuick(web, patch) {
     try {
         const d = await api("GET", `/api/netstat/hosts/${encodeURIComponent(web)}`);
-        const body = { enabled: d.enabled, interval: d.interval, ports: d.ports.filter(p => p.configured).map(cfgOf), ...patch };
+        const body = { enabled: d.enabled, interval: d.interval, ports: d.ports.filter(p => p.configured).map(cfgOf), apps: d.apps_cfg, ...patch };
         await api("PUT", `/api/netstat/hosts/${encodeURIComponent(web)}`, body);
         $("nxHostMsg").textContent = `${web}: บันทึกแล้ว · มีผลใน ~5 วินาที`;
         loadHosts();
@@ -254,7 +278,21 @@ function renderHost() {
             + `<td>${inp(p, "queue", "warning")}</td><td>${inp(p, "queue", "critical")}</td><td>${inp(p, "conn", "warning")}</td><td>${inp(p, "conn", "critical")}</td></tr>`).join("")
             : `<tr><td colspan="13" class="empty">${d.status === "online" ? "ไม่พบพอร์ตตามตัวกรอง" : "ยังไม่มีข้อมูลจากเครื่องนี้"}</td></tr>`)
         + `</tbody></table></div>`
+        + appHostHtml(d, ed)
         + (d.active.length ? `<div class="nxH" style="margin-top:14px"><b>Alert ที่ยังเกิดอยู่</b></div>${alertTable(d.active)}` : "");
+}
+function appHostHtml(d, ed) {
+    const c = d.apps_cfg || {}, apps = d.apps || [];
+    const dis = ed ? "" : " disabled";
+    return `<div class="nxH" style="margin-top:18px"><b>Application Queue (จาก log)</b><small>ไฟล์ log ที่ตั้งไว้ (Settings / set-logs.bat) ที่มีบรรทัดแบบ "Output[n] queue exceed / queue decrease"</small></div>`
+        + `<div class="nxFilt"><label class="nxSw"><input type="checkbox" id="apEn"${c.enabled !== false ? " checked" : ""}${dis}><span>ดูคิวจาก log</span></label>`
+        + `<label>แจ้งเมื่อเกินนาน ≥ <input class="nxTh" id="apAfter" inputmode="numeric" value="${esc(c.notify_after ?? 10)}"${dis}> วินาที</label>`
+        + `<label>หรือ size ≥ <input class="nxTh nxW" id="apCrit" inputmode="numeric" placeholder="ไม่ตั้ง" value="${esc(c.critical_size ?? "")}"${dis}> = Critical</label>`
+        + `<small class="st-mut">สั้นกว่านี้ = บันทึกใน Alerts อย่างเดียว</small></div>`
+        + (apps.length ? `<div class="tblw"><table class="st-tbl nxTbl"><thead><tr><th>Log</th><th>Output</th><th>Port</th><th>Status</th><th class="n">Size</th><th class="n">Critical</th><th class="n">Exceed</th><th class="n">Disconnect</th><th class="n">Unknown Socket</th><th class="n">Drop</th></tr></thead><tbody>`
+            + apps.map(a => `<tr><td>${esc(a.log)}</td><td>${esc(a.ch)}</td><td>${a.port ?? na()}</td><td>${a.state ? pill(["Queue exceed", "cr"]) : pill(["Normal", "ok"])}</td><td class="n">${a.size != null ? Number(a.size).toLocaleString() : na()}</td><td class="n">${a.critical != null ? Number(a.critical).toLocaleString() : na()}</td>`
+                + ["exceed", "disconnect", "unknown_socket", "drop"].map(k => `<td class="n">${(a.counts || {})[k] ?? "-"}</td>`).join("") + `</tr>`).join("") + `</tbody></table></div>`
+            : `<div class="empty">ยังไม่พบ — ตั้ง path ของไฟล์ log บนเครื่องนี้ก่อน (set-logs.bat หรือ Settings > ไฟล์ log แล้วติดตั้งซ้ำ)</div>`);
 }
 /* อ่านค่าที่แก้ในตารางพอร์ตกลับเข้า N.edit */
 function syncPorts() {
@@ -271,7 +309,8 @@ function syncPorts() {
 async function saveHost() {
     syncPorts();
     const d = N.edit, msg = $("nxSaveMsg");
-    const body = { enabled: $("nxEn").checked, interval: d.interval, ports: d.ports.filter(p => p.configured).map(cfgOf) };
+    const body = { enabled: $("nxEn").checked, interval: d.interval, ports: d.ports.filter(p => p.configured).map(cfgOf),
+        apps: { enabled: $("apEn").checked, notify_after: $("apAfter").value.trim(), critical_size: $("apCrit").value.trim() } };
     document.querySelectorAll("#nxHost .has-err").forEach(x => x.classList.remove("has-err"));
     try {
         await api("PUT", `/api/netstat/hosts/${encodeURIComponent(d.web)}`, body);
@@ -293,9 +332,9 @@ function alertTable(list) {
 }
 function alertRows(list) {
     return list.length ? list.map(a => `<tr><td>${pill(a.level === "critical" ? ["Critical", "cr"] : ["Warning", "wr"])}</td><td>${esc(KIND[a.kind] || a.kind)}</td><td><b>${esc(a.web)}</b></td><td>${esc(a.ip || "")}</td>`
-        + `<td>${a.port ? esc(`${a.port}/${(a.proto || "tcp").toUpperCase()}`) : "-"}</td><td>${esc(a.process || "-")}</td><td class="n">${a.value ?? "-"}${a.peak != null && a.peak !== a.value ? `<small> (สูงสุด ${esc(a.peak)})</small>` : ""}</td><td class="n">${a.threshold ?? "-"}</td>`
+        + `<td>${a.port ? esc(`${a.port}/${(a.proto || "tcp").toUpperCase()}`) : "-"}</td><td>${esc(a.kind === "app_queue" ? `${a.log} ${a.ch}` : a.process || "-")}</td><td class="n">${a.value ?? "-"}${a.peak != null && a.peak !== a.value ? `<small> (สูงสุด ${esc(a.peak)})</small>` : ""}</td><td class="n">${a.threshold ?? "-"}</td>`
         + `<td>${esc(fmtT(a.first))}</td><td>${esc(fmtT(a.status === "active" ? a.last : a.recovered_at))}</td><td>${esc(dur(a.duration ?? ((a.recovered_at || Date.now() / 1000) - a.first)))}</td>`
-        + `<td>${a.status === "active" ? pill(["Active", a.level === "critical" ? "cr" : "wr"]) : a.status === "recovered" ? pill(["Recovered", "ok"]) : pill(["ปิด (เลิก Monitor)", "na"])}</td></tr>`).join("")
+        + `<td>${a.status === "active" ? pill(["Active", a.level === "critical" ? "cr" : "wr"]) : a.status === "recovered" ? pill(["Recovered", "ok"]) : pill(["ปิด (เลิก Monitor)", "na"])}${a.kind === "app_queue" && a.notified === false ? `<small title="สั้นกว่าเวลาที่ตั้งให้แจ้ง"> · ไม่แจ้ง</small>` : ""}</td></tr>`).join("")
         : `<tr><td colspan="12" class="empty">ไม่มี alert</td></tr>`;
 }
 
@@ -312,7 +351,7 @@ async function loadAlerts() {
 /* ---------------------------------------------------------------- history tab */
 async function fillHistoryHosts() {
     if (!N.hosts.length) await loadHosts();
-    const s = $("hHost"), cur = s.value || N.host || (N.hosts.find(h => h.enabled) || N.hosts[0] || {}).web || "";
+    const s = $("hHost"), cur = (N.hJump && N.hJump.w) || s.value || N.host || (N.hosts.find(h => h.enabled) || N.hosts[0] || {}).web || "";
     s.innerHTML = N.hosts.map(h => `<option${h.web === cur ? " selected" : ""}>${esc(h.web)}</option>`).join("");
     await fillHistoryPorts();
 }
@@ -322,8 +361,10 @@ async function fillHistoryPorts() {
         const d = await api("GET", `/api/netstat/hosts/${encodeURIComponent(web)}`);
         const ports = d.ports.filter(p => p.configured).concat(d.ports.filter(p => !p.configured && p.listening && p.proto === "tcp"));
         const cur = $("hPort").value;
-        $("hPort").innerHTML = ports.length ? ports.map(p => `<option value="${esc(p.key)}">${esc(portTxt(p))}${p.proc ? " · " + esc(p.proc) : ""}${p.configured ? " ★" : ""}</option>`).join("") : `<option value="">ไม่มีพอร์ต</option>`;
+        $("hPort").innerHTML = (ports.length || (d.apps || []).length) ? ports.map(p => `<option value="${esc(p.key)}">${esc(portTxt(p))}${p.proc ? " · " + esc(p.proc) : ""}${p.configured ? " ★" : ""}</option>`).join("")
+            + (d.apps || []).map(a => `<option value="app:${esc(a.key)}">Queue: ${esc(a.log)} ${esc(a.ch)}</option>`).join("") : `<option value="">ไม่มีพอร์ต</option>`;
         if (cur && ports.some(p => p.key === cur)) $("hPort").value = cur;
+        if (N.hJump && N.hJump.w === web) { $("hPort").value = N.hJump.k; N.hJump = null; }
     } catch (e) { /* แสดงตอนโหลดกราฟ */ }
     loadHistory();
 }
@@ -343,6 +384,12 @@ async function loadHistory() {
     try { d = await api("GET", `/api/netstat/history?${p}`); } catch (e) { body.innerHTML = `<div class="empty">โหลดไม่ได้: ${esc(e.message)} ${esc(Object.values(e.fields || {}).join(" "))}</div>`; return; }
     if (!d.available) { body.innerHTML = `<div class="empty">${na("Unavailable", "ติดต่อ Prometheus ไม่ได้")} ดึงข้อมูลย้อนหลังไม่ได้</div>`; return; }
     const opt = { t0: d.start, t1: d.end };
+    if (d.app) {
+        const crit = (d.critical || []).length ? d.critical[d.critical.length - 1][1] : null;
+        body.innerHTML = `<div class="nxHist"><div><div class="nxH"><b>Queue Size</b><small>ค่า size ล่าสุดจาก log ในแต่ละช่วง ${dur(d.step)}</small></div>${lineChart([{ name: "Queue size", pts: d.size }], { ...opt, lines: [{ name: "CRITICAL SIZE", v: crit, cls: "cr" }] })}</div>`
+            + `<div><div class="nxH"><b>ช่วงที่คิวเกิน</b><small>${(d.alerts || []).length} ครั้ง</small></div>${alertTable(d.alerts || [])}</div></div>`;
+        return;
+    }
     const stNames = Object.keys(d.states || {}).sort();
     body.innerHTML = `<div class="nxHist"><div><div class="nxH"><b>Connection Count</b><small>สูงสุดในแต่ละช่วง ${dur(d.step)}</small></div>${lineChart([{ name: "Connections (peak)", pts: d.conn }, { name: "Established", pts: d.established }], opt)}</div>`
         + `<div><div class="nxH"><b>Queue Count / Utilization</b></div>${d.queue_supported ? lineChart([{ name: "Listening Queue (peak)", pts: d.queue }, { name: "Utilization %", pts: d.util }], opt) : `<div class="empty">${na("Unsupported", "Windows อ่านคิวได้เฉพาะพอร์ตของ IIS / HTTP.sys")} พอร์ตนี้อ่านคิวไม่ได้ (Windows ไม่มี Recv-Q / Send-Q ต่อ socket)</div>`}</div>`
@@ -376,6 +423,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("nxTabs").onclick = e => { const b = e.target.closest("[data-t]"); if (b) showTab(b.dataset.t); };
     ["fHost", "fProto", "fStatus"].forEach(id => $(id).addEventListener("change", connect));
     let pt; $("fPort").addEventListener("input", () => { clearTimeout(pt); pt = setTimeout(connect, 500); });
+    $("nxApps").onclick = e => { const tr = e.target.closest("tr[data-app]"); if (!tr) return; const [w, k] = tr.dataset.app.split("|"); N.hJump = { w, k }; showTab("history"); };
     $("nxRows").onclick = e => { const tr = e.target.closest("tr[data-k]"); if (tr) { N.graphKey = tr.dataset.k; renderDash(); } };
     $("nxHosts").addEventListener("change", e => {
         const tr = e.target.closest("tr[data-web]"); if (!tr) return;

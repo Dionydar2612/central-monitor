@@ -24,6 +24,10 @@
 #
 # config/puller.yaml ไม่อยู่ใน git (เป็นค่าเฉพาะเครื่อง) ถ้ายังไม่มีจะสร้างจาก config/puller.example.yaml
 #
+# รูปแบบการใช้งาน: ถามครั้งแรกว่าจะ monitor Windows อย่างเดียว / Linux อย่างเดียว / ทั้งคู่ (puller.yaml ui.platforms)
+#   Windows อย่างเดียว = ซ่อนส่วนของ Linux ในหน้าเว็บ (และกลับกัน) · ทั้งคู่ = แสดงทุกอย่างเหมือนเดิม
+#   ไม่ถาม: PLATFORMS=windows|linux|both bash install.sh  · เปลี่ยนภายหลังได้ที่หน้า Settings (admin)
+#
 # ที่ต้องทำต่อหลังเปิดเว็บได้: หน้า Settings -> + Add target แล้วกรอก Admin user/Password ของเครื่องปลายทาง
 #   ระบบจะวาง public key ให้เอง (ไม่เก็บรหัสผ่าน) — ขั้นวาง key ไม่ได้ทำใน install.sh
 # =====================================================================
@@ -107,6 +111,30 @@ if [ ! -f config/puller.yaml ] && [ -f config/puller.example.yaml ]; then
   run_o cp config/puller.example.yaml config/puller.yaml
   echo "สร้าง config/puller.yaml จาก config/puller.example.yaml"
 fi
+# รูปแบบการใช้งาน (ถามครั้งเดียว: ตั้งไว้แล้ว / --keep ที่มีค่าอยู่แล้ว = ไม่ถามซ้ำ)
+PLAT="${PLATFORMS:-}"
+CUR_PLAT="$(awk '/^ui:/{f=1;next} f&&/^[^ #]/{f=0} f&&/platforms:/{print $2}' config/puller.yaml 2>/dev/null | head -1)"
+if [ -z "$PLAT" ] && [ -z "$CUR_PLAT" ] && [ -t 0 ]; then
+  echo
+  echo "จะ monitor เครื่องแบบไหน?"
+  echo "  1) Windows อย่างเดียว   (ซ่อนส่วนของ Linux)"
+  echo "  2) Linux อย่างเดียว     (ซ่อนส่วนของ Windows)"
+  echo "  3) ทั้ง Windows และ Linux (ปริยาย)"
+  read -r -p "เลือก [1/2/3]: " ANS || ANS=3
+  case "$ANS" in 1) PLAT=windows ;; 2) PLAT=linux ;; *) PLAT=both ;; esac
+fi
+case "${PLAT:-}" in windows|linux|both|"") ;; *) echo "PLATFORMS ต้องเป็น windows, linux หรือ both" >&2; exit 1 ;; esac
+PLAT="${PLAT:-${CUR_PLAT:-both}}"
+if [ "$PLAT" != "$CUR_PLAT" ]; then
+  if [ -n "$CUR_PLAT" ]; then
+    run_o sed -i -E "/^ui:/,/^[^ #]/ s/^([[:space:]]+platforms:).*/\1 $PLAT/" config/puller.yaml
+  elif grep -q '^ui:' config/puller.yaml; then
+    run_o sed -i "/^ui:/a\  platforms: $PLAT" config/puller.yaml
+  else
+    run_o sh -c "printf '\n# รูปแบบการใช้งาน: windows | linux | both (แก้ได้ที่หน้า Settings)\nui:\n  platforms: %s\n' '$PLAT' >> config/puller.yaml"
+  fi
+fi
+echo "รูปแบบการใช้งาน: $PLAT"
 [ -d keys/known_hosts ] && rm -rf keys/known_hosts       # Docker เคยสร้างเป็นโฟลเดอร์ (ลบหลัง fix_owner ด้านล่างถ้าเป็นของ root)
 fix_owner
 [ -d keys/known_hosts ] && $SUDO rm -rf keys/known_hosts

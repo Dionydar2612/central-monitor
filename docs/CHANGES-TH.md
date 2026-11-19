@@ -1,3 +1,12 @@
+# เพิ่มเติม (19 พ.ย. 2026): รูปแบบการใช้งาน Windows / Linux / ทั้งคู่ · Application Queue จาก log
+- `install.sh` ถามครั้งแรกว่าจะใช้ Windows อย่างเดียว / Linux อย่างเดียว / ทั้งคู่ (`PLATFORMS=` ข้ามการถาม) เก็บที่ puller.yaml `ui.platforms`
+  เปลี่ยนได้ที่ Settings (admin) · Windows อย่างเดียว: ซ่อนชนิดเครื่อง Linux, ตัวกรอง OS, Load INFO log · Linux อย่างเดียว: ซ่อน Windows และ Netstat Monitor
+- Netstat Monitor: **Application Queue** อ่านคิวของโปรแกรมจากไฟล์ log ที่ตั้งไว้ (เช่น THMux Output[n]: queue exceed / queue decrease)
+  แสดงสถานะต่อ Output + log WARN / ERROR / กลับปกติ (ไม่แสดง INFO) · แจ้งเมื่อเกินนาน / size เกินที่ตั้ง · ดูย้อนหลังใน History
+- ต้องติดตั้ง agent Windows ซ้ำ 1 ครั้ง (cm-netstat.ps1 ใหม่)
+
+---
+
 # เพิ่มเติม (19 พ.ย. 2026): Netstat Monitor (Windows Server)
 - Apps & Web มีเมนูย่อย **Applications Monitor / Web Monitor / Netstat Monitor** · หน้าใหม่ `/netstat` (Dashboard real-time, Hosts & Ports, Alerts, History)
 - agent: `cm-netstat.ps1` process เดียวรันค้าง เก็บทุก 1 / 2 / 5 วิ (`-NetstatInterval`) · scheduled task `CentralMonitorNetstat` · โหมด push ส่ง cm_netstat_* ทุก 5 วิ

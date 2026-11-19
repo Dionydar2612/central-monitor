@@ -39,7 +39,7 @@ scrape_configs:
     # cm_netstat_peer / cm_netstat_proc = รายละเอียดสด (ปลายทาง / โปรแกรม) ของ Netstat Monitor ดูสดจาก puller ไม่ต้องเก็บย้อนหลัง
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: cm_log_entry|cm_netstat_peer|cm_netstat_proc
+        regex: cm_log_entry|cm_netstat_peer|cm_netstat_proc|cm_netstat_app_event|cm_netstat_app_ep
         action: drop
 
   # -------------------------------------------------------------------

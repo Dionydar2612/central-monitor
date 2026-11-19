@@ -195,6 +195,8 @@ def _required_role(method, path):
         return "operator"                          # operator แก้ได้เฉพาะการแจ้งเตือน + log (targets_update ตรวจอีกชั้น)
     if path == "/api/alert-settings" and method == "GET":
         return "operator"                          # ค่าเริ่มต้นสำหรับแสดงในช่องว่าง
+    if path == "/api/ui-platforms":
+        return "admin"                             # รูปแบบการใช้งาน Windows / Linux / ทั้งคู่
     if path == "/api/groups/move":
         return "admin"                             # ย้ายกลุ่ม (แก้ puller.yaml)
     if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
@@ -228,6 +230,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
     ("PUT", re.compile(r"^/api/ui-order$"), "ui.order", ()),
+    ("PUT", re.compile(r"^/api/ui-platforms$"), "ui.platforms", ("platforms",)),
     ("PUT", re.compile(r"^/api/netstat/hosts/(?P<t>[^/]+)$"), "netstat.update", ("enabled", "interval")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/group$"), "target.group", ("group",)),
     ("POST", re.compile(r"^/api/groups/move$"), "group.move", ("from", "parent")),
@@ -363,7 +366,22 @@ def current_user():
         return jsonify({"authenticated": False}), 401
 
     role = getattr(g, "role", None) or session.get("role") or "viewer"
-    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role})
+    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role,
+                    "platforms": settings.ui_platforms()})
+
+
+@app.put("/api/ui-platforms")
+def ui_platforms_save():
+    """รูปแบบการใช้งาน (admin): {"platforms": "windows" | "linux" | "both"}"""
+    body = _json_body()
+    if body is None:
+        return jsonify({"error": "json_required"}), 415
+    try:
+        return jsonify({"platforms": targets_service.set_platforms(body.get("platforms"))})
+    except ValidationError as e:
+        return _bad_request(e)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
 
 
 # ============================================================

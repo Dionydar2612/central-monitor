@@ -18,7 +18,7 @@
 <div class="sbadges" id="sbadges"></div>
 <div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><a class="st-nav" href="/events">Status &amp; Logs</a><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings" id="settingsLink" hidden>Settings</a><button id="logoutButton">Logout</button></div>
 </header>
-<nav class="apNav" aria-label="Apps &amp; Web"><a href="/apps?view=apps">Applications Monitor</a><a href="/apps?view=web">Web Monitor</a><a href="/netstat" aria-current="page">Netstat Monitor</a></nav>
+<nav class="apNav" aria-label="Apps &amp; Web"><a href="/apps?view=apps">Applications Monitor</a><a href="/apps?view=web">Web Monitor</a><a class="win-only" href="/netstat" aria-current="page">Netstat Monitor</a></nav>
 
 <div class="nxTop">
 <div class="vseg" id="nxTabs" role="tablist"><button type="button" data-t="dash">Dashboard</button><button type="button" data-t="hosts">Hosts &amp; Ports</button><button type="button" data-t="alerts">Alerts</button><button type="button" data-t="history">History</button></div>
@@ -33,6 +33,9 @@
 <div class="nxFilt"><select id="fHost"><option value="">ทุกเครื่อง</option></select><input id="fPort" inputmode="numeric" placeholder="พอร์ต" autocomplete="off"><select id="fProto"><option value="">TCP + UDP</option><option value="tcp">TCP</option><option value="udp">UDP</option></select><select id="fStatus"><option value="">ทุกสถานะ</option><option value="alert">Warning + Critical</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="normal">Normal</option><option value="offline">Offline</option></select></div>
 <div class="tblw"><table class="st-tbl nxTbl"><thead><tr><th>Host</th><th>IP Address</th><th>Port</th><th>Process</th><th class="n">Connections</th><th class="n">Receive Queue</th><th class="n">Send Queue</th><th class="n">Listening Queue</th><th>Status</th><th>Last Update</th></tr></thead><tbody id="nxRows"><tr><td colspan="10" class="empty">Loading...</td></tr></tbody></table></div>
 </section>
+<section class="card nxCard" id="nxAppCard" hidden><div class="nxH"><b>Application Queue</b><small>จากไฟล์ log ของโปรแกรม (เช่น THMux) · แยกตาม Output</small></div>
+<div class="tblw"><table class="st-tbl nxTbl"><thead><tr><th>Host</th><th>Log</th><th>Output</th><th>Port</th><th>Status</th><th class="n">Queue Size</th><th class="n">Critical Size</th><th class="n">Peak</th><th>ล่าสุด</th><th class="n">Exceed</th><th class="n">Disconnect</th></tr></thead><tbody id="nxApps"></tbody></table></div>
+<div class="nxH" style="margin-top:14px"><b>Application Log</b><small>WARN / ERROR และจุดที่กลับปกติ (ไม่แสดง INFO)</small></div><div id="nxAppLog" class="nxAppLog"></div></section>
 <section class="card nxCard"><div class="nxH"><b>Real-time</b><small id="nxGraphWho"></small></div><div id="nxGraph" class="nxGraph"></div></section>
 <div class="nxGrid">
 <section class="card nxCard"><div class="nxH"><b>Top Queue Usage</b></div><div id="nxTopQ"></div></section>

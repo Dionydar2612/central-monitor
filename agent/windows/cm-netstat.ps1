@@ -19,6 +19,13 @@
     cm_netstat_accept_queue_peak / cm_netstat_accept_queue_limit (queueLength ของ app pool)
     cm_netstat_queue_supported{kind} 0/1                      recv / send / accept อ่านได้ไหม
   Windows ไม่มี Recv-Q / Send-Q ต่อ socket ใน API ปกติ -> ส่ง supported=0 (central แสดง Unsupported ไม่ใช่ 0)
+  คิวของโปรแกรมจาก log (เช่น THMux): อ่านไฟล์ log ที่ตั้งไว้แล้ว (cm-logs.json / fluent-bit.conf) ต่อจากเดิมทุกรอบ
+    บรรทัดรูปแบบ "yyyyMMdd HH:mm:ss| LEVEL|Output[n] ข้อความ"
+    queue exceed (size=, CRITICAL SIZE=) = เริ่มเกิน · queue decrease (size=) = กลับปกติ · port change --> = พอร์ตปัจจุบัน
+    cm_netstat_app_state / _size / _critical / _port / _peak / _since{log,ch}   สถานะปัจจุบันของแต่ละ Output
+    cm_netstat_app_ep{log,ch,id,start,end,peak,critical} 1                        ช่วงที่คิวเกิน 10 ครั้งล่าสุด (end=0 = ยังเกินอยู่)
+    cm_netstat_app_count{log,ch,kind}                                              นับ exceed / disconnect / unknown_socket / drop / error
+    cm_netstat_app_event{seq,log,ch,level,msg} = เวลา                             60 บรรทัดล่าสุด (ไม่รวม INFO ยกเว้น "กลับปกติ")
   ทุกส่วนอ่านอย่างเดียว · ส่วนไหนอ่านไม่ได้ก็ข้าม · ติดตั้งโดย install-fluentbit.ps1 · ถอน: uninstall-fluentbit.ps1
 #>
 param([ValidateSet(1, 2, 5)] [int] $Interval = 0)
@@ -121,6 +128,91 @@ function Peak($key, $value, $now) {
     return $m
 }
 
+# ---------------- คิวของโปรแกรมจาก log ----------------
+$Inv = [Globalization.CultureInfo]::InvariantCulture
+$AppFiles = @{}; $AppState = @{}; $AppSeq = 0; $AppAt = [datetime]::MinValue
+$AppEvents = New-Object System.Collections.Generic.List[object]
+$AppRx = [regex]'^(\d{8})\s+(\d{2}:\d{2}:\d{2})\|\s*([A-Za-z]+)\s*\|\s*([^\[|]+?)\[(\d+)\]\s*(.*)$'
+function Get-AppPatterns {
+    $p = @()
+    $lc = Join-Path $Dir "cm-logs.json"
+    if (Test-Path $lc) { try { $p += @((Get-Content $lc -Raw | ConvertFrom-Json).logs) } catch { } }
+    else {
+        $fb = Join-Path $Dir "fluent-bit.conf"
+        if (Test-Path $fb) { Select-String -Path $fb -Pattern '^\s*Path\s+(.+)$' | ForEach-Object { $p += ($_.Matches[0].Groups[1].Value -split ",") } }
+    }
+    if (Test-Path $ConfF) { try { $p += @((Get-Content $ConfF -Raw | ConvertFrom-Json).applogs) } catch { } }
+    return @($p | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -notlike "*inetpub*" } | Select-Object -Unique)
+}
+function Update-AppSources {
+    $since = (Get-Date).AddDays(-2)
+    foreach ($pat in (Get-AppPatterns)) {
+        foreach ($f in @(Get-ChildItem -Path $pat -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $since } |
+                         Sort-Object LastWriteTime -Descending | Select-Object -First 2)) {
+            if ($AppFiles.ContainsKey($f.FullName)) { continue }
+            $b = New-Object byte[] 2; $enc = [Text.Encoding]::UTF8; $skip = 0
+            try { $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite'); $n = $fs.Read($b, 0, 2); $fs.Close()
+                  if ($n -eq 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE) { $enc = [Text.Encoding]::Unicode; $skip = 2 } } catch { continue }
+            $off = [math]::Max($skip, $f.Length - 524288); if ($enc -eq [Text.Encoding]::Unicode -and ($off % 2)) { $off++ }
+            $AppFiles[$f.FullName] = @{ off = [int64]$off; enc = $enc; log = (Split-Path (Split-Path $f.FullName -Parent) -Leaf) }
+        }
+    }
+    $script:AppAt = Get-Date
+}
+function App-Line($log, $line) {
+    $m = $AppRx.Match($line); if (-not $m.Success) { return }
+    try { $ts = [int64]([DateTimeOffset][datetime]::ParseExact($m.Groups[1].Value + " " + $m.Groups[2].Value, "yyyyMMdd HH:mm:ss", $Inv)).ToUnixTimeSeconds() } catch { return }
+    $lv = $m.Groups[3].Value.ToUpper(); $ch = $m.Groups[4].Value.Trim() + "[" + $m.Groups[5].Value + "]"; $msg = $m.Groups[6].Value.Trim()
+    $k = "$log|$ch"
+    if (-not $AppState.ContainsKey($k)) {
+        $AppState[$k] = @{ log = $log; ch = $ch; exceed = 0; size = $null; crit = $null; port = $null; since = $ts; peak = 0; n = 0
+                           eps = (New-Object System.Collections.Generic.List[object]); last = $ts
+                           cnt = @{ exceed = 0; disconnect = 0; unknown_socket = 0; drop = 0; error = 0 } }
+    }
+    $s = $AppState[$k]; $s.last = $ts; $show = $false
+    if ($msg -match 'queue exceed.*?size=(\d+).*?CRITICAL SIZE=(\d+)') {
+        $size = [int64]$matches[1]; $s.crit = [int64]$matches[2]; $s.size = $size
+        if (-not $s.exceed) {
+            $s.exceed = 1; $s.since = $ts; $s.peak = $size; $s.n++; $s.cnt.exceed++
+            $s.eps.Add(@{ id = "$ts"; start = $ts; end = 0; peak = $size; crit = $s.crit })
+            if ($s.eps.Count -gt 10) { $s.eps.RemoveAt(0) }
+        } elseif ($size -gt $s.peak) { $s.peak = $size }
+        if ($s.eps.Count) { $s.eps[$s.eps.Count - 1].peak = $s.peak }
+        $show = $true
+    } elseif ($msg -match 'queue decrease.*?size=(\d+)') {
+        $s.size = [int64]$matches[1]
+        if ($s.exceed) { $s.exceed = 0; $s.since = $ts; if ($s.eps.Count) { $s.eps[$s.eps.Count - 1].end = $ts }; $lv = "RECOVER"; $show = $true }
+    } elseif ($msg -match 'port change\s*-->\s*(\d+)') { $s.port = [int]$matches[1] }
+    elseif ($msg -match 'notify disconnect') { $s.cnt.disconnect++ }
+    elseif ($msg -match 'Unknown Socket') { $s.cnt.unknown_socket++ }
+    elseif ($msg -match 'drop new connection') { $s.cnt.drop++ }
+    if ($lv -eq "ERROR") { $s.cnt.error++; $show = $true } elseif ($lv -like "WARN*") { $show = $true }
+    if ($show) {
+        $script:AppSeq++
+        $AppEvents.Add(@{ seq = $AppSeq; ts = $ts; log = $log; ch = $ch; lv = $lv; msg = $msg })
+        if ($AppEvents.Count -gt 60) { $AppEvents.RemoveAt(0) }
+    }
+}
+function Read-AppLogs {
+    foreach ($path in @($AppFiles.Keys)) {
+        $e = $AppFiles[$path]
+        try {
+            $len = (New-Object IO.FileInfo $path).Length
+            if ($len -lt $e.off) { $e.off = if ($e.enc -eq [Text.Encoding]::Unicode) { 2 } else { 0 } }   # ไฟล์ถูกตัด / หมุนใหม่
+            if ($len -le $e.off) { continue }
+            $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+            $fs.Seek($e.off, 'Begin') | Out-Null
+            $buf = New-Object byte[] ([math]::Min($len - $e.off, 1048576))
+            $n = $fs.Read($buf, 0, $buf.Length); $fs.Close()
+            $text = $e.enc.GetString($buf, 0, $n)
+            $cut = $text.LastIndexOf("`n"); if ($cut -lt 0) { continue }
+            $text = $text.Substring(0, $cut + 1)
+            $e.off += $e.enc.GetByteCount($text)
+            foreach ($line in ($text -split "`r?`n")) { if ($line) { App-Line $e.log $line } }
+        } catch { }
+    }
+}
+
 $out = Join-Path $TextDir "cm_netstat.prom"
 $tmp = "$out.tmp"
 $enc = New-Object Text.UTF8Encoding($false)
@@ -133,6 +225,8 @@ while ($true) {
     $now = [double]([DateTimeOffset]$nowDt).ToUnixTimeMilliseconds() / 1000
     if (($nowDt - $PidAt).TotalSeconds -ge 15) { Update-Pids }
     if (($nowDt - $HttpAt).TotalSeconds -ge 300) { Update-Http }
+    if (($nowDt - $AppAt).TotalSeconds -ge 30) { Update-AppSources }
+    Read-AppLogs
 
     $L = New-Object System.Collections.Generic.List[string]
     $listenAddr = @{}
@@ -249,6 +343,28 @@ while ($true) {
         $L.Add("# TYPE cm_netstat_accept_queue gauge"); $L.AddRange($Q)
         $L.Add("# TYPE cm_netstat_accept_queue_peak gauge"); $L.AddRange($QP)
         $L.Add("# TYPE cm_netstat_accept_queue_limit gauge"); $L.AddRange($QL)
+    }
+
+    # คิวของโปรแกรมจาก log
+    if ($AppState.Count) {
+        foreach ($name in "state", "size", "critical", "port", "peak", "since") {
+            $L.Add("# TYPE cm_netstat_app_$name gauge")
+            foreach ($s in $AppState.Values) {
+                $v = switch ($name) { "state" { $s.exceed } "size" { $s.size } "critical" { $s.crit } "port" { $s.port } "peak" { $s.peak } "since" { $s.since } }
+                if ($null -ne $v) { $L.Add("cm_netstat_app_$name{log=`"$(Esc $s.log)`",ch=`"$(Esc $s.ch)`"} $v") }
+            }
+        }
+        $L.Add("# TYPE cm_netstat_app_ep gauge")
+        foreach ($s in $AppState.Values) { foreach ($ep in $s.eps) {
+            $L.Add("cm_netstat_app_ep{log=`"$(Esc $s.log)`",ch=`"$(Esc $s.ch)`",id=`"$($ep.id)`",start=`"$($ep.start)`",end=`"$($ep.end)`",peak=`"$($ep.peak)`",critical=`"$($ep.crit)`"} 1")
+        } }
+        $L.Add("# TYPE cm_netstat_app_count gauge")
+        foreach ($s in $AppState.Values) { foreach ($c in $s.cnt.Keys) { $L.Add("cm_netstat_app_count{log=`"$(Esc $s.log)`",ch=`"$(Esc $s.ch)`",kind=`"$c`"} $($s.cnt[$c])") } }
+        $L.Add("# TYPE cm_netstat_app_event gauge")
+        foreach ($ev in $AppEvents) {
+            $m2 = $ev.msg; if ($m2.Length -gt 300) { $m2 = $m2.Substring(0, 300) }
+            $L.Add("cm_netstat_app_event{seq=`"$($ev.seq)`",log=`"$(Esc $ev.log)`",ch=`"$(Esc $ev.ch)`",level=`"$($ev.lv)`",msg=`"$(Esc $m2)`"} $($ev.ts)")
+        }
     }
 
     $t0.Stop()

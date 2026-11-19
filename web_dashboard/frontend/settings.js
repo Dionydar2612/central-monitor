@@ -369,9 +369,22 @@ function readAlertFields() {
              disabled_sensors: [...new Set(ds)], sensors: readSensRows() };
 }
 
+/* รูปแบบการใช้งาน: เครื่องใหม่เริ่มที่ชนิดที่ใช้ได้ (Windows อย่างเดียว -> agent) */
+const platforms = () => document.documentElement.dataset.platforms || "both";
+function renderPlatforms() {
+    const p = platforms();
+    document.querySelectorAll("#platSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.p === p)));
+}
+async function savePlatforms(p) {
+    try {
+        await api("PUT", "/api/ui-platforms", { platforms: p });
+        setPlatforms(p); renderPlatforms();
+        say("platMsg", "บันทึกแล้ว", "ok");
+    } catch (e) { if (e.message !== "auth") say("platMsg", "ไม่สำเร็จ: " + e.message, "bad"); }
+}
 function openForm(t) {
     S.editing = t ? t.name : null; S.scanned = []; S.hostKeyKnown = !!(t && t.host_key_known);
-    setType(t ? (t.type || "ssh") : "ssh");
+    setType(t ? (t.type || "ssh") : (platforms() === "windows" ? "agent" : "ssh"));
     $("f_type").disabled = !!t;
     fillAlertFields(t); formDefaults();
     document.querySelectorAll('#formCard .ftabs button[data-t="general"], #formCard .ftabs button[data-t="conn"]').forEach(b => { b.hidden = isOp(); });
@@ -990,6 +1003,9 @@ document.addEventListener("DOMContentLoaded", () => {
     };
     $("n_clear").onclick = () => { if (confirm("ลบ webhook URL? (หยุดส่งแจ้งเตือนไป Teams)")) saveNotify({ webhook_url: "-", enabled: false }); };
     $("f_type").addEventListener("change", e => { setType(e.target.value); setMode($("a_mode").value); });
+    $("platSeg")?.addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (b) savePlatforms(b.dataset.p); });
+    document.addEventListener("cm-platforms", renderPlatforms);
+    renderPlatforms();
     $("a_mode").addEventListener("change", e => {
         setMode(e.target.value);
         if (S.editing) $("agStatus").textContent = "เปลี่ยนวิธีรับข้อมูลแล้ว กด Save ก่อน แล้วกด Make command ใหม่";
@@ -1004,7 +1020,7 @@ document.addEventListener("DOMContentLoaded", () => {
     ["r_log", "r_log_u"].forEach(id => $(id).addEventListener("input", retentionWarn));
     (async () => {
         let role = "admin";
-        try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; role = d.role || "viewer"; }
+        try { const d = await api("GET", "/api/me"); $("currentUsername").textContent = d.username || "?"; role = d.role || "viewer"; setPlatforms(d.platforms); }
         catch (e) { return; }
         S.role = role;
         if (role !== "admin") {                    /* operator: เครื่อง (การแจ้งเตือน + Log) + Custom alert rules */
@@ -1013,6 +1029,7 @@ document.addEventListener("DOMContentLoaded", () => {
             loadTargets(); loadAlerts();
             return;
         }
+        $("platCard").hidden = false; renderPlatforms();
         loadTargets(); loadUsers(); loadRetention(); loadAlerts(); loadNotify();
         if (SHOW_CHECKS) loadChecks();
     })();

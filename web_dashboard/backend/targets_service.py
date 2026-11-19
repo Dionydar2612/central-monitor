@@ -293,6 +293,23 @@ def clean_sensor_settings(value, errors, field="alert.sensors"):
 SENSOR_KEY_RE = re.compile(r"^[A-Za-z0-9_.:$@ /\\()&+-]{1,120}\*?$")
 
 
+def set_platforms(value):
+    """รูปแบบการใช้งาน ui.platforms = windows | linux | both"""
+    value = str(value or "").lower()
+    if value not in settings.PLATFORMS:
+        raise ValidationError({"platforms": "เลือก windows, linux หรือ both"})
+    y = _yaml()
+    with _locked():
+        doc = _load_doc(y)
+        ui = doc.get("ui")
+        if not isinstance(ui, CommentedMap):
+            ui = CommentedMap()
+            doc["ui"] = ui
+        ui["platforms"] = value
+        _write_doc(y, doc)
+    return value
+
+
 def set_netstat(name, cfg):
     """Netstat Monitor ของเครื่อง (targets[].netstat) cfg ผ่าน netstat_service.clean_host แล้ว  ไม่มีเครื่อง -> None
     ปิด Monitoring และไม่มีพอร์ต + interval ปริยาย -> ลบ key ทิ้ง"""
@@ -302,7 +319,7 @@ def set_netstat(name, cfg):
         node = _find_target(doc, name)
         if node is None:
             return None
-        if not cfg.get("enabled") and not cfg.get("ports") and int(cfg.get("interval") or 1) == 1:
+        if not cfg.get("enabled") and not cfg.get("ports") and not cfg.get("apps") and int(cfg.get("interval") or 1) == 1:
             _set_or_drop(node, "netstat", None)
         else:
             m = CommentedMap()
@@ -316,6 +333,8 @@ def set_netstat(name, cfg):
                 item.fa.set_flow_style()
                 ports.append(item)
             m["ports"] = ports
+            if cfg.get("apps"):
+                m["apps"] = _flow(dict(cfg["apps"]))
             node["netstat"] = m
         _write_doc(y, doc)
     return cfg

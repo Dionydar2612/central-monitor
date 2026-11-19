@@ -887,6 +887,62 @@ class Backend(unittest.TestCase):
             os.remove(f)
         c.delete("/api/targets/ns-win"); c.delete("/api/targets/ns-lx")
 
+    def test_platforms(self):
+        """รูปแบบการใช้งาน: windows / linux / both (puller.yaml ui.platforms) เปลี่ยนได้เฉพาะ admin"""
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        self.assertEqual(c.get("/api/me").json["platforms"], "both")
+        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "mac"}).status_code, 400)
+        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "windows"}).json["platforms"], "windows")
+        self.assertEqual(c.get("/api/me").json["platforms"], "windows")
+        self.assertIn("platforms: windows", open(os.path.join(self.tmp, "puller.yaml")).read())
+        c.post("/api/users", json={"username": "plop", "password": "password1", "role": "operator"})
+        self.assertEqual(self.login("plop", "password1"), 200)
+        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "both"}).status_code, 403)
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "both"}).status_code, 200)
+
+    def test_netstat_app_queue(self):
+        """คิวของโปรแกรมจาก log: ตั้งค่า apps · dashboard (Output[n] + log ไม่มี INFO) · history"""
+        import json as _j, time as _t, netstat_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        c.post("/api/targets", json={"name": "aq-win", "type": "agent", "host": "10.9.1.5",
+                                     "agent": {"mode": "pull", "logs": [], "channels": ["System"]}})
+        bad = c.put("/api/netstat/hosts/aq-win", json={"enabled": True, "interval": 1, "ports": [],
+                                                      "apps": {"notify_after": "x", "critical_size": -1}}).json["fields"]
+        self.assertEqual(set(bad), {"apps.notify_after", "apps.critical_size"})
+        r = c.put("/api/netstat/hosts/aq-win", json={"enabled": True, "interval": 1, "ports": [],
+                                                    "apps": {"enabled": True, "notify_after": 30, "critical_size": 100000}})
+        self.assertEqual(r.status_code, 200, r.json)
+        self.assertIn("{notify_after: 30, critical_size: 100000}", open(os.path.join(self.tmp, "puller.yaml")).read())
+        now = _t.time()
+        os.makedirs(netstat_service.NETSTAT_DIR, exist_ok=True)
+        app = {"key": "THMux/Output[2]", "log": "THMux", "ch": "Output[2]", "state": 1, "size": 1200, "critical": 500, "port": 37518,
+               "peak": 1200, "since": now - 40, "counts": {"exceed": 3, "disconnect": 1}, "episodes": [{"id": "1", "start": now - 40, "end": 0, "peak": 1200, "critical": 500}]}
+        with open(netstat_service.LIVE_FILE, "w") as f:
+            _j.dump({"updated": now, "hosts": {"aq-win": {"web": "aq-win", "online": True, "stale": False, "has_data": True, "rows": [], "ports": [],
+                                                         "apps": [app], "app_events": [{"seq": 2, "ts": now - 40, "log": "THMux", "ch": "Output[2]", "level": "WARN", "msg": "queue exceed"}]}},
+                     "active": []}, f)
+        d = c.get("/api/netstat/dashboard").json
+        self.assertEqual([(a["web"], a["ch"], a["state"], a["size"]) for a in d["apps"]], [("aq-win", "Output[2]", 1, 1200)])
+        self.assertEqual([e["level"] for e in d["app_events"]], ["WARN"])
+        det = c.get("/api/netstat/hosts/aq-win").json
+        self.assertEqual(det["apps_cfg"], {"enabled": True, "notify_after": 30, "critical_size": 100000})
+        self.assertEqual(det["apps"][0]["port"], 37518)
+        saved = netstat_service.prometheus_query_range
+        calls = []
+        netstat_service.prometheus_query_range = lambda q, s, e, st: calls.append(q) or {"data": {"result": [{"metric": {}, "values": [[s, "700"], [e, "499"]]}]}}
+        try:
+            h = c.get("/api/netstat/history?web=aq-win&key=app:THMux/Output[2]&range=1h").json
+            self.assertTrue(h["app"])
+            self.assertEqual(h["size"][-1][1], 499.0)
+            self.assertIn('cm_web="aq-win",log="THMux",ch="Output[2]"', calls[0])
+        finally:
+            netstat_service.prometheus_query_range = saved
+        os.remove(netstat_service.LIVE_FILE)
+        c.delete("/api/targets/aq-win")
+
     def test_password_hash(self):
         import users_service as u
         h = u.hash_password("secret-pass")

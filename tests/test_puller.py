@@ -1139,6 +1139,61 @@ class NetstatParse(unittest.TestCase):
         self.assertIn("เกณฑ์ 300", sys_ev[0]["message"])
 
 
+class NetstatAppQueue(unittest.TestCase):
+    """คิวของโปรแกรมจาก log (THMux): แยก Output[n] · ช่วงสั้นบันทึกอย่างเดียว · ช่วงยาวแจ้ง + กลับปกติ · ไม่ซ้ำหลังเริ่มใหม่"""
+    TEXT = """cm_netstat_heartbeat_seconds 1
+cm_netstat_app_state{log="THMux",ch="Output[2]"} 0
+cm_netstat_app_size{log="THMux",ch="Output[2]"} 499
+cm_netstat_app_critical{log="THMux",ch="Output[2]"} 500
+cm_netstat_app_port{log="THMux",ch="Output[2]"} 37518
+cm_netstat_app_peak{log="THMux",ch="Output[2]"} 1999999
+cm_netstat_app_ep{log="THMux",ch="Output[2]",id="100",start="100",end="101",peak="1999999",critical="500"} 1
+cm_netstat_app_ep{log="THMux",ch="Output[4]",id="900",start="900",end="0",peak="1200",critical="500"} 1
+cm_netstat_app_state{log="THMux",ch="Output[4]"} 1
+cm_netstat_app_size{log="THMux",ch="Output[4]"} 1200
+cm_netstat_app_count{log="THMux",ch="Output[2]",kind="disconnect"} 3
+cm_netstat_app_event{seq="5",log="THMux",ch="Output[2]",level="RECOVER",msg="queue decrease (size=499)."} 101
+cm_netstat_app_event{seq="4",log="THMux",ch="Output[2]",level="WARN",msg="queue exceed (size=1999999)."} 100
+"""
+
+    def test_parse_and_episodes(self):
+        snap = netstat.snapshot(netstat.parse_text(self.TEXT))
+        a2, a4 = snap["apps"]["THMux/Output[2]"], snap["apps"]["THMux/Output[4]"]
+        self.assertEqual((a2["state"], a2["size"], a2["port"], a2["counts"]["disconnect"]), (0, 499, 37518, 1 * 3))
+        self.assertEqual(a2["episodes"], [{"id": "100", "start": 100, "end": 101, "peak": 1999999, "critical": 500}])
+        self.assertEqual([e["level"] for e in snap["app_events"]], ["RECOVER", "WARN"])
+        hc = netstat.host_config({"netstat": {"enabled": True}})
+        self.assertEqual(hc["apps"], {"enabled": True, "notify_after": 10, "critical_size": None})
+        eng = netstat.AlertEngine()
+        # ช่วงที่จบไปนานแล้ว (เห็นครั้งแรกตอนเริ่มระบบ) -> บันทึก ไม่แจ้ง
+        ev, ch = eng.app_episode("w", "1.1.1.1", a2, a2["episodes"][0], hc["apps"], 1000)
+        self.assertEqual((ev, ch, eng.history[-1]["status"], eng.history[-1]["notified"]), ([], True, "recovered", False))
+        self.assertEqual(eng.app_episode("w", "1.1.1.1", a2, a2["episodes"][0], hc["apps"], 1001), ([], False))   # ไม่ซ้ำ
+        # ยังเกินอยู่: ยังไม่ครบ 10 วิ -> active แต่ไม่แจ้ง · ครบ -> แจ้งครั้งเดียว
+        ep = a4["episodes"][0]
+        self.assertEqual(eng.app_episode("w", "1.1.1.1", a4, ep, hc["apps"], 905)[0], [])
+        self.assertIn("w::app::THMux/Output[4]", eng.active)
+        self.assertEqual([e[0] for e in eng.app_episode("w", "1.1.1.1", a4, ep, hc["apps"], 911)[0]], ["open"])
+        self.assertEqual(eng.app_episode("w", "1.1.1.1", a4, ep, hc["apps"], 912)[0], [])
+        # step() ปกติต้องไม่ปิด alert คิวของโปรแกรม
+        eng.step([], 913, scope={"w"})
+        self.assertIn("w::app::THMux/Output[4]", eng.active)
+        ev = eng.app_episode("w", "1.1.1.1", a4, dict(ep, end=930), hc["apps"], 931)[0]
+        self.assertEqual([e[0] for e in ev], ["recovered"])
+        self.assertEqual((eng.history[-1]["duration"], eng.history[-1]["recovered_at"]), (30, 930))
+        sys_ev = netstat.to_system_events(ev)
+        self.assertEqual(sys_ev[0]["sensor"], "Netstat THMux Output[4] Queue exceed")
+        # เพิ่งจบ + size เกิน critical_size ที่ตั้ง -> แจ้งครั้งเดียวแบบ "กลับปกติแล้ว" ระดับ critical
+        cfg = dict(hc["apps"], critical_size=1000000)
+        ev = eng.app_episode("w", "", a2, dict(a2["episodes"][0], start=2000, end=2001, id="2000"), cfg, 2010)[0]
+        self.assertEqual([(e[0], e[1]["level"]) for e in ev], [("episode", "critical")])
+        self.assertIn("กลับปกติแล้วหลัง 1 วินาที", netstat.to_system_events(ev)[0]["message"])
+        # เริ่ม puller ใหม่: โหลดจาก alerts.json แล้วไม่บันทึกซ้ำ
+        eng2 = netstat.AlertEngine(eng.dump())
+        self.assertEqual(eng2.app_episode("w", "", a2, a2["episodes"][0], hc["apps"], 3000), ([], False))
+        self.assertTrue(eng2.app_close_all("x", 1) is False)
+
+
 class NetstatMonitorLoop(unittest.TestCase):
     def test_live_heartbeat_when_disabled(self):
         """ยังไม่เปิด Monitoring (อ่านทุก 10 วิ) live.json ต้องอัปเดตอย่างน้อยทุก 5 วิ ไม่งั้นหน้าเว็บขึ้น "ข้อมูลไม่อัปเดต" """

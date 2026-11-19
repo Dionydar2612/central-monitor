@@ -69,3 +69,20 @@ Queue เกิน Warning / Critical · Connections เกิน Warning / Crit
 | `GET /api/netstat/stream?every=2` | Server-Sent Events (`event: snapshot`) |
 | `GET /api/netstat/history?web=&key=tcp/in/1433&range=15m|1h|6h|24h` หรือ `&start=&end=` | ย้อนหลังจาก Prometheus |
 | `GET /api/netstat/alerts?status=active|all&web=` | alert |
+
+## Application Queue (คิวของโปรแกรมจาก log เช่น THMux)
+
+agent อ่านไฟล์ log ที่ตั้งไว้แล้วสำหรับเก็บ log (Settings > ไฟล์ log / `set-logs.bat`) เองทุกรอบ ไม่ต้องตั้ง path ซ้ำ
+แยกตาม `Output[n]` จากบรรทัดรูปแบบ `yyyyMMdd HH:mm:ss| LEVEL|Output[n] ข้อความ`
+
+| บรรทัด | ความหมาย |
+|---|---|
+| `queue exceed ... (size=N, CRITICAL SIZE=M ...)` | เริ่มเกิน (นับเป็น 1 ช่วง) · size สูงสุดในช่วงนี้ = Peak |
+| `queue decrease <Stage queue exceed Clear> (size=N)` | กลับปกติ (เป็น INFO แต่ใช้บอกว่ากลับมาแล้ว) |
+| `port change --> N` | พอร์ตปัจจุบันของ Output นั้น |
+| `receive notify disconnect` / `Unknown Socket` / `drop new connection` | นับจำนวน |
+
+- หน้า Dashboard: ตาราง Application Queue (สถานะ, size, CRITICAL SIZE, Peak, เกินมานานเท่าไร / กลับปกติเมื่อไหร่) + Application Log (WARN / ERROR / กลับปกติ ไม่แสดง INFO)
+- ทุกช่วงที่เกินบันทึกใน Alerts · แจ้ง Teams / ป๊อปอัป เมื่อเกินนาน >= `notify_after` วินาที (ปริยาย 10) หรือ size >= `critical_size` (= Critical)
+  ตั้งที่ Hosts & Ports > เครื่อง > Application Queue หรือ `netstat.apps: {enabled, notify_after, critical_size}`
+- เวลาในตารางเป็นเวลาจาก log (ช่วงที่เกินสั้นกว่า 1 วินาทีก็ยังเห็น)

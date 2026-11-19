@@ -24,6 +24,7 @@
 <div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><span>Logged in as <b id="currentUsername">...</b></span><button id="logoutButton">Logout</button></div>
 </header>
 
+<section class="card adm-only" id="platCard" hidden><div class="platRow"><b>รูปแบบการใช้งาน</b><div class="vseg" id="platSeg"><button type="button" data-p="windows">Windows อย่างเดียว</button><button type="button" data-p="linux">Linux อย่างเดียว</button><button type="button" data-p="both">ทั้งคู่</button></div><span class="st-msg" id="platMsg"></span></div></section>
 <nav class="card sttools" aria-label="หน้าอื่น"><a href="/apps"><b>Apps &amp; Web</b><small>โปรแกรม / เว็บ / พอร์ต / Service / Docker ที่เฝ้าดู</small></a><a href="/network"><b>Network &amp; Security</b><small>ใครต่อหาใคร · Firewall · Route · Login ไม่สำเร็จ</small></a></nav>
 <section class="card" id="targetsCard">
 <div class="top"><h2>Targets</h2><button class="st-btn primary" id="addBtn">+ Add target</button></div>
@@ -46,7 +47,7 @@
 <div class="fpane" data-p="general">
 <div class="fsec"><div class="fsec-h">ข้อมูลเครื่อง</div>
 <div class="st-grid">
-<div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH)</option><option value="agent">Windows (agent / Fluent Bit)</option></select><small id="f_type_hint">central เข้าไปดึง log ทาง SSH</small><div class="st-err"></div></div>
+<div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh" class="lx-only">Linux (SSH)</option><option value="agent" class="win-only">Windows (agent / Fluent Bit)</option></select><small id="f_type_hint">central เข้าไปดึง log ทาง SSH</small><div class="st-err"></div></div>
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
 <div class="st-f" data-f="priority"><label for="f_prio">Priority (ความสำคัญ)</label><select id="f_prio"><option value="5">★★★★★ สำคัญสุด</option><option value="4">★★★★☆ สูง</option><option value="3" selected>★★★☆☆ ปกติ</option><option value="2">★★☆☆☆ ต่ำ</option><option value="1">★☆☆☆☆ ต่ำสุด</option></select><div class="st-err"></div></div>

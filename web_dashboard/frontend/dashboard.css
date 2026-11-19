@@ -1768,3 +1768,14 @@ button.ovst{border:0;font:inherit;cursor:pointer}button.ovst:hover{filter:bright
 .nxPorts .nxTh{width:58px;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:var(--card,#fff);color:inherit}
 .nxPorts .nxTh.has-err{border-color:#e5484d}.nxPorts tr.sel td{background:rgba(16,194,122,.06)}
 .nxHist{display:grid;gap:18px}
+
+/* รูปแบบการใช้งาน: Windows อย่างเดียว / Linux อย่างเดียว */
+html[data-platforms=windows] .lx-only,html[data-platforms=linux] .win-only,
+html[data-platforms=windows] .both-only,html[data-platforms=linux] .both-only{display:none!important}
+.platRow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.platRow .vseg button[aria-pressed=true]{background:var(--blue,#1f7bff);color:#fff}
+.nxAppLog{display:grid;gap:2px;max-height:420px;overflow:auto;font-size:13px}
+.nxAL{display:grid;grid-template-columns:150px 110px 90px 80px 1fr;gap:10px;align-items:baseline;padding:5px 8px;border-radius:6px}
+.nxAL:nth-child(odd){background:var(--chip)}.nxAL time{color:var(--mut);font-variant-numeric:tabular-nums}.nxAL .m{overflow-wrap:anywhere}
+.nxAL.ok{background:rgba(16,194,122,.08)}
+.nxW{width:90px!important}
+@media(max-width:720px){.nxAL{grid-template-columns:1fr 1fr}.nxAL .m{grid-column:1/-1}}

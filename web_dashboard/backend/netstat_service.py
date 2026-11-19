@@ -137,7 +137,11 @@ def host_detail(web):
                           "proc": "", "pid": None, "addr": "", "peers": []})
     row = next((r for r in host_rows()["hosts"] if r["web"] == web), {})
     alerts = load_alerts()
-    return dict(row, support=h.get("support"), ports=ports, rows=h.get("rows") or [],
+    ac = n.get("apps") if isinstance(n.get("apps"), dict) else {}
+    apps_cfg = {"enabled": ac.get("enabled", True) is not False, "notify_after": ac.get("notify_after", 10),
+                "critical_size": ac.get("critical_size")}
+    return dict(row, support=h.get("support"), ports=ports, rows=h.get("rows") or [], apps=h.get("apps") or [],
+                app_events=h.get("app_events") or [], apps_cfg=apps_cfg,
                 active=[a for a in alerts.get("active") or [] if a.get("web") == web],
                 history=[a for a in (alerts.get("history") or [])[-500:] if a.get("web") == web][-50:][::-1])
 
@@ -210,9 +214,29 @@ def clean_host(payload):
             if th:
                 item[k] = th
         ports.append(item)
+    apps = {}
+    a = p.get("apps") if isinstance(p.get("apps"), dict) else {}
+    if a.get("enabled", True) is False:
+        apps["enabled"] = False
+    for k, lo, hi in (("notify_after", 0, 86400), ("critical_size", 0, 10 ** 12)):
+        x = a.get(k)
+        if x in (None, ""):
+            continue
+        try:
+            x = float(x)
+        except (TypeError, ValueError):
+            errors[f"apps.{k}"] = "ใส่ตัวเลข"
+            continue
+        if not lo <= x <= hi:
+            errors[f"apps.{k}"] = f"ต้องอยู่ระหว่าง {lo}-{hi}"
+            continue
+        apps[k] = int(x) if x.is_integer() else x
     if errors:
         raise ValidationError(errors)
-    return {"enabled": bool(p.get("enabled")), "interval": interval, "ports": ports}
+    out = {"enabled": bool(p.get("enabled")), "interval": interval, "ports": ports}
+    if apps:
+        out["apps"] = apps
+    return out
 
 
 def save_host(web, payload):
@@ -277,6 +301,22 @@ def dashboard(filters=None):
                 rows.append(row)
                 for s, v in (row.get("states") or {}).items():
                     states[s] = states.get(s, 0) + (v or 0)
+    apps, app_events = [], []
+    for web, t in tmap.items():
+        h = hosts.get(web) or {}
+        n = _ncfg(t)
+        if not n.get("enabled") or (isinstance(n.get("apps"), dict) and n["apps"].get("enabled") is False):
+            continue
+        if f.get("host") and web != f["host"]:
+            continue
+        st = agent_status(h, upd, now)
+        for a in h.get("apps") or []:
+            row = dict(a, web=web, ip=t.get("host") or "", host_status=st, episodes=(a.get("episodes") or [])[-5:])
+            if st != "online":                          # เครื่องไม่ตอบ -> ไม่รู้สถานะปัจจุบัน
+                row.update(state=None, size=None)
+            apps.append(row)
+        app_events += [dict(e, web=web) for e in h.get("app_events") or []]
+    app_events.sort(key=lambda e: -(e.get("ts") or 0))
     alerts = load_alerts()
     active = [a for a in live.get("active") or alerts.get("active") or []
               if (not f.get("host") or a.get("web") == f["host"])]
@@ -290,6 +330,7 @@ def dashboard(filters=None):
                     "warning": sum(1 for a in active if a.get("level") == "warning"),
                     "critical": sum(1 for a in active if a.get("level") == "critical")},
         "rows": rows, "states": states, "top_queue": top_q, "top_conn": top_c, "alerts": recent,
+        "apps": apps, "app_events": app_events[:50],
         "hosts": sorted(tmap), "active": active,
     }
 
@@ -335,6 +376,8 @@ def _points(res):
 def history(web, key, range_spec="1h", start=None, end=None):
     if not any(t.get("name") == web for t in windows_targets()):
         return None
+    if str(key).startswith("app:"):
+        return _app_history(web, str(key)[4:], range_spec, start, end)
     try:
         proto, direction, port = str(key).split("/")
         port = int(port)
@@ -361,6 +404,25 @@ def history(web, key, range_spec="1h", start=None, end=None):
     act = load_alerts().get("active") or []
     out["alerts"] = [a for a in hist + act if a.get("web") == web and (a.get("port") in (None, port))
                      and (a.get("recovered_at") or e) >= s and (a.get("first") or 0) <= e][-200:][::-1]
+    return out
+
+
+def _app_history(web, akey, range_spec, start, end):
+    """คิวของโปรแกรมจาก log: size / สถานะ (Prometheus) + ช่วงที่เกิน (alerts)  akey = "<log>/<ch>" """
+    log, _, ch = akey.partition("/")
+    if not log or not ch:
+        raise ValidationError({"key": "ชื่อ log ไม่ถูกต้อง"})
+    s, e = _range(range_spec, start, end)
+    step = max(15, int((e - s) / 240))
+    sel = f'cm_web="{_esc(web)}",log="{_esc(log)}",ch="{_esc(ch)}"'
+    size = _series(f"max(cm_netstat_app_size{{{sel}}})", s, e, step)
+    out = {"web": web, "key": "app:" + akey, "app": True, "start": s, "end": e, "step": step, "available": size is not None,
+           "size": _points(size), "state": _points(_series(f"max(cm_netstat_app_state{{{sel}}})", s, e, step)),
+           "critical": _points(_series(f"max(cm_netstat_app_critical{{{sel}}})", s, e, step))}
+    d = load_alerts()
+    out["alerts"] = [a for a in (d.get("history") or []) + (d.get("active") or [])
+                     if a.get("web") == web and a.get("kind") == "app_queue" and a.get("log") == log and a.get("ch") == ch
+                     and (a.get("recovered_at") or e) >= s and (a.get("first") or 0) <= e][-300:][::-1]
     return out
 
 
