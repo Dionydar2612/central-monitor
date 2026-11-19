@@ -29,6 +29,15 @@ import notify             # noqa: E402
 import netsec             # noqa: E402
 
 
+
+def _facts(body):
+    """การ์ดแบบ PRTG (หัวข้อตัวหนา + ค่าบรรทัดถัดไป) -> {"หัวข้อ:": ค่า}"""
+    out = {}
+    for a, b in zip(body[1:], body[2:]):
+        if a.get("weight") == "Bolder" and str(a.get("text", "")).endswith(":") and b.get("spacing") == "None":
+            out[a["text"]] = b["text"]
+    return out
+
 class SensorGrade(unittest.TestCase):
     TH = {"warning": 80, "error": 90}
 
@@ -865,8 +874,8 @@ class SoftwareRules(unittest.TestCase):
             notify._enqueue = orig
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0]["summary"], "💿 w · ติดตั้ง C")
-        facts = {f["title"]: f["value"] for f in sent[0]["attachments"][0]["content"]["body"][1]["facts"]}
-        self.assertEqual(facts["ติดตั้ง:"], "C 9")
+        facts = _facts(sent[0]["attachments"][0]["content"]["body"])
+        self.assertEqual(facts["Changes:"], "ติดตั้ง: C 9")
 
 
 class TeamsNotify(unittest.TestCase):
@@ -892,14 +901,14 @@ class TeamsNotify(unittest.TestCase):
         self.assertEqual(sent[0][1]["type"], "message")
         self.assertEqual(card["type"], "AdaptiveCard")
         self.assertEqual(card["body"][0]["text"], "Central Monitor Notification: win-01 [Availability] DOWN")
-        facts = {f["title"]: f["value"] for f in card["body"][1]["facts"]}
+        facts = _facts(card["body"])
         self.assertEqual(facts["Device:"], "win-01 [TQ]")
         self.assertTrue(facts["Status:"].startswith("DOWN – "))
         self.assertEqual(sent[0][1]["summary"], "🔴 win-01 · เครื่องดับ หรือไม่ส่งข้อมูล")   # ข้อความในหน้าแจ้งเตือน
         self.assertEqual(card["body"][0]["color"], "Attention")
         self.assertNotIn("actions", card)                                # ไม่มีปุ่มลิงก์
         self.assertEqual(sent[1][1]["attachments"][0]["content"]["body"][0]["color"], "Good")
-        f2 = {f["title"]: f["value"] for f in sent[1][1]["attachments"][0]["content"]["body"][1]["facts"]}
+        f2 = _facts(sent[1][1]["attachments"][0]["content"]["body"])
         self.assertEqual(f2["Last Value:"], "12.3 %")
         self.assertEqual(sent[1][1]["summary"], "🟢 lx-01 · CPU กลับปกติ (12%) · เป็นอยู่ 10m")
 

@@ -1783,3 +1783,9 @@ html[data-platforms=windows] .both-only,html[data-platforms=linux] .both-only{di
 .nxNotes{display:grid;gap:4px;margin-top:8px}.nxNoteRow{font-size:13px;padding:8px 10px;border-radius:8px;background:rgba(245,180,0,.1)}
 .nxNoteRow small{display:block;color:var(--mut);margin-top:2px;overflow-wrap:anywhere}
 .nxLt .evst::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor;margin-right:6px}.nxLt.dn{background:rgba(229,72,77,.07)}.nxLt.wr{background:rgba(194,124,0,.07)}.nxLt .m{overflow-wrap:anywhere;max-width:520px}
+.tcWrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;margin-top:10px}
+.tcF{display:grid;grid-template-columns:150px 1fr auto auto;gap:6px;align-items:center;margin:3px 0}.tcF.off{opacity:.5}
+.tcVars{color:var(--mut);overflow-wrap:anywhere}#tcNote{width:100%}
+.tcPrev{border:1px solid var(--line,#ddd);border-radius:8px;padding:14px 16px;background:var(--card,#fff);font-size:14px;align-self:start}
+.tcPrev .tcTitle{font-weight:700;font-size:16px;margin-bottom:6px}.tcPrev b{display:block;margin-top:10px}.tcPrev hr{border:0;border-top:1px solid var(--line,#ddd);margin:10px 0}
+@media(max-width:900px){.tcWrap{grid-template-columns:1fr}}

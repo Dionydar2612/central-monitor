@@ -130,6 +130,32 @@ class Backend(unittest.TestCase):
         log = open(os.path.join(self.tmp, "state", "audit.log"), encoding="utf-8").read()
         self.assertNotIn("abc123456", log)                               # URL ไม่อยู่ใน Activity log
 
+    def test_notify_cards(self):
+        """รูปแบบการ์ด Teams: ค่าปริยาย · บันทึก · คืนค่าเดิม · ตรวจค่า · ไฟล์ 2 ชุดเหมือนกัน"""
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        d = c.get("/api/notify-settings/cards").json
+        self.assertEqual(set(d["categories"]), {"alert", "rule", "queue", "netstat", "web", "software"})
+        self.assertEqual(d["cards"]["queue"]["fields"][:3], ["device", "sensor", "port"])
+        r = c.put("/api/notify-settings/cards", json={"cards": {"queue": {"title": "{machine} {port}", "fields": ["device", "port", "x"],
+                                                                         "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}"}}})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json["cards"]["queue"], {"title": "{machine} {port}", "fields": ["device", "port"],
+                                                    "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}"})
+        self.assertEqual(r.json["custom"], ["queue"])
+        self.assertIn("cards:", open(os.path.join(self.tmp, "puller.yaml"), encoding="utf-8").read())
+        self.assertEqual(c.put("/api/notify-settings/cards", json={"cards": {"zzz": {}}}).status_code, 400)
+        self.assertEqual(c.put("/api/notify-settings/cards", json={"reset": ["queue"]}).json["custom"], [])
+        self.assertEqual(c.post("/api/notify-settings/cards/test", json={"cat": "queue"}).status_code, 400)   # ยังไม่มี URL
+        import card_templates
+        p = card_templates.card("queue", "warning", dict(card_templates.SAMPLE["queue"], device="abc86"),
+                                {"queue": {"title": "{machine} {port}", "fields": ["port"], "labels": {"port": "พอร์ต"}, "note": "เคลียร์ {machine}"}})
+        body = p["attachments"][0]["content"]["body"]
+        self.assertEqual([b["text"] for b in body], ["abc86 16100/TCP", "พอร์ต:", "16100/TCP", "เคลียร์ abc86"])
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        a, b = (open(os.path.join(root, x, "card_templates.py"), "rb").read() for x in ("start_push_log/puller", "web_dashboard/backend"))
+        self.assertEqual(a, b)
+
     def test_apps(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)

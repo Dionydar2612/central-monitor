@@ -22,6 +22,7 @@ from datetime import datetime
 import os
 
 import settings
+import card_templates
 import targets_service
 
 LEVELS = ("down", "error", "warning", "recovered", "checks", "software")
@@ -130,6 +131,66 @@ def update_settings(payload):
     return True, get_settings()
 
 
+def get_cards():
+    """รูปแบบการ์ด Teams ทุกหัวข้อ (ที่ตั้งไว้ + ค่าปริยาย) สำหรับหน้า Settings"""
+    t = _teams(targets_service._load_doc(targets_service._yaml()))
+    cards = t.get("cards") if isinstance(t.get("cards"), dict) else {}
+    return {"categories": card_templates.CATEGORIES, "fields": card_templates.FIELDS, "vars": list(card_templates.VARS),
+            "defaults": card_templates.DEFAULTS, "samples": card_templates.SAMPLE,
+            "cards": {c: card_templates.template(c, cards) for c in card_templates.CATEGORIES},
+            "custom": [c for c in card_templates.CATEGORIES if c in cards]}
+
+
+def save_cards(payload):
+    """บันทึกรูปแบบการ์ด {cards: {หัวข้อ: {title, fields, labels, note}}, reset: [หัวข้อ]}"""
+    from ruamel.yaml.comments import CommentedMap
+    payload = payload or {}
+    vals, errors = card_templates.clean(payload.get("cards") or {})
+    reset = [c for c in payload.get("reset") or [] if c in card_templates.CATEGORIES]
+    if errors:
+        return False, {"error": "ค่าไม่ถูกต้อง", "fields": errors}
+    y = targets_service._yaml()
+    with targets_service._locked():
+        doc = targets_service._load_doc(y)
+        if not isinstance(doc.get("notify"), dict):
+            doc["notify"] = CommentedMap()
+        if not isinstance(doc["notify"].get("teams"), dict):
+            doc["notify"]["teams"] = CommentedMap()
+        t = doc["notify"]["teams"]
+        cards = t.get("cards") if isinstance(t.get("cards"), dict) else CommentedMap()
+        for c in reset:
+            cards.pop(c, None)
+        for c, v in vals.items():
+            cards[c] = v
+        if cards:
+            t["cards"] = cards
+        else:
+            t.pop("cards", None)
+        targets_service._write_doc(y, doc)
+    return True, get_cards()
+
+
+def send_card_test(cat, card=None):
+    """ส่งการ์ดตัวอย่างของหัวข้อไป Teams (ใช้รูปแบบที่ส่งมา ถ้าไม่ส่งใช้ที่บันทึกไว้)"""
+    if cat not in card_templates.CATEGORIES:
+        return False, "ไม่รู้จักหัวข้อนี้"
+    t = _teams(targets_service._load_doc(targets_service._yaml()))
+    url = str(t.get("webhook_url") or "")
+    if not url:
+        return False, "ยังไม่ได้ใส่ webhook URL"
+    cards = t.get("cards") if isinstance(t.get("cards"), dict) else {}
+    if card is not None:
+        vals, errors = card_templates.clean({cat: card})
+        if errors:
+            return False, "; ".join(errors.values())
+        cards = vals
+    s = card_templates.SAMPLE[cat]
+    ctx = dict(s, device=" ".join([s["machine"]] + ([f"[{s['host']}]"] if s.get("host") else [])),
+               time=datetime.now().astimezone().strftime("%d/%m/%Y %H:%M:%S"), duration="5 นาที")
+    level = {"DOWN": "down", "ERROR": "error", "WARNING": "warning"}.get(s.get("level"), "software")
+    return post(url, card_templates.card(cat, level, ctx, cards, f"[ทดสอบ] {card_templates.CATEGORIES[cat]}"))
+
+
 def send_test(webhook_url=None):
     """ส่งการ์ดทดสอบ (ใช้ URL ที่ส่งมา หรือที่บันทึกไว้) -> (ok, ข้อความ)"""
     y = targets_service._yaml()
@@ -154,7 +215,10 @@ def fact_card(title, style, facts, summary=None):
     rows = [{"title": f"{t}:", "value": str(v)} for t, v in facts if v not in (None, "")]
     body = [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True,
              "color": COLOR.get(style, "Default")},
-            {"type": "FactSet", "spacing": "Medium", "facts": rows}]
+]
+    for r in rows:                                   # แบบ PRTG: หัวข้อตัวหนา แล้วค่าบรรทัดถัดไป
+        body += [{"type": "TextBlock", "text": r["title"], "weight": "Bolder", "wrap": True, "spacing": "Medium"},
+                 {"type": "TextBlock", "text": r["value"], "wrap": True, "spacing": "None"}]
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4",
             "msteams": {"width": "Full"}, "fallbackText": summary or title, "body": body}
     return {"type": "message", "summary": summary or title, "attachments": [

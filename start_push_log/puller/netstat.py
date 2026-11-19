@@ -580,7 +580,8 @@ def to_system_events(events, groups=None, priorities=None):
                         "to": "ok" if lv == "recovered" else lv, "value": a.get("size"), "unit": "", "host": a.get("ip"),
                         "priority": (priorities or {}).get(a["web"], 4 if lv == "error" else 3),
                         "message": f"{a['web']} ({a.get('ip', '')}) · {name} · {COLOR_TH[a['color']]} · {a['msg']}",
-                        "netstat_event": "light"})
+                        "netstat_event": "light", "port": f"{a['port']}/TCP" if a.get("port") else "",
+                        "output": a.get("ch", ""), "detail": a.get("msg", ""), "status_text": COLOR_TH[a["color"]]})
             continue
         lv = {"critical": "error", "warning": "warning"}.get(a["level"], "warning")
         if a["kind"] in ("host_offline", "agent_stale"):
@@ -608,7 +609,8 @@ def to_system_events(events, groups=None, priorities=None):
              "value": val, "unit": "", "warning": a.get("threshold") if a["level"] == "warning" else None,
              "error": a.get("threshold") if a["level"] == "critical" else None, "host": a.get("ip"),
              "priority": (priorities or {}).get(a["web"], 4 if a["level"] == "critical" else 3),
-             "message": msg, "netstat_event": what}
+             "message": msg, "netstat_event": what,
+             "port": f"{a['port']}/{str(a.get('proto', 'tcp')).upper()}" if a.get("port") else "", "output": a.get("ch", "")}
         if what == "recovered":
             e["duration"] = a.get("duration")
         out.append(e)

@@ -247,6 +247,8 @@ _AUDIT_RULES = [
      ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
     ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times", "popup")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
+    ("PUT", re.compile(r"^/api/notify-settings/cards$"), "settings.notify_cards", ("reset",)),
+    ("POST", re.compile(r"^/api/notify-settings/cards/test$"), "settings.notify_cards_test", ("cat",)),
     ("PUT", re.compile(r"^/api/alert-rules$"), "settings.alert_rules", ()),
     ("POST", re.compile(r"^/api/apps$"), "apps.add", ("type", "web", "value", "name")),
     ("DELETE", re.compile(r"^/api/apps/(?P<t>[^/]+)$"), "apps.delete", ()),
@@ -543,6 +545,31 @@ def notify_settings_put():
     except (OSError, YAMLError) as e:
         return _config_error(e)
     return jsonify(out), (200 if ok else 400)
+
+
+@app.get("/api/notify-settings/cards")
+def notify_cards_get():
+    """รูปแบบการ์ด Teams (admin)"""
+    try:
+        return jsonify(notify_service.get_cards())
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.put("/api/notify-settings/cards")
+def notify_cards_put():
+    try:
+        ok, out = notify_service.save_cards(request.get_json(silent=True) or {})
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    return jsonify(out), (200 if ok else 400)
+
+
+@app.post("/api/notify-settings/cards/test")
+def notify_cards_test():
+    body = request.get_json(silent=True) or {}
+    ok, msg = notify_service.send_card_test(body.get("cat"), body.get("card"))
+    return jsonify({"ok": ok, "message": msg, **({} if ok else {"error": msg})}), (200 if ok else 400)
 
 
 @app.post("/api/notify-settings/test")

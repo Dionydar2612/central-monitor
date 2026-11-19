@@ -300,6 +300,18 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="n_save" type="button">Save notifications</button><button class="st-btn" id="n_test" type="button">Send test card</button><button class="st-btn" id="n_sumnow" type="button">ส่งสรุปตอนนี้</button><button class="st-btn" id="n_clear" type="button">ลบ webhook</button></div>
 <div class="st-msg" id="n_msg" role="status"></div>
 </section>
+<!-- รูปแบบการ์ด Teams (/api/notify-settings/cards): puller.yaml -> notify.teams.cards (ดู card_templates.py) -->
+<section class="card svc" id="tcCard" hidden>
+<div class="top"><h2>รูปแบบการ์ด Teams</h2><select id="tcCat"></select></div>
+<div class="tcWrap"><div>
+<div class="st-f"><label for="tcTitle">หัวเรื่อง</label><input id="tcTitle" autocomplete="off"></div>
+<div class="st-f"><label>ช่องที่แสดง (ติ๊ก · เปลี่ยนชื่อ · ↑↓ เรียง)</label><div id="tcFields"></div></div>
+<div class="st-f"><label for="tcNote">ข้อความท้ายการ์ด</label><textarea id="tcNote" rows="2"></textarea></div>
+<small class="tcVars" id="tcVars"></small>
+</div><div class="tcPrev" id="tcPrev"></div></div>
+<div class="st-actions" style="margin-top:12px"><button class="st-btn primary" id="tcSave" type="button">Save</button><button class="st-btn" id="tcTest" type="button">ส่งการ์ดตัวอย่างไป Teams</button><button class="st-btn" id="tcReset" type="button">คืนค่าเดิม</button></div>
+<div class="st-msg" id="tcMsg" role="status"></div>
+</section>
 <!-- อายุการเก็บข้อมูล (/api/retention): log ใน OpenSearch (ISM), ประวัติปัญหา + สถานะเครื่องย้อนหลัง (puller.yaml storage) -->
 <section class="card svc">
 <div class="top"><h2>Data retention</h2></div>
@@ -320,5 +332,6 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <script src="/popup.js"></script>
 <script src="/settings.js"></script>
 <script src="/alert_rules.js"></script>
+<script src="/teams_cards.js"></script>
 </body>
 </html>

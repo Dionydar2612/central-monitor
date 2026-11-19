@@ -38,6 +38,7 @@ import urllib.request
 from datetime import datetime
 
 from config import load_config
+import card_templates
 
 ALL_LEVELS = ("down", "error", "warning", "recovered", "checks", "software")
 STYLE = {"down": "attention", "error": "attention", "warning": "warning", "recovered": "good", "ok": "good",
@@ -62,7 +63,8 @@ def settings(config=None):
     times = t.get("summary_times")
     times = [str(x) for x in times] if isinstance(times, list) else []
     return {"enabled": t.get("enabled", True) is not False and url.startswith("https://"), "url": url,
-            "levels": {str(x) for x in levels}, "summary_times": sorted({x for x in times if _hhmm(x)})}
+            "levels": {str(x) for x in levels}, "summary_times": sorted({x for x in times if _hhmm(x)}),
+            "cards": t.get("cards") if isinstance(t.get("cards"), dict) else {}}
 
 
 DEFAULT_TEMPLATE = "{icon} {machine} · {text}"
@@ -135,7 +137,10 @@ def fact_card(title, level, facts, summary=None):
     rows = [{"title": f"{t}:", "value": str(v)} for t, v in facts if v not in (None, "")]
     body = [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True,
              "color": COLOR.get(level, "Default")},
-            {"type": "FactSet", "spacing": "Medium", "facts": rows}]
+]
+    for r in rows:                                   # แบบ PRTG: หัวข้อตัวหนา แล้วค่าบรรทัดถัดไป
+        body += [{"type": "TextBlock", "text": r["title"], "weight": "Bolder", "wrap": True, "spacing": "Medium"},
+                 {"type": "TextBlock", "text": r["value"], "wrap": True, "spacing": "None"}]
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard",
             "version": "1.4", "msteams": {"width": "Full"}, "fallbackText": summary or title, "body": body}
     return {"type": "message", "summary": summary or title, "attachments": [
@@ -349,16 +354,19 @@ def sensor_events(events, config=None):
             val = None
         th = [f"{n} {'≤' if e.get('low') else '≥'} {_n(e.get(x))}{unit}" for n, x in (("Warning", "warning"), ("Error", "error"))
               if _n(e.get(x)) is not None]
-        facts = [("Device", _device(web, e.get("host"), e.get("group"))),
-                 ("Sensor", sensor),
-                 ("Status", f"{LABEL.get(k, k)} – {short_text(k, e)}"),
-                 ("Last Value", f"{val} {unit}".strip() if val is not None else ""),
-                 ("Threshold", " · ".join(th)),
-                 ("Message", render(e["template"], ctx).lstrip("🔴🟡🟢 ") if e.get("template") else ""),
-                 ("Duration", ctx["duration"]),
-                 ("Time", _time_full())]
-        _enqueue(url, fact_card(f"{CARD_PREFIX}: {web} [{sensor}] {LABEL.get(k, k)}", k, facts, summary),
-                 f"{web} {e.get('sensor')} {k}")
+        if e.get("source") == "netstat":                    # Apps & Web > Netstat
+            cat = "queue" if e.get("netstat_event") == "light" else "netstat"
+            msg = e.get("detail") or e.get("message") or ""
+            status = f"{LABEL.get(k, k)} – {e.get('status_text') or e.get('message') or short_text(k, e)}"
+        else:
+            cat = "rule" if rid else "alert"
+            msg = render(e["template"], ctx).lstrip("🔴🟡🟢 ") if e.get("template") else ""
+            status = f"{LABEL.get(k, k)} – {short_text(k, e)}"
+        cctx = dict(ctx, machine=web, device=_device(web, e.get("host"), e.get("group")), sensor=sensor, status=status,
+                    level=LABEL.get(k, k), value=f"{val} {unit}".strip() if val is not None else "",
+                    threshold=" · ".join(th), message=msg, port=e.get("port") or "", output=e.get("output") or "",
+                    time=_time_full())
+        _enqueue(url, card_templates.card(cat, k, cctx, s["cards"], summary), f"{web} {e.get('sensor')} {k}")
 
 
 # ------------------------------------------------------------------
@@ -763,17 +771,16 @@ def software_event(web, group, changes, config=None):
     if not s["enabled"] or "software" not in s["levels"] or not changes:
         return
     label = {"installed": "ติดตั้ง", "removed": "ถอน", "updated": "อัปเดต"}
-    facts = [("Device", _device(web, "", group))]
-    for a, name, arch, ov, nv in changes[:SOFTWARE_MAX]:
-        facts.append((label[a], f"{name} {ov} → {nv}" if a == "updated" else f"{name} {nv or ov}".strip()))
+    lines = [f"{label[a]}: " + (f"{name} {ov} → {nv}" if a == "updated" else f"{name} {nv or ov}".strip())
+             for a, name, arch, ov, nv in changes[:SOFTWARE_MAX]]
     if len(changes) > SOFTWARE_MAX:
-        facts.append(("อื่นๆ", f"อีก {len(changes) - SOFTWARE_MAX} รายการ (ดูแท็บ Software ของเครื่อง)"))
-    facts.append(("Time", _time_full()))
+        lines.append(f"อีก {len(changes) - SOFTWARE_MAX} รายการ (ดูแท็บ Software ของเครื่อง)")
     n = len(changes)
     first = changes[0]
     summary = (f"💿 {web} · {label[first[0]]} {first[1]}" + (f" และอีก {n - 1} รายการ" if n > 1 else ""))
-    _enqueue(s["url"], fact_card(f"{CARD_PREFIX}: {web} [Software] {n} change{'s' if n > 1 else ''}", "software",
-                                 facts, summary), f"software {web} {n}")
+    ctx = {"machine": web, "group": group, "device": _device(web, "", group), "changes": lines, "count": n,
+           "sensor": "Software", "level": "SOFTWARE", "time": _time_full()}
+    _enqueue(s["url"], card_templates.card("software", "software", ctx, s["cards"], summary), f"software {web} {n}")
 
 
 def check_event(name, url, old, new, result, group="", config=None):
@@ -793,9 +800,9 @@ def check_event(name, url, old, new, result, group="", config=None):
         text = f"เว็บ {name} ล่ม (HTTP {result['code']})"
     else:
         text = f"เว็บ {name} เข้าไม่ได้"
-    facts = [("Device", _device(name, "", group)), ("Sensor", "SSL certificate" if ssl_.get("days_left") is not None
-                                                     and level == "warning" else "Web check"),
-             ("Status", f"{LABEL.get(level, level)} – {text}"), ("URL", url),
-             ("Last Value", f"HTTP {result['code']}" if result.get("code") else ""), ("Time", _time_full())]
-    _enqueue(s["url"], fact_card(f"{CARD_PREFIX}: {name} [Web check] {LABEL.get(level, level)}", level, facts,
-                                 f"{ICON.get(level, '')} {text}"), f"check {name} {new}")
+    ctx = {"machine": name, "group": group, "device": _device(name, "", group),
+           "sensor": "SSL certificate" if ssl_.get("days_left") is not None and level == "warning" else "Web check",
+           "level": LABEL.get(level, level), "status": f"{LABEL.get(level, level)} – {text}", "url": url,
+           "value": f"HTTP {result['code']}" if result.get("code") else "", "time": _time_full(), "icon": ICON.get(level, "")}
+    _enqueue(s["url"], card_templates.card("web", level, ctx, s["cards"], f"{ICON.get(level, '')} {text}"),
+             f"check {name} {new}")
