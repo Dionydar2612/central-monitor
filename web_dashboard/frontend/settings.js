@@ -220,6 +220,25 @@ async function loadLogStatus(check) {
     finally { btn.disabled = false; btn.textContent = "ตรวจ log"; }
 }
 
+/* ฟอร์มเครื่อง: แท็บ ทั่วไป / การเชื่อมต่อ / Log / การแจ้งเตือน */
+function formSave(tab) {
+    try {
+        if (S.editing) sessionStorage.setItem("cm.form", JSON.stringify({ name: S.editing, tab }));
+        else sessionStorage.removeItem("cm.form");
+    } catch (e) { /* ignore */ }
+}
+/* reload แล้วเปิดฟอร์มเครื่องเดิม + แท็บเดิม (ครั้งแรกที่โหลดรายการเครื่อง) */
+function formRestore() {
+    if (S.restored) return;
+    S.restored = true;
+    let st = null;
+    try { st = JSON.parse(sessionStorage.getItem("cm.form") || "null"); } catch (e) { /* ignore */ }
+    const t = st && S.targets.find(x => x.name === st.name);
+    if (!t) return;
+    openForm(t);
+    if (st.tab && !document.querySelector(`#formCard .ftabs button[data-t="${st.tab}"]`).hidden) formTab(st.tab);
+}
+
 function formTab(name) {
     formSave(name);
     document.querySelectorAll("#formCard .ftabs button").forEach(b => b.classList.toggle("on", b.dataset.t === name));
