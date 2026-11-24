@@ -39,7 +39,8 @@
   - สถานะ service: Get-Service cm-agent   เริ่มใหม่: Restart-Service cm-agent
 
 ถอนการติดตั้ง
-  powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge] [-KeepExporter]
+  ถอนทุกอย่าง (push + pull + โฟลเดอร์ข้อมูล): ดับเบิลคลิก uninstall-all.bat
+  หรือ powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 [-Purge] [-RemoveMsiExporter]
 
 Netstat Monitor (Apps & Web > Netstat Monitor บน central)
   scheduled task CentralMonitorNetstat (cm-netstat.ps1) process เดียวรันค้าง เก็บ TCP / UDP / คิว ทุก 1 วินาที
@@ -59,7 +60,7 @@ Netstat Monitor (Apps & Web > Netstat Monitor บน central)
       รัน PowerShell ได้ -> .bat เรียก install-fluentbit.ps1 -Pull ให้เอง (ครบที่สุด มีแท็บ Software)
       PowerShell ถูกบล็อก -> ติดตั้งด้วย cmd ล้วน (sc / netsh) ไม่มีแท็บ Software · บังคับแบบ cmd: install-pull.bat <IP> - nops
       ไม่มีอินเทอร์เน็ต: วาง windows_exporter-0.32.1-amd64.exe ไว้ข้างไฟล์ .bat
-  ถอน: uninstall-pull.bat (คลิกขวา > Run as administrator)  หรือ uninstall-fluentbit.ps1
+  ถอน: uninstall-all.bat (ดับเบิลคลิก ลบทุกอย่าง) · uninstall-pull.bat (คลิกขวา > Run as administrator) · uninstall-fluentbit.ps1
 
 ตรวจก่อนติดตั้ง (อ่านอย่างเดียว ไม่ติดตั้ง / ไม่หยุด / ไม่แก้อะไร)
   PowerShell (Admin):  powershell -ExecutionPolicy Bypass -File .\precheck.ps1 -Central <IP central> [-Pull] [-Logs "C:\app\*.log"]

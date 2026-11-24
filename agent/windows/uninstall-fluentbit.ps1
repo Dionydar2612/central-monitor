@@ -2,9 +2,10 @@
 .SYNOPSIS  ถอน Central Monitor Agent (Fluent Bit) ออกจากเครื่อง Windows
 .EXAMPLE   powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1            # เก็บข้อมูล/ตำแหน่งที่อ่านไว้
            powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 -Purge     # ลบทั้งหมด
-           powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 -KeepExporter  # ไม่ถอน windows_exporter
+           powershell -ExecutionPolicy Bypass -File .\uninstall-fluentbit.ps1 -RemoveMsiExporter  # ถอน windows_exporter ที่ลงจาก MSI ด้วย
+  ถอนทุกอย่างแบบไม่ต้องใช้ PowerShell: uninstall-all.bat
 #>
-param([switch] $Purge, [switch] $KeepExporter)
+param([switch] $Purge, [switch] $KeepExporter, [switch] $RemoveMsiExporter)   # -KeepExporter: รับไว้ให้คำสั่งเดิมยังใช้ได้ (ตอนนี้ไม่ถอนอยู่แล้ว)
 $ErrorActionPreference = "Stop"
 $ServiceName = "cm-agent"
 # รายการโปรแกรม / พอร์ต
@@ -53,7 +54,8 @@ if ($Purge) {
 } else {
     Write-Host "เก็บ $env:ProgramData\central-monitor-agent ไว้ (ติดตั้งใหม่จะอ่านต่อจากเดิม) ใช้ -Purge เพื่อลบ"
 }
-if (-not $KeepExporter) {
+# windows_exporter ที่ลงจาก MSI ไม่ใช่ของเรา (เราใช้ service cm-exporter) อาจเป็นของทีมอื่น -> ถอนเฉพาะเมื่อสั่ง -RemoveMsiExporter
+if ($RemoveMsiExporter) {
     $keys = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
             "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     foreach ($p in @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "windows_exporter*" })) {
