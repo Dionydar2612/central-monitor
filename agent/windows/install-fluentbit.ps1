@@ -157,6 +157,25 @@ if (-not $wu -or $wuStart -eq 4 -or "$($wu.StartType)" -eq 'Disabled') {        
 }
 # textfile: โปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ (cm-inventory.ps1 เขียนทุก 15 นาที)
 $TextDir = Join-Path $DataDir "textfile"
+# ฟังก์ชันที่ปิดไว้ด้วย set-features.bat (features.json) -> ติดตั้งใหม่ / อัปเดตแล้วยังปิดอยู่เหมือนเดิม
+function Apply-Features {
+    $fc = Join-Path $DataDir "features.json"
+    if (-not (Test-Path $fc)) { return }
+    $map = @{ netstat = @("CentralMonitorNetstat", "cm_netstat.prom", "cm-netstat.ps1"); netsec = @("CentralMonitorNetSec", "cm_netsec.prom", "cm-netsec.ps1")
+              logs = @("CentralMonitorLogs", "cm_logs.prom", "cm-logs.ps1"); inventory = @("CentralMonitorInventory", "cm_inventory.prom", "")
+              probe = @("CentralMonitorProbe", "cm_probe.prom", "") }
+    $off = @(); try { $off = @((Get-Content $fc -Raw | ConvertFrom-Json).off) } catch { }
+    foreach ($k in $off) {
+        $m = $map["$k"]; if (-not $m) { continue }
+        if (-not (Get-ScheduledTask -TaskName $m[0] -ErrorAction SilentlyContinue)) { continue }
+        Stop-ScheduledTask -TaskName $m[0] -ErrorAction SilentlyContinue
+        Disable-ScheduledTask -TaskName $m[0] -ErrorAction SilentlyContinue | Out-Null
+        if ($m[2]) { Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like "*$($m[2])*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }
+        Remove-Item (Join-Path $TextDir $m[1]) -Force -ErrorAction SilentlyContinue
+        Write-Host "   ปิดไว้ตาม set-features.bat: $k ($($m[0]))"
+    }
+}
 $InvScript = Join-Path $InstallDir "cm-inventory.ps1"
 $InvTask = "CentralMonitorInventory"
 # Docker container + เว็บ localhost (cm-probe.ps1 ทุก 1 นาที)
@@ -577,6 +596,7 @@ if ($Pull) {
     Write-Host "ทดสอบจาก central:  curl -s http://${ip1}:$ExporterPort/metrics | head"
     if ($HasLogs) { Write-Host "log: ERROR / WARN จาก Event Log ($channelList)$(if ($logPaths) { ' + ไฟล์ log' }) -> central ดึงไปพร้อม metrics" }
     else { Warn "โหมด pull ครั้งนี้ไม่มี log (ได้เฉพาะ CPU / Memory / Disk / Network / Service / Process / Software)" }
+    Apply-Features
     exit 0
 }
 
@@ -899,6 +919,7 @@ if (Test-Path $logFile) {
     $bad = Select-String -Path $logFile -Pattern "\[error\]|\[ warn\]" | Select-Object -Last 5
     if ($bad) { Warn "พบข้อความใน $logFile :"; $bad | ForEach-Object { Write-Host "   $($_.Line)" } }
 }
+Apply-Features
 Write-Host ""
 Write-Host "เสร็จแล้ว - เครื่อง '$Name' จะขึ้นสถานะใน Central Monitor ภายใน ~1 นาที" -ForegroundColor Green
 Write-Host "log ของ agent: $logFile"

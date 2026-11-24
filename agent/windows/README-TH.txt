@@ -69,3 +69,8 @@ Netstat Monitor (Apps & Web > Netstat Monitor บน central)
         พื้นที่ disk, RAM, CPU, จำนวน process, Windows Firewall, WMI, ต่อ central ได้ไหม (push), ดาวน์โหลดตัวติดตั้งได้ไหม,
         Event Log channel, ไฟล์ log ที่ Fluent Bit จะเปิดค้าง, ขนาด Security log, Antivirus
   ผล [ OK ] / [WARN] / [FAIL]  exit code 0 / 1 / 2
+
+เปิด / ปิดบางฟังก์ชันของ agent (ไม่ต้องติดตั้งใหม่): ดับเบิลคลิก set-features.bat
+  netstat (หนักสุด ทำงานตลอด) · netsec · logs · inventory · probe   หรือ  set-features.bat netstat off
+  ค่าเก็บใน %ProgramData%\central-monitor-agent\features.json ติดตั้ง / อัปเดต agent ใหม่ยังปิดอยู่เหมือนเดิม
+ตรวจว่าเครื่องค้าง / restart เพราะอะไร (อ่านอย่างเดียว): check-health.bat
