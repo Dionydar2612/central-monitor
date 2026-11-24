@@ -20,7 +20,7 @@ echo.
 REM every CentralMonitor* task (current + old versions, e.g. CentralMonitorAgentSync)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ScheduledTask -TaskName 'CentralMonitor*' -ErrorAction SilentlyContinue | ForEach-Object { Stop-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -Confirm:$false; Write-Host ('[OK] removed scheduled task ' + $_.TaskName) }"
 REM leftover scripts still running (cm-netstat, cm-logs, cm-netsec, cm-inventory, cm-probe, cm-agent-sync ...)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $_.CommandLine -match 'central-monitor-agent|cm-[a-z-]+\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Host ('[OK] stopped leftover process ' + $_.ProcessId) }"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'central-monitor-agent|cm-[a-z-]+\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Host ('[OK] stopped leftover process ' + $_.ProcessId) }"
 for %%S in (cm-agent cm-exporter) do (
     sc query %%S >nul 2>&1
     if not errorlevel 1 (
