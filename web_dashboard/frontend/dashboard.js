@@ -731,11 +731,15 @@ function closeProblemModal() {
 /* MIN = 1 นาทีเป็นมิลลิวินาที ; RANGES = ตัวเลือกช่วงเวลาด่วนในเมนู [ป้าย, ความยาว ms] */
 const MIN = 60000;
 const RANGES = [
-    ["Last 15 minutes", 15 * MIN], ["Last 30 minutes", 30 * MIN],
-    ["Last 1 hour", 60 * MIN], ["Last 6 hours", 360 * MIN],
-    ["Last 24 hours", 1440 * MIN], ["Last 7 days", 10080 * MIN],
-    ["Last 30 days", 43200 * MIN]
+    ["Last 15 minutes", 15 * MIN], ["Last 1 hour", 60 * MIN],
+    ["Last 6 hours", 360 * MIN], ["Last 12 hours", 720 * MIN],
+    ["Last 1 day", 1440 * MIN], ["Last 3 days", 4320 * MIN],
+    ["Last 7 days", 10080 * MIN], ["Last 30 days", 43200 * MIN]
 ];
+/* ช่วงเวลาที่เลือกล่าสุด จำไว้ใน browser (เปิดหน้าใหม่ไม่ต้องเลือกซ้ำ) */
+function savedDur() {
+    try { const v = +localStorage.getItem("cm.dur"); return RANGES.some(r => r[1] === v) ? v : 15 * MIN; } catch (e) { return 15 * MIN; }
+}
 
 /* S = สถานะของหน้า (ที่เดียว)
      web      เครื่องที่เลือกอยู่        webs     รายชื่อเครื่องล่าสุด
@@ -746,7 +750,7 @@ const RANGES = [
 const S = {
     web: null, busy: false, webs: [],
     metrics: null, summary: null, hist: null,
-    dur: 15 * MIN, start: null, end: null,     // end === null means "now"
+    dur: savedDur(), start: null, end: null,   // end === null means "now"
     tmp: null, ed: "s", vm: null,
     lv: "ALL", lt: "ALL", stats: null,     // ตัวกรอง log: ระดับ / ชนิด + จำนวนจาก /api/log-stats
     watch: [], watchWeb: null,             // service ที่เลือกให้แสดง ([] = ทั้งหมด) และเครื่องที่โหลดค่านั้นมา
@@ -2750,6 +2754,7 @@ function setupPicker() {
     q("#menu").onclick = e => {
         const b = e.target.closest("button"); if (!b) return;
         S.dur = +b.dataset.d; S.start = S.end = null; setLbl(); hide(); loadHist();
+        try { localStorage.setItem("cm.dur", S.dur); } catch (err) { /* ignore */ }
     };
     q("#sd").onclick = () => {
         const o = q("#dates").hidden, r = rng(); hide();

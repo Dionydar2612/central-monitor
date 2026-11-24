@@ -31,7 +31,7 @@
 | otel | อ่านไฟล์ใน `data/buffer` แล้วส่งเข้า OpenSearch | ภายใน docker |
 | OpenSearch | เก็บ log (ลบอัตโนมัติด้วย ISM policy) | ภายใน docker เท่านั้น |
 | central-api | เว็บ UI + API (ต้อง login) | `127.0.0.1:8090` |
-| Prometheus | เก็บ metrics (โหมด bundled) | `127.0.0.1:9090` |
+| Prometheus | เก็บ metrics (โหมด bundled) | ภายใน docker (เปิด UI ได้ด้วย `docker-compose.prometheus-ui.yml`) |
 
 ทุกพอร์ตที่เปิดออก host ผูกกับ `127.0.0.1` เท่านั้น การเข้าจากภายนอกต้องผ่าน nginx (ข้อ 9) หรือ SSH tunnel
 
@@ -422,7 +422,7 @@ docker compose exec -T central-api curl -s central-puller:8000/metrics | grep -E
 
 # 4) มีไฟล์ target สำหรับ Prometheus (โหมด bundled)
 cat ../data/prometheus/web-nodes.json
-curl -s 'http://127.0.0.1:9090/api/v1/query?query=up' | head -c 600
+docker exec central-prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up' | head -c 600
 
 # 5) log เข้า OpenSearch แล้ว
 docker compose exec -T central-api sh -c \

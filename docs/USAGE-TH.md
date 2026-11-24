@@ -133,7 +133,7 @@ docker compose logs -f --tail=80 central-puller
 docker compose exec -T central-api curl -s central-puller:8000/metrics | grep -E '^ssh_pull_(success|source_success)'
 
 # Prometheus เห็นเครื่องแล้ว (โหมด bundled)
-curl -sG http://127.0.0.1:9090/api/v1/query --data-urlencode 'query=up{web="web-03"}'
+docker exec central-prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up%7Bweb%3D%22web-03%22%7D'
 
 # log เข้า OpenSearch แล้ว (รอ ~10-30 วิหลังมีไฟล์ใน data/buffer)
 docker compose exec -T central-api sh -c \

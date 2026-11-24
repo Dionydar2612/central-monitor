@@ -36,7 +36,7 @@
 | `opensearch` | เก็บและค้นหา log | ภายใน Docker |
 | `buffer-cleaner` | ลบไฟล์พักที่เก่ากว่าอายุที่ตั้งไว้ | ภายใน Docker |
 | `central-api` | REST API + หน้าเว็บ dashboard (ต้อง login) | `127.0.0.1:8090` |
-| `prometheus`, `node-exporter` | เก็บ metrics (เฉพาะโหมด bundled) | `127.0.0.1:9090` |
+| `prometheus`, `node-exporter` | เก็บ metrics (เฉพาะโหมด bundled) | ภายใน Docker |
 | `cadvisor` | metrics ของ container (ทางเลือก ปิดไว้เป็นค่าเริ่มต้น) | ภายใน Docker |
 
 ## ความต้องการของระบบ

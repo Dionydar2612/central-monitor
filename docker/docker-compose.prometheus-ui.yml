@@ -1,0 +1,9 @@
+# docker-compose.prometheus-ui.yml - เปิด Prometheus UI บน host (ไม่จำเป็นต่อการทำงานของระบบ)
+#   เปิด: ใส่ใน docker/.env แล้วรัน cm-update (หรือ cd docker && docker compose up -d prometheus)
+#       COMPOSE_FILE=docker-compose.yml:docker-compose.prometheus-ui.yml
+#       PROMETHEUS_HOST_PORT=9090        # ชนกับ Prometheus ตัวอื่นบนเครื่อง -> 9091
+#   ปิด: ลบ COMPOSE_FILE ออก แล้วรันซ้ำ
+services:
+  prometheus:
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
