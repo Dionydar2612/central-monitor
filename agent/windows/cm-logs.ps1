@@ -76,7 +76,7 @@ foreach ($pat in $conf.logs) {
         if ($f.Length -lt $off) { $off = 0 }                       # ไฟล์ถูกหมุน / ตัด -> อ่านใหม่
         if ($f.Length -eq $off) { continue }
         try {
-            $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite')
+            $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite, Delete')
             $fs.Seek($off, 'Begin') | Out-Null
             $max = [math]::Min($f.Length - $off, 4MB)
             $buf = New-Object byte[] $max

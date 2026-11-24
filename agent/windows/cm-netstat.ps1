@@ -158,7 +158,7 @@ function Update-AppSources {
         foreach ($f in $recent) {
             if ($AppFiles.ContainsKey($f.FullName)) { continue }
             $b = New-Object byte[] 2; $enc = [Text.Encoding]::UTF8; $skip = 0
-            try { $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite'); $n = $fs.Read($b, 0, 2); $fs.Close()
+            try { $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite, Delete'); $n = $fs.Read($b, 0, 2); $fs.Close()
                   if ($n -eq 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE) { $enc = [Text.Encoding]::Unicode; $skip = 2 } } catch { continue }
             $off = [math]::Max($skip, $f.Length - 524288); if ($enc -eq [Text.Encoding]::Unicode -and ($off % 2)) { $off++ }
             $AppFiles[$f.FullName] = @{ off = [int64]$off; enc = $enc; log = (Split-Path (Split-Path $f.FullName -Parent) -Leaf); pat = $pat }
@@ -209,7 +209,7 @@ function Read-AppLogs {
             $len = (New-Object IO.FileInfo $path).Length
             if ($len -lt $e.off) { $e.off = if ($e.enc -eq [Text.Encoding]::Unicode) { 2 } else { 0 } }   # ไฟล์ถูกตัด / หมุนใหม่
             if ($len -le $e.off) { continue }
-            $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+            $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite, Delete')
             $fs.Seek($e.off, 'Begin') | Out-Null
             $buf = New-Object byte[] ([math]::Min($len - $e.off, 1048576))
             $n = $fs.Read($buf, 0, $buf.Length); $fs.Close()
