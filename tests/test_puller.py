@@ -647,6 +647,26 @@ Anywhere                   DENY OUT    1.2.3.4
         fw = netsec.parse("@@UFW\nNOUFW\n@@IPT\n-P INPUT ACCEPT\n-P OUTPUT ACCEPT\n")["firewall"]
         self.assertEqual((fw["tool"], fw["status"]), ("iptables", "inactive"))
 
+
+    def test_nosudo(self):
+        """sudo ต้องใช้รหัสผ่าน -> จำไว้ รอบถัดไปไม่ใช้ sudo (ไม่ให้เครื่องปลายทางบันทึก ERROR ซ้ำ) · อ่านไฟล์กฎแทน"""
+        import subprocess, tempfile
+        self.assertEqual(subprocess.run(["bash", "-n", "-c", netsec.COMMAND]).returncode, 0)
+        netsec.NOSUDO_FILE = os.path.join(tempfile.mkdtemp(), "nosudo.json")
+        cmds = []
+        def run(t, c):
+            cmds.append(c)
+            return "@@ID\nu\nu\n@@IPT\nsudo: a password is required\n@@ERR\n"
+        netsec.collect({"name": "w1"}, run)
+        netsec.collect({"name": "w1"}, run)
+        self.assertFalse(cmds[0].startswith("CM_NOSUDO=1"))
+        self.assertTrue(cmds[1].startswith("CM_NOSUDO=1\n"))
+        fw = netsec.parse("@@ID\nu\nu\n@@IPT\n-P INPUT DROP\n-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT\n#NOSUDO\n")["firewall"]
+        self.assertEqual((fw["tool"], fw["defaults"].get("in") or fw["defaults"]), ("iptables", fw["defaults"].get("in") or fw["defaults"]))
+        self.assertIn("ไม่ใช้ sudo", fw["note"])
+        out = subprocess.run(["bash", "-c", "CM_NOSUDO=1\n" + netsec.COMMAND], capture_output=True, text=True).stdout
+        self.assertNotIn("sudo", out.split("@@IPT", 1)[1].split("@@AUTH", 1)[0].replace("#NOSUDO", ""))
+
     def test_iptables(self):
         out = "@@UFW\nNOUFW\n@@IPT\n-P INPUT DROP\n-P OUTPUT ACCEPT\n-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT\n"
         fw = netsec.parse(out)["firewall"]

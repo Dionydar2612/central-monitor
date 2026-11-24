@@ -14,21 +14,25 @@ netsec.py - Network & Security ของเครื่อง Linux ผ่าน
 ส่วนไหนอ่านไม่ได้ (สิทธิ์ไม่พอ / ไม่มีคำสั่ง) = ว่าง + note บอกเหตุผล ไม่ทำให้ส่วนอื่นล้ม
 """
 
+import json
+import os
 import re
+import time
 from collections import Counter
 
 MAX_ROWS = 400
 
 COMMAND = r"""
+if [ "$CM_NOSUDO" = 1 ]; then S=false; else S="sudo -n"; fi
 echo @@ID; id -un; id -nG
 echo @@ADDR; ip -4 -o addr show 2>/dev/null
 echo @@ROUTE; ip -4 route show 2>/dev/null
 echo @@LISTEN; ss -H -tulnp 2>/dev/null || ss -H -tuln 2>/dev/null
 echo @@CONN; ss -H -tunp state established 2>/dev/null || ss -H -tun state established 2>/dev/null
-echo @@UFW; if command -v ufw >/dev/null 2>&1 || [ -x /usr/sbin/ufw ]; then (sudo -n ufw status verbose 2>/dev/null || /usr/sbin/ufw status verbose 2>&1) | head -n 400; else echo NOUFW; fi
+echo @@UFW; if command -v ufw >/dev/null 2>&1 || [ -x /usr/sbin/ufw ]; then ($S ufw status verbose 2>/dev/null || /usr/sbin/ufw status verbose 2>&1) | head -n 400; else echo NOUFW; fi
 echo @@UFWCONF; cat /etc/ufw/ufw.conf /etc/default/ufw 2>/dev/null | grep -E '^(ENABLED|DEFAULT_[A-Z]+_POLICY)='
-echo @@FWD; if command -v firewall-cmd >/dev/null 2>&1; then (sudo -n firewall-cmd --state 2>&1 || firewall-cmd --state 2>&1); (sudo -n firewall-cmd --list-all 2>/dev/null || firewall-cmd --list-all 2>/dev/null) | head -n 80; fi
-echo @@IPT; (sudo -n iptables -S 2>&1 || echo "@@ERR") | head -n 300
+echo @@FWD; if command -v firewall-cmd >/dev/null 2>&1; then ($S firewall-cmd --state 2>/dev/null || firewall-cmd --state 2>&1); ($S firewall-cmd --list-all 2>/dev/null || firewall-cmd --list-all 2>/dev/null) | head -n 80; fi
+echo @@IPT; if [ "$S" = false ]; then (cat /etc/iptables/rules.v4 /etc/sysconfig/iptables 2>/dev/null | sed -n 's/^:\([A-Za-z_-]*\) \([A-Z]*\) .*/-P \1 \2/p; /^-A /p'; echo '#NOSUDO'); else (sudo -n iptables -S 2>&1 || echo "@@ERR"); fi | head -n 300
 echo @@AUTH; (journalctl -q --no-pager --since '24 hours ago' -o short-iso -t sshd -t sshd-session 2>/dev/null || true) | grep -E 'Failed |Accepted |Invalid user' | tail -n 3000
 echo @@AUTHFILE; [ -r /var/log/auth.log ] && tail -n 5000 /var/log/auth.log | grep -E 'sshd.*(Failed |Accepted |Invalid user)' | tail -n 3000; [ -r /var/log/secure ] && tail -n 5000 /var/log/secure | grep -E 'sshd.*(Failed |Accepted |Invalid user)' | tail -n 3000
 true
@@ -208,7 +212,9 @@ def parse_iptables(lines):
     if not rules:
         return None
     fw_rules = [l for l in rules if l.startswith("-A ")]
-    fw = {"tool": "iptables", "status": "active", "defaults": {}, "rules": [], "note": ""}
+    nosudo = "#NOSUDO" in [l.strip() for l in lines]
+    fw = {"tool": "iptables", "status": "active", "defaults": {}, "rules": [],
+          "note": "อ่านจากไฟล์กฎที่บันทึกไว้ (ไม่ใช้ sudo เพราะต้องใช้รหัสผ่าน) อาจไม่ตรงกับที่ทำงานอยู่ทุกข้อ" if nosudo else ""}
     pol = {}
     for l in rules:
         m = re.match(r"^-P (INPUT|OUTPUT|FORWARD) (\w+)", l)
@@ -271,7 +277,9 @@ def parse(output):
     listening = parse_listen(sec.get("LISTEN", []))
     fw = parse_ufw(sec.get("UFW", []), sec.get("UFWCONF", []))
     if fw is None or (fw["status"] == "unknown" and not fw["defaults"]):
-        ipt_err = next((l.strip() for l in sec.get("IPT", []) if l.strip() and not l.startswith("-") and l.strip() != "@@ERR"), "")
+        ipt_err = next((l.strip() for l in sec.get("IPT", []) if l.strip() and not l.startswith("-") and l.strip() not in ("@@ERR", "#NOSUDO")), "")
+        if "#NOSUDO" in [l.strip() for l in sec.get("IPT", [])]:
+            ipt_err = "ไม่ใช้ sudo กับเครื่องนี้ (sudo ต้องใช้รหัสผ่าน) · อ่านจากไฟล์กฎ /etc/iptables/rules.v4 หรือ /etc/sysconfig/iptables ไม่ได้"
         why = [("ufw: " + fw["note"]) if fw else "ไม่ได้ติดตั้ง ufw",
                "iptables: " + (ipt_err[:160] if ipt_err else f"sudo -n iptables -S ไม่ได้ (sudoers: {user or '<user>'} ALL=(root) NOPASSWD: /usr/sbin/iptables -S)")]
         fw = parse_firewalld(sec.get("FWD", [])) or parse_iptables(sec.get("IPT", [])) or (dict(fw, note=" · ".join(why)) if fw else None) or {
@@ -293,10 +301,48 @@ def parse(output):
             "firewall": fw, "logins": logins}
 
 
+# sudo ต้องใช้รหัสผ่าน: ทุกครั้งที่ลอง เครื่องปลายทางบันทึก "sudo: <user> : a password is required" (ขึ้นเป็น ERROR ใน Logs)
+# -> จำไว้แล้วไม่ใช้ sudo กับเครื่องนั้น NOSUDO_DAYS วัน (อ่านกฎจาก /etc/iptables/rules.v4 / /etc/sysconfig/iptables แทน)
+NOSUDO_DAYS = 7
+NOSUDO_FILE = os.path.join(os.environ.get("CENTRAL_STATE_DIR", "/app/data/state"), "netsec_nosudo.json")
+
+
+def _nosudo_load():
+    try:
+        with open(NOSUDO_FILE) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _nosudo_save(d):
+    try:
+        os.makedirs(os.path.dirname(NOSUDO_FILE), exist_ok=True)
+        with open(NOSUDO_FILE + ".tmp", "w") as f:
+            json.dump(d, f)
+        os.replace(NOSUDO_FILE + ".tmp", NOSUDO_FILE)
+    except OSError as e:
+        print(f"[NETSEC] save {NOSUDO_FILE} {e}")
+
+
+def needs_password(output):
+    """ผลของ sudo -n บอกว่าต้องใช้รหัสผ่าน"""
+    return bool(re.search(r"a password is required|a terminal is required|password is required", str(output or ""), re.I))
+
+
 def collect(target, run):
     """run = ssh_client.run_ssh  ล้มเหลว -> {} (ส่วนอื่นของ snapshot ยังเก็บต่อ)"""
+    name = str(target.get("name") or "")
+    nos = _nosudo_load()
+    skip = float(nos.get(name) or 0) > time.time()
     try:
-        return parse(run(target, COMMAND))
+        out = run(target, ("CM_NOSUDO=1\n" if skip else "") + COMMAND)
     except Exception as e:
-        print(f"[NETSEC] {target.get('name')} {e}")
+        print(f"[NETSEC] {name} {e}")
         return {}
+    if not skip and needs_password(out):
+        nos[name] = time.time() + NOSUDO_DAYS * 86400
+        _nosudo_save(nos)
+        print(f"[NETSEC] {name} sudo ต้องใช้รหัสผ่าน -> ไม่ใช้ sudo {NOSUDO_DAYS} วัน")
+    return parse(out)
