@@ -13,16 +13,13 @@ PREFIX = "Central Monitor Notification"
 CATEGORIES = {
     "alert": "Alert ของเครื่อง (CPU / RAM / Disk / Down / Service ...)",
     "rule": "Custom alert rules",
-    "queue": "Netstat · Queue / Log ของโปรแกรม (เขียว / เหลือง / แดง)",
-    "netstat": "Netstat · พอร์ต (Connections / Queue / ไม่ LISTEN / เครื่องไม่ตอบ)",
     "web": "Web / SSL check",
-    "software": "Software ติดตั้ง / ถอน / อัปเดต",
 }
 
 # ช่องข้อมูลที่ใส่ในการ์ดได้ -> หัวข้อปริยาย
 FIELDS = {
     "device": "Device", "sensor": "Sensor", "status": "Status", "value": "Last Value", "threshold": "Threshold",
-    "port": "Port", "output": "Output", "message": "Message", "url": "URL", "changes": "Changes",
+    "message": "Message", "url": "URL",
     "duration": "Duration", "group": "Group", "host": "IP Address", "time": "Time",
 }
 
@@ -30,22 +27,16 @@ _T = "{prefix}: {machine} [{sensor}] {level}"
 DEFAULTS = {
     "alert": {"title": _T, "fields": ["device", "sensor", "status", "value", "threshold", "message", "duration", "time"]},
     "rule": {"title": _T, "fields": ["device", "sensor", "status", "value", "threshold", "message", "duration", "time"]},
-    "queue": {"title": _T, "fields": ["device", "sensor", "port", "status", "message", "value", "time"]},
-    "netstat": {"title": _T, "fields": ["device", "sensor", "port", "status", "value", "threshold", "duration", "time"]},
     "web": {"title": "{prefix}: {machine} [{sensor}] {level}", "fields": ["device", "sensor", "status", "url", "value", "time"]},
-    "software": {"title": "{prefix}: {machine} [Software] {count} change(s)", "fields": ["device", "changes", "time"]},
 }
 
-# เรื่องที่เลือก "ไม่ต้องแจ้ง" ได้ (ยังเก็บใน Alerts / History แต่ไม่ส่ง Teams และไม่เด้งป๊อปอัป)
-MUTE = {"netstat": {"agent_stale": "Agent stopped (agent หยุดส่งข้อมูล)", "host_offline": "Host offline (เครื่องไม่ตอบ)",
-                    "not_listening": "Port ไม่ LISTEN", "queue_spike": "Queue spike (คิวพุ่ง)",
-                    "queue": "Queue เกินเกณฑ์", "conn": "Connections เกินเกณฑ์"}}
+MUTE = {}                       # หัวข้อที่เลือก "ไม่ต้องแจ้ง" บางเรื่องได้ (ยังไม่มี)
 
 # ตัวแปรที่ใช้ในหัวเรื่อง / ข้อความท้ายการ์ดได้
-VARS = ("prefix", "machine", "host", "group", "sensor", "level", "status", "value", "threshold", "port", "output",
-        "message", "url", "duration", "time", "count", "icon")
+VARS = ("prefix", "machine", "host", "group", "sensor", "level", "status", "value", "threshold",
+        "message", "url", "duration", "time", "icon")
 
-COLOR = {"software": "Accent", "down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good",
+COLOR = {"down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good",
          "ok": "Good", "up": "Good", "unknown": "Warning", "good": "Good", "attention": "Attention"}
 
 MAX_TITLE, MAX_NOTE, MAX_LABEL = 200, 1000, 40
@@ -129,11 +120,6 @@ SAMPLE = {   # การ์ดตัวอย่าง (ส่งทดสอบ
               "status": "Status", "value": "Last_Value", "threshold": "Threshold", "message": "Message"},
     "rule": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "level": "ERROR",
              "status": "Status", "value": "Last_Value", "threshold": "Threshold", "message": "Message"},
-    "queue": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "port": "Port", "output": "Output_Name",
-              "level": "WARNING", "status": "Status", "value": "Last_Value", "message": "Message"},
-    "netstat": {"machine": "Device_Name", "host": "IP_Address", "sensor": "Sensor_Name", "port": "Port",
-                "level": "ERROR", "status": "Status", "value": "Last_Value", "threshold": "Threshold"},
     "web": {"machine": "Device_Name", "sensor": "Sensor_Name", "level": "DOWN", "status": "Status",
             "url": "URL", "value": "Last_Value"},
-    "software": {"machine": "Device_Name", "host": "IP_Address", "count": 2, "changes": ["Change_1", "Change_2"]},
 }

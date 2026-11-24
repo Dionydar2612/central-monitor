@@ -1,13 +1,13 @@
 /*
   teams_cards.js - Settings > รูปแบบการ์ด Teams (/api/notify-settings/cards)
-    แต่ละหัวข้อ (Alert, Custom rules, Netstat Queue / Log, Netstat พอร์ต, Web check, Software) ตั้งได้:
+    แต่ละหัวข้อ (Alert, Custom rules, Web check) ตั้งได้:
     หัวเรื่อง · ช่องที่แสดง (เปิด / ปิด, เรียงลำดับ, เปลี่ยนชื่อ) · ข้อความท้ายการ์ด  + ดูตัวอย่าง + ส่งทดสอบ
     ใช้ $, api, say จาก settings.js
 */
 (function () {
     const C = { data: null, cat: "alert", edit: {} };
     const esc = v => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const COLOR = { alert: "#c4314b", rule: "#c4314b", queue: "#c4314b", netstat: "#c4314b", web: "#c4314b", software: "#5b5fc7" };
+    const COLOR = { alert: "#c4314b", rule: "#c4314b", web: "#c4314b" };
 
     function cur() { return C.edit[C.cat] || (C.edit[C.cat] = JSON.parse(JSON.stringify(C.data.cards[C.cat]))); }
     function render(t, ctx) {
@@ -15,8 +15,8 @@
     }
     /* ตัวอย่างการ์ด: หลัง ":" แสดงชื่อช่อง (เช่น Device_Name) แทนค่าจริง · การ์ดที่ส่งจริงใส่ค่าจริง */
     const NAMES = { machine: "Device_Name", host: "IP_Address", group: "Group_Name", sensor: "Sensor_Name", level: "Level",
-        status: "Status", value: "Last_Value", threshold: "Threshold", port: "Port", output: "Output_Name", message: "Message",
-        url: "URL", duration: "Duration", time: "Time", count: "Count", icon: "", changes: ["Change_1", "Change_2"] };
+        status: "Status", value: "Last_Value", threshold: "Threshold", message: "Message",
+        url: "URL", duration: "Duration", time: "Time", icon: "" };
     function ctxOf() {
         return { prefix: "Central Monitor Notification", ...NAMES, device: "Device_Name [IP_Address]" };
     }

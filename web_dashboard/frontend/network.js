@@ -2,7 +2,7 @@
    network.js - หน้า Network & Security (ดู network.html)
      แผนผัง: วงกลม = เครื่องที่ monitor (สีตามผลตรวจแย่สุด) · ลูกศร A → B = A ต่อเข้าพอร์ตของ B (ป้าย = พอร์ต)
              Internet = IP สาธารณะ · LAN อื่น = IP ภายในที่ไม่ได้ monitor
-     ข้อมูลมาจากตัวเครื่องเอง (ไม่ใช่ flow จาก switch / router): Linux ทุกรอบสถานะของ puller · Windows ทุก 5 นาที
+     ข้อมูลมาจากตัวเครื่องเอง (ไม่ใช่ flow จาก switch / router): ทุกรอบสถานะของ puller (SSH)
    ===================================================================== */
 "use strict";
 const $ = id => document.getElementById(id);
@@ -35,7 +35,7 @@ function renderTiles() {
     const tile = (label, n, cls, sub) => `<div class="ovtile ${cls}"><small>${label}</small><b>${n ?? "-"}</b>${sub ? `<em>${sub}</em>` : ""}</div>`;
     $("nsTiles").innerHTML = tile("เครื่อง", t.machines, "tot", `${N.d.edges.length} เส้นเชื่อมระหว่างเครื่อง`)
         + tile("Firewall ปิด", t.fw_off, t.fw_off ? "dn" : "up", t.fw_unknown ? `ดึงข้อมูลไม่ได้ ${t.fw_unknown} เครื่อง` : "ดึงข้อมูลได้ทุกเครื่อง")
-        + tile("Login ไม่สำเร็จ 24h", t.failed_logins, t.failed_logins >= 100 ? "dn" : t.failed_logins >= 20 ? "nok" : "up", "SSH / Windows logon")
+        + tile("Login ไม่สำเร็จ 24h", t.failed_logins, t.failed_logins >= 100 ? "dn" : t.failed_logins >= 20 ? "nok" : "up", "SSH")
         + tile("ขาเข้า", t.conn_in, "tot", "การเชื่อมต่อที่ค้างอยู่")
         + tile("ขาออก", t.conn_out, "tot", "การเชื่อมต่อที่ค้างอยู่")
         + tile("IP สาธารณะ", t.public_peers, t.public_peers ? "nok" : "up", "ที่คุยกับเครื่องเรา");
@@ -178,9 +178,9 @@ ${heads}${edgesSvg}${nodesSvg}${labels}${loneSvg}</svg></div>
 const PORT_NAME = { 20: "FTP data", 21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS", 67: "DHCP", 80: "HTTP", 88: "Kerberos", 110: "POP3",
     123: "NTP", 135: "RPC", 137: "NetBIOS", 139: "NetBIOS", 143: "IMAP", 161: "SNMP", 389: "LDAP", 443: "HTTPS", 445: "SMB (แชร์ไฟล์)", 465: "SMTPS",
     514: "Syslog", 587: "SMTP", 636: "LDAPS", 993: "IMAPS", 995: "POP3S", 1433: "SQL Server", 1521: "Oracle", 2049: "NFS", 2375: "Docker", 2376: "Docker",
-    3000: "Grafana", 3306: "MySQL", 3389: "Remote Desktop", 4318: "Central agent (OTLP)", 5432: "PostgreSQL", 5601: "Kibana / Dashboards", 5672: "RabbitMQ",
+    3000: "Grafana", 3306: "MySQL", 3389: "Remote Desktop", 5432: "PostgreSQL", 5601: "Kibana / Dashboards", 5672: "RabbitMQ",
     5985: "WinRM", 5986: "WinRM", 6379: "Redis", 8080: "HTTP", 8443: "HTTPS", 9090: "Prometheus", 9093: "Alertmanager", 9100: "node_exporter",
-    9182: "windows_exporter", 9200: "OpenSearch / Elasticsearch", 9300: "OpenSearch", 11211: "Memcached", 27017: "MongoDB" };
+    9200: "OpenSearch / Elasticsearch", 9300: "OpenSearch", 11211: "Memcached", 27017: "MongoDB" };
 const portTxt = p => p == null ? "-" : `${p}${PORT_NAME[p] ? ` <small class="st-mut">${PORT_NAME[p]}</small>` : ""}`;
 function popHtml() {
     if (!N.pop || !N.flow) return "";
@@ -222,7 +222,7 @@ function machineNode(m, x, y, w, h, on, dim) {
     return `<g class="fn m${on ? " on" : ""}${dim ? " dim" : ""}" data-web="${esc(m.web)}" tabindex="0"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/>`
         + `<rect x="${x}" y="${y + 1}" width="6" height="${h - 2}" rx="3" style="fill:${c}" class="bar"/>`
         + `<text x="${x + 18}" y="${y + 22}" class="nm">${esc(m.web.length > 20 ? m.web.slice(0, 19) + "…" : m.web)}</text>`
-        + `<text x="${x + w - 10}" y="${y + 22}" text-anchor="end" class="os">${m.os === "windows" ? "Win" : "Linux"}</text>`
+        + `<text x="${x + w - 10}" y="${y + 22}" text-anchor="end" class="os">Linux</text>`
         + `<text x="${x + 18}" y="${y + 40}" class="ip${m.firewall === "inactive" || !m.available ? " cr" : ""}">${esc(sub)}</text>`
         + `<title>${esc(`${m.web} · ${m.ip || m.host || ""} · Firewall ${fwText(m.firewall)} · ขาเข้า ${m.in} · ขาออก ${m.out}`)}</title></g>`;
 }
@@ -235,7 +235,7 @@ function tableHtml() {
         + ms.map(m => {
             const o = ov[m.web] || {}, [wl, wc] = ST[m.worst] || ST.unknown;
             const fl = m.failed_logins;
-            return `<tr data-web="${esc(m.web)}" tabindex="0"><td><b>${esc(m.web)}</b> <span class="ostag${m.os === "windows" ? "" : " lx"}">${m.os === "windows" ? "Win" : "Linux"}</span><small class="nssub">${esc([m.group, m.host].filter(Boolean).join(" · "))}</small></td>`
+            return `<tr data-web="${esc(m.web)}" tabindex="0"><td><b>${esc(m.web)}</b> <span class="ostag lx">Linux</span><small class="nssub">${esc([m.group, m.host].filter(Boolean).join(" · "))}</small></td>`
                 + `<td>${m.available ? pill(wl, wc) : `<span class="st-mut">ไม่มีข้อมูล</span>`}</td><td>${!m.available ? "-" : m.firewall === "unknown" ? `<span class="st-mut">ดึงข้อมูลไม่ได้</span>` : `${pill(fwText(m.firewall), fwCls(m.firewall))} <small class="st-mut">${esc(m.fw_tool)}</small>`}</td>`
                 + `<td>${esc(m.default_in || "-")}</td><td>${m.listening}</td><td>${m.in} <small class="st-mut">(${m.peers_in} IP)</small></td><td>${m.out} <small class="st-mut">(${m.peers_out} IP)</small></td>`
                 + `<td class="ovv ${fl == null ? "" : fl >= 100 ? "cr" : fl >= 20 ? "wr" : "ok"}">${fl ?? (m.available ? `<span class="st-mut" style="font-weight:400">ดึงข้อมูลไม่ได้</span>` : "-")}</td>`
@@ -308,8 +308,8 @@ function renderDetail() {
     if (!d) { box.innerHTML = `<div class="empty">Loading...</div>`; return; }
     const o = N.ov[d.web] || {};
     const canOp = N.role === "operator" || N.role === "admin";
-    box.innerHTML = `<div class="top"><h2>${esc(d.web)} <span class="ostag${d.os === "windows" ? "" : " lx"}">${d.os === "windows" ? "Win" : "Linux"}</span> <small class="st-mut">${esc([d.group, d.host].filter(Boolean).join(" · "))}</small></h2>
-<span class="nsmeta">${d.collected_at ? `เก็บเมื่อ ${esc(ago(d.collected_at))} ที่แล้ว` : d.source === "windows" ? "อัปเดตทุก 5 นาที" : ""}${canOp && d.os !== "windows" ? ` <button type="button" class="svbtn sm" id="nsRefresh">ดึงใหม่</button>` : ""} <a class="svbtn sm" href="/?web=${encodeURIComponent(d.web)}">หน้าเครื่อง</a> <button type="button" class="svbtn sm" id="nsClose">ปิด</button></span></div>
+    box.innerHTML = `<div class="top"><h2>${esc(d.web)} <span class="ostag lx">Linux</span> <small class="st-mut">${esc([d.group, d.host].filter(Boolean).join(" · "))}</small></h2>
+<span class="nsmeta">${d.collected_at ? `เก็บเมื่อ ${esc(ago(d.collected_at))} ที่แล้ว` : ""}${canOp ? ` <button type="button" class="svbtn sm" id="nsRefresh">ดึงใหม่</button>` : ""} <a class="svbtn sm" href="/?web=${encodeURIComponent(d.web)}">หน้าเครื่อง</a> <button type="button" class="svbtn sm" id="nsClose">ปิด</button></span></div>
 <div class="nsnet">${[["Traffic", o.net != null ? Number(o.net).toFixed(2) + " MB/s" : "-"], ["Ping", o.ping_ms != null ? Math.round(o.ping_ms) + " ms" : "-"], ["Packet loss", o.packet_loss != null ? Number(o.packet_loss).toFixed(1) + "%" : "-"], ["Availability 24h", o.availability != null ? Number(o.availability).toFixed(2) + "%" : "-"], ["ขาเข้า", `${d.summary.in} (${d.summary.peers_in} IP)`], ["ขาออก", `${d.summary.out} (${d.summary.peers_out} IP)`]].map(([k, v]) => `<div><small>${k}</small><b>${esc(v)}</b></div>`).join("")}</div>
 ${!d.available ? `<div class="nsnote">ไม่สามารถดึงข้อมูล Network &amp; Security ของเครื่องนี้ได้</div>` : ""}
 <div class="vseg nstabs">${TABS.map(([k, l]) => `<button type="button" data-tab="${k}" class="${N.tab === k ? "on" : ""}">${l}</button>`).join("")}</div>

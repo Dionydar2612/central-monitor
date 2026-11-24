@@ -1,12 +1,3 @@
-/* รูปแบบการใช้งาน (Settings / install.sh): windows = ซ่อน .lx-only · linux = ซ่อน .win-only · both = แสดงทั้งหมด
-   ใส่ไว้ที่ <html data-platforms> (จำใน sessionStorage -> ไม่กระพริบตอนเปิดหน้าใหม่) */
-function setPlatforms(p) {
-    p = ["windows", "linux"].includes(p) ? p : "both";
-    document.documentElement.dataset.platforms = p;
-    try { sessionStorage.setItem("cm.platforms", p); } catch (e) { /* ignore */ }
-    document.dispatchEvent(new CustomEvent("cm-platforms", { detail: p }));
-}
-try { document.documentElement.dataset.platforms = sessionStorage.getItem("cm.platforms") || "both"; } catch (e) { /* ignore */ }
 /* =====================================================================
    badges.js - ป้ายสถานะบนหัวทุกหน้า (เหมือนแถบของ PRTG)
      [New Log Entries N]  [▼ Down/Error]  [W Warning]  [✓ OK]  [II Paused]
@@ -87,7 +78,6 @@ try { document.documentElement.dataset.platforms = sessionStorage.getItem("cm.pl
             if (r.ok) {
                 const me = await r.json();
                 user = me.username || "";
-                setPlatforms(me.platforms);
             }
         } catch (e) { /* ignore */ }
         refresh();

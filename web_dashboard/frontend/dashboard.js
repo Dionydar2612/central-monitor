@@ -759,7 +759,7 @@ const S = {
     live: null, liveAt: 0, liveBusy: false, liveErr: null,   // process ต่อ core + top memory วัดสด (/api/live-processes)
     pullInterval: 3600,                    // scheduler.interval (วินาที) ใช้ตัดสินว่า Last pull เก่าผิดปกติ
     ov: null, ovq: "", closed: loadClosedGroups(),   // ภาพรวม (/api/overview), ตัวกรองต้นไม้, กลุ่มที่ยุบไว้
-    ovOs: "", ovState: "", sort: null,     // ตัวกรอง OS / สถานะ + การเรียงตาราง ({key, dir})
+    ovState: "", sort: null,     // ตัวกรองสถานะ + การเรียงตาราง ({key, dir})
     mview: loadView(),                     // มุมมอง WEB status: table / tiles / cards / problems / sunburst (S.view = ของกราฟ System Load ห้ามใช้ร่วม)
     role: null,                            // role ของผู้ใช้ (viewer / operator / admin) จาก /api/me
     search: null, searchBusy: false,       // ผลค้นหา log {q, scope, rows, total, matched, truncated}
@@ -1012,7 +1012,7 @@ function serverRows(list, cur, keepOrder) {
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
-            const os = w.os === "windows" ? `<span class="ostag" title="Windows · ส่งข้อมูลผ่าน agent">Win</span>` : `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
+            const os = `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
             return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><button type="button" class="ovst ${cls}" data-stpop="${escapeHtml(w.web)}"${w.paused && w.pause_reason ? ` title="${escapeHtml("Pause: " + w.pause_reason)}"` : why}>${escapeHtml(label)}</button>${ack}${w.paused && w.pause_reason ? `<div class="cerr">${escapeHtml(w.pause_reason)}</div>` : ""}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;
 }
@@ -1080,7 +1080,7 @@ const SEVERITY = { DOWN: 0, PROBLEM: 1, WARNING: 2, HEALTHY: 4, PAUSED: 5 };
 function bySeverity(list) {
     return list.slice().sort((a, b) => (SEVERITY[a.state] ?? 3) - (SEVERITY[b.state] ?? 3) || (Number(b.alerts) || 0) - (Number(a.alerts) || 0) || a.web.localeCompare(b.web));
 }
-function osTag(w) { return w.os === "windows" ? `<span class="ostag" title="Windows">Win</span>` : `<span class="ostag lx" title="Linux">Linux</span>`; }
+function osTag() { return ""; }
 function tilesHtml(list, cur) {
     return `<div class="mtiles">${(hasOrder() ? byOrder(list) : bySeverity(list)).map(w => {
         const [label, cls] = STATE_LABEL[w.state] || [w.state || "-", "na"];
@@ -1486,7 +1486,6 @@ function groupHtml(n, cur, depth, forceOpen) {
 }
 
 function matchesFilter(x, f, isCheck) {
-    if (!isCheck && S.ovOs && (x.os === "windows" ? "windows" : "linux") !== S.ovOs) return false;
     if (!isCheck && S.ovState && (S.ovState === "UP" ? x.status !== "online" : x.state !== S.ovState)) return false;
     if (!f) return true;
     const hay = isCheck ? [x.name, x.url, x.group] : [x.web, x.host, x.instance, x.group, x.state];
@@ -1541,7 +1540,7 @@ function renderMachines(ov) {
         : `<button type="button" class="ovtile ${cls}${S.ovState === st && st ? " on" : ""}" data-ovst="${st}" title="${st ? "แสดงเฉพาะเครื่องที่เป็น " + label : "แสดงทุกเครื่อง"}"><small>${label}</small><b>${hasValue(n) ? n : "-"}</b>${sub ? `<em>${sub}</em>` : ""}</button>`;
     const okCount = webs.filter(w => w.state === "HEALTHY").length;
     q("#ovTiles").innerHTML =
-        tile("Total", ov.total, "tot", hasValue(ov.windows) ? `${ov.linux || 0} Linux · ${ov.windows || 0} Windows` : "machines", "") +
+        tile("Total", ov.total, "tot", "machines", "") +
         tile("Up", ov.up || 0, "up", `${okCount} OK`, "UP") +
         tile("Down", ov.down || 0, "dn", "no data / not responding", "DOWN") +
         tile("Warning", ov.warning || 0, "nok", "≥ warning threshold", "WARNING") +
@@ -2941,7 +2940,6 @@ document.addEventListener("DOMContentLoaded", () => {
     q("#ackSel").addEventListener("click", () => ackLogs(true));
     q("#unackSel").addEventListener("click", () => ackLogs(false));
     q("#ovFind").addEventListener("input", e => { S.ovq = e.target.value; renderMachines(); });
-    q("#ovOs").addEventListener("change", e => { S.ovOs = e.target.value; renderMachines(); });
     q("#ovState").addEventListener("change", e => { S.ovState = e.target.value; renderMachines(); });
     document.querySelectorAll("#ovView button").forEach(b => b.addEventListener("click", () => { S.mview = b.dataset.view; saveView(S.mview); renderMachines(); }));
     q("#ovExpand").addEventListener("click", () => { S.closed.clear(); saveClosedGroups(); renderMachines(); });

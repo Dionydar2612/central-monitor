@@ -12,7 +12,7 @@ overview_service.py - ภาพรวมทุกเครื่อง (กา�
         ไม่มีผล sensor -> metrics_service.classify_state
 
 ประสิทธิภาพ (เครื่องเยอะ)
-    ถามแบบรวมครั้งเดียวต่อ metric: ... by(web) สำหรับ Linux (label จาก web-nodes.json) และ by(cm_web) สำหรับ Windows
+    ถามแบบรวมครั้งเดียวต่อ metric: ... by(web) (label จาก web-nodes.json)
     -> จำนวน query คงที่ (~15) ไม่ขึ้นกับจำนวนเครื่อง
     เครื่องที่ไม่มี label web (Prometheus ภายนอกที่ไม่ได้ใช้ web-nodes.json) -> ถามทีละเครื่องแบบเดิม
     cache สั้น ๆ (CACHE_TTL) เพราะหน้าเว็บรีเฟรชทุก 10 วินาที
@@ -23,7 +23,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-import agent_service
 from checks_service import get_checks
 from clients import prom_value, prom_vector
 from metrics_service import PROMQL, _labels, _round, classify_state, get_web_prometheus_config
@@ -39,9 +38,6 @@ _SENSOR_STATE = {"down": "DOWN", "error": "PROBLEM", "warning": "WARNING", "unkn
 _FS = ('fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|nsfs|autofs|efivarfs|fuse.lxcfs",'
        'mountpoint!~"/(run|snap|var/lib/docker|var/lib/kubelet|var/lib/containerd)(/.*)?"')
 _DEV = 'device!~"(lo|veth.*|docker.*|br-.*|virbr.*|cni.*|flannel.*|cali.*)"'
-_VOL = 'volume!~"HarddiskVolume.*|_Total"'
-_NIC = 'nic!~"(?i).*(isatap|loopback|teredo|pseudo).*"'
-_WCPU = '{__name__=~"windows_cpu_time(_seconds)?_total",mode="idle"}'
 
 # query รวม: (ชื่อค่า, PromQL, label ที่ใช้แยกเครื่อง)
 BATCH = [
@@ -53,16 +49,6 @@ BATCH = [
              f'node_filesystem_size_bytes{{web!="",{_FS}}}) * 100)', "web"),
     ("net", f'sum by(web) (rate(node_network_receive_bytes_total{{web!="",{_DEV}}}[5m]) + '
             f'rate(node_network_transmit_bytes_total{{web!="",{_DEV}}}[5m])) / 1048576', "web"),
-    ("cpu", f"100 - avg by(cm_web) (rate({_WCPU}[5m])) * 100", "cm_web"),
-    ("memory", '(1 - (max by(cm_web) (windows_memory_available_bytes) or max by(cm_web) (windows_memory_physical_free_bytes)'
-               ' or max by(cm_web) (windows_os_physical_memory_free_bytes)) / '
-               'max by(cm_web) ({__name__=~"windows_memory_physical_total_bytes|windows_cs_physical_memory_bytes"})) * 100',
-     "cm_web"),
-    ("disk", f"max by(cm_web) ((1 - windows_logical_disk_free_bytes{{{_VOL}}} / "
-             f"windows_logical_disk_size_bytes{{{_VOL}}}) * 100)", "cm_web"),
-    ("net", f"sum by(cm_web) (rate(windows_net_bytes_received_total{{{_NIC}}}[5m]) + "
-            f"rate(windows_net_bytes_sent_total{{{_NIC}}}[5m])) / 1048576", "cm_web"),
-    ("hb_age", 'time() - max by(cm_web) (timestamp({__name__=~"fluentbit_uptime.*",cm_web!=""} or (up{cm_web!=""} == 1)))', "cm_web"),
     ("ping_ms", 'sum by(cm_target) (sum_over_time(probe_icmp_duration_seconds{phase="rtt"}[5m])) / '
                 'sum by(cm_target) (sum_over_time(probe_success[5m])) * 1000', "cm_target"),
     ("loss", "(1 - avg by(cm_target) (avg_over_time(probe_success[5m]))) * 100", "cm_target"),
@@ -111,9 +97,6 @@ def _server(target, sensor_states, batch):
                 "status": "paused", "state": "PAUSED", "cpu": None, "memory": None, "disk": None, "net": None,
                 "ping_ms": None, "packet_loss": None, "alerts": 0, "last_pull": last_pull_time(name)}
 
-    if agent_service.is_agent(target):
-        return _agent_server(target, base, sensor_states, batch)
-
     config = get_web_prometheus_config(name)
 
     # up{web=...} มาจาก web-nodes.json (Prometheus ที่มากับ stack) ; ไม่มี -> ใช้ job/instance ใน puller.yaml
@@ -157,41 +140,6 @@ def _server(target, sensor_states, batch):
     }
 
 
-def _agent_server(target, base, sensor_states, batch):
-    """เครื่อง Windows (agent): online = ได้สัญญาณจาก agent ภายใน 3 นาที"""
-    name = base["web"]
-    age = _get(batch, "hb_age", "cm_web", name)
-    if age is not None and age <= agent_service.ONLINE_WITHIN:
-        online, last_seen = True, datetime.fromtimestamp(time.time() - age, timezone.utc).isoformat()
-    else:
-        st = agent_service.status(name)          # ไม่มีใน batch -> ดูละเอียด (รวม log ล่าสุด)
-        online, last_seen = st["online"], st["last_seen"]
-    sensor = (sensor_states or {}).get(name)
-    values = {k: (_round(_get(batch, k, "cm_web", name)) if online else None) for k in ("cpu", "memory", "disk", "net")}
-    if online and values["cpu"] is None and values["memory"] is None:
-        labels = _labels(get_web_prometheus_config(name))
-        for key in ("cpu", "memory", "disk"):
-            values[key] = _round(prom_value(PROMQL[key](labels)))
-    state = "DOWN"
-    if online:
-        state = classify_state(values)
-        if sensor:
-            state = _SENSOR_STATE.get(sensor["worst"], state)
-    return {
-        **base,
-        "kind": "agent", "os": target.get("os") or "windows",
-        "instance": None,
-        "status": "online" if online else "offline",
-        "state": state,
-        **values,
-        **_ping(batch, name),
-        "last_pull": last_seen,
-        "thresholds": (sensor or {}).get("thresholds"), "acked": (sensor or {}).get("acked", 0),
-        "problems": (sensor or {}).get("problems", []) if online else ["no data from agent"],
-        "alerts": _alerts(sensor) if online else 1,
-    }
-
-
 def _avg(rows, key):
     vals = [r[key] for r in rows if r.get(key) is not None]
     return round(sum(vals) / len(vals), 1) if vals else None
@@ -207,8 +155,7 @@ def _counts(rows):
         "problem": sum(1 for s in rows if s["state"] == "PROBLEM"),
         "not_ok": sum(1 for s in rows if s["state"] in ("WARNING", "PROBLEM", "DOWN")),
         "avg_cpu": _avg(rows, "cpu"), "avg_memory": _avg(rows, "memory"), "avg_disk": _avg(rows, "disk"),
-        "windows": sum(1 for s in rows if s.get("os") == "windows"),
-        "linux": sum(1 for s in rows if s.get("os") != "windows"),
+        "linux": len(rows),
     }
 
 

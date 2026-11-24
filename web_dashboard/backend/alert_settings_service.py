@@ -6,18 +6,16 @@ alert_settings_service.py - ตั้งค่าการแจ้งเตื�
     sensors:
       confirm_checks: 6          # แจ้งเตือนเมื่อเกินเกณฑ์ต่อเนื่อง 6 รอบ x 30 วินาที = 3 นาที
       hysteresis: 2
-      critical_services: [WinDefend, wuauserv, TermService, Dnscache, Dhcp, EventLog]
       bottleneck: true
-    thresholds:          {cpu: {warning, error}, ...}   # Linux
-    thresholds_windows:  {cpu: {warning, error}, ...}   # Windows (agent)
+    thresholds:          {cpu: {warning, error}, ...}
 
-ค่าปริยายต้องตรงกับ start_push_log/puller/sensor_monitor.py (DEFAULT_THRESHOLDS / WINDOWS_DEFAULT_THRESHOLDS)
+ค่าปริยายต้องตรงกับ start_push_log/puller/sensor_monitor.py (DEFAULT_THRESHOLDS)
 """
 
 import copy
 
 import targets_service
-from targets_service import THRESHOLD_KINDS, clean_services, clean_thresholds
+from targets_service import THRESHOLD_KINDS, clean_thresholds
 
 INTERVAL = 30                    # วินาทีต่อรอบตรวจ sensor (sensor_monitor.INTERVAL)
 MAX_MINUTES = 60
@@ -29,13 +27,6 @@ DEFAULT_THRESHOLDS = {
     "packet_loss": {"warning": 1, "error": 5}, "net_latency": {"warning": 100, "error": 250},
     "mem_available": {"warning": 20, "error": 10},
 }
-WINDOWS_DEFAULT_THRESHOLDS = {
-    "cpu": {"warning": 80, "error": 95}, "memory": {"warning": 80, "error": 95},
-    "disk": {"warning": 80, "error": 90}, "disk_latency": {"warning": 20, "error": 50},
-    "packet_loss": {"warning": 1, "error": 5}, "net_latency": {"warning": 100, "error": 250},
-    "mem_available": {"warning": 20, "error": 10},
-}
-DEFAULT_CRITICAL_SERVICES = ["WinDefend", "wuauserv", "TermService", "Dnscache", "Dhcp", "EventLog"]
 LABELS = {
     "cpu": "CPU %", "memory": "Memory used %", "disk": "Disk used %", "disk_latency": "Disk latency ms",
     "packet_loss": "Packet loss %", "net_latency": "Ping latency ms", "mem_available": "Available RAM % (ต่ำ = แย่)",
@@ -67,24 +58,20 @@ def get_settings():
         confirm = int(s.get("confirm_checks", DEFAULT_CONFIRM))
     except (TypeError, ValueError):
         confirm = DEFAULT_CONFIRM
-    crit = s.get("critical_services")
     return {
         "alert_minutes": round(confirm * INTERVAL / 60, 1),
         "confirm_checks": confirm,
         "interval": INTERVAL,
         "hysteresis": float(s.get("hysteresis", 2)),
         "bottleneck": s.get("bottleneck", True) is not False,
-        "critical_services": list(crit) if isinstance(crit, list) else DEFAULT_CRITICAL_SERVICES,
         "thresholds": _merge(DEFAULT_THRESHOLDS, targets_service._plain(doc.get("thresholds") or {})),
-        "thresholds_windows": _merge(WINDOWS_DEFAULT_THRESHOLDS, targets_service._plain(doc.get("thresholds_windows") or {})),
-        "defaults": {"thresholds": DEFAULT_THRESHOLDS, "thresholds_windows": WINDOWS_DEFAULT_THRESHOLDS,
-                     "critical_services": DEFAULT_CRITICAL_SERVICES, "alert_minutes": DEFAULT_CONFIRM * INTERVAL / 60},
+        "defaults": {"thresholds": DEFAULT_THRESHOLDS, "alert_minutes": DEFAULT_CONFIRM * INTERVAL / 60},
         "kinds": list(THRESHOLD_KINDS), "labels": LABELS,
     }
 
 
 def update_settings(payload):
-    """payload: {alert_minutes, hysteresis, bottleneck, critical_services, thresholds, thresholds_windows}
+    """payload: {alert_minutes, hysteresis, bottleneck, thresholds}
     คืน (ok, ผล | {error, fields})"""
     from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
@@ -108,12 +95,8 @@ def update_settings(payload):
             errors["hysteresis"] = "ต้องอยู่ระหว่าง 0-20"
     if "bottleneck" in payload:
         sensors["bottleneck"] = bool(payload["bottleneck"])
-    if "critical_services" in payload:
-        cs = clean_services(payload["critical_services"] or [], errors)
-        if cs is not None:
-            sensors["critical_services"] = cs
     th = {}
-    for key in ("thresholds", "thresholds_windows"):
+    for key in ("thresholds",):
         if key in payload:
             th[key] = clean_thresholds(payload[key], errors, prefix=key)
     if errors:

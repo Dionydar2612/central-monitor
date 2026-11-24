@@ -92,16 +92,16 @@ class Backend(unittest.TestCase):
         self.assertEqual(self.login("admin", "rootpass"), 200)
         d = c.get("/api/alert-settings").json
         self.assertEqual(d["alert_minutes"], 3.0)
-        self.assertEqual(d["thresholds_windows"]["cpu"], {"warning": 80, "error": 95})
+        self.assertEqual(d["thresholds"]["cpu"], {"warning": 75, "error": 90})
+        self.assertNotIn("thresholds_windows", d)
         bad = c.put("/api/alert-settings", json={"alert_minutes": 0,
-                                                 "thresholds_windows": {"mem_available": {"warning": 5, "error": 10}}})
+                                                 "thresholds": {"mem_available": {"warning": 5, "error": 10}}})
         self.assertEqual(bad.status_code, 400)
-        self.assertIn("thresholds_windows.mem_available.warning", bad.json["fields"])
-        ok = c.put("/api/alert-settings", json={"alert_minutes": 5, "critical_services": ["WinDefend", "Spooler"],
-                                                "thresholds_windows": {"cpu": {"warning": 85, "error": 96}}})
+        self.assertIn("thresholds.mem_available.warning", bad.json["fields"])
+        ok = c.put("/api/alert-settings", json={"alert_minutes": 5, "thresholds": {"cpu": {"warning": 85, "error": 96}}})
         self.assertEqual(ok.status_code, 200)
         self.assertEqual(ok.json["confirm_checks"], 10)
-        self.assertEqual(ok.json["critical_services"], ["WinDefend", "Spooler"])
+        self.assertEqual(ok.json["thresholds"]["cpu"], {"warning": 85.0, "error": 96.0})
         self.assertEqual(c.get("/api/host/nope/system").status_code, 404)
         acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
         self.assertIn("settings.alerts", acts)
@@ -135,27 +135,23 @@ class Backend(unittest.TestCase):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)
         d = c.get("/api/notify-settings/cards").json
-        self.assertEqual(set(d["categories"]), {"alert", "rule", "queue", "netstat", "web", "software"})
-        self.assertEqual(d["cards"]["queue"]["fields"][:3], ["device", "sensor", "port"])
-        r = c.put("/api/notify-settings/cards", json={"cards": {"queue": {"title": "{machine} {port}", "fields": ["device", "port", "x"],
-                                                                         "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}"}}})
+        self.assertEqual(set(d["categories"]), {"alert", "rule", "web"})
+        self.assertEqual(d["cards"]["web"]["fields"][:3], ["device", "sensor", "status"])
+        r = c.put("/api/notify-settings/cards", json={"cards": {"web": {"title": "{machine} {url}", "fields": ["device", "url", "x"],
+                                                                       "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}"}}})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json["cards"]["queue"], {"title": "{machine} {port}", "fields": ["device", "port"],
-                                                    "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}", "mute": []})
-        self.assertEqual(r.json["custom"], ["queue"])
+        self.assertEqual(r.json["cards"]["web"], {"title": "{machine} {url}", "fields": ["device", "url"],
+                                                  "labels": {"device": "เครื่อง"}, "note": "ไปเคลียร์ที่ {machine}", "mute": []})
+        self.assertEqual(r.json["custom"], ["web"])
         self.assertIn("cards:", open(os.path.join(self.tmp, "puller.yaml"), encoding="utf-8").read())
         self.assertEqual(c.put("/api/notify-settings/cards", json={"cards": {"zzz": {}}}).status_code, 400)
-        r = c.put("/api/notify-settings/cards", json={"cards": {"netstat": {"title": "", "fields": ["device"], "mute": ["agent_stale", "bad"]}}})
-        self.assertEqual(r.json["cards"]["netstat"]["mute"], ["agent_stale"])
-        self.assertIn("agent_stale", r.json["mute_options"]["netstat"])
-        c.put("/api/notify-settings/cards", json={"reset": ["netstat"]})
-        self.assertEqual(c.put("/api/notify-settings/cards", json={"reset": ["queue"]}).json["custom"], [])
-        self.assertEqual(c.post("/api/notify-settings/cards/test", json={"cat": "queue"}).status_code, 400)   # ยังไม่มี URL
+        self.assertEqual(c.put("/api/notify-settings/cards", json={"reset": ["web"]}).json["custom"], [])
+        self.assertEqual(c.post("/api/notify-settings/cards/test", json={"cat": "web"}).status_code, 400)   # ยังไม่มี URL
         import card_templates
-        p = card_templates.card("queue", "warning", dict(card_templates.SAMPLE["queue"], machine="abc86", device="abc86"),
-                                {"queue": {"title": "{machine} {port}", "fields": ["port"], "labels": {"port": "พอร์ต"}, "note": "เคลียร์ {machine}"}})
+        p = card_templates.card("web", "down", dict(card_templates.SAMPLE["web"], machine="abc86", device="abc86"),
+                                {"web": {"title": "{machine} {url}", "fields": ["url"], "labels": {"url": "ลิงก์"}, "note": "เคลียร์ {machine}"}})
         body = p["attachments"][0]["content"]["body"]
-        self.assertEqual([b["text"] for b in body], ["abc86 Port", "**พอร์ต:** Port", "เคลียร์ abc86"])
+        self.assertEqual([b["text"] for b in body], ["abc86 URL", "**ลิงก์:** URL", "เคลียร์ abc86"])
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         a, b = (open(os.path.join(root, x, "card_templates.py"), "rb").read() for x in ("start_push_log/puller", "web_dashboard/backend"))
         self.assertEqual(a, b)
@@ -165,16 +161,17 @@ class Backend(unittest.TestCase):
         self.assertEqual(self.login("admin", "rootpass"), 200)
         c.post("/api/targets", json={"name": "app-01", "host": "10.0.0.9", "ssh": {"user": "cp"}, "logs": []})
         before = c.get("/api/alert-rules").json["rules"]
-        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "nope", "value": "x"}).status_code, 400)
+        self.assertEqual(c.post("/api/apps", json={"type": "docker", "web": "nope", "value": "x"}).status_code, 400)
+        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "x"}).status_code, 400)   # Windows เดิม
         self.assertIn("value", c.post("/api/apps", json={"type": "port", "web": "app-01", "value": "99999"}).json["fields"])
         r = c.post("/api/apps", json={"type": "web", "web": "app-01", "value": "{host}:8080/health", "local": False})
         self.assertEqual(r.status_code, 201, r.json)
         rule = r.json["rule"]
         self.assertEqual((rule["metric"], rule["url"], rule["targets"], rule["name"]),
                          ("http_url", "http://{host}:8080/health", ["app-01"], "app-01:8080/health (app-01)"))
-        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "sqlservr.exe"}).status_code, 201)
+        self.assertEqual(c.post("/api/apps", json={"type": "docker", "web": "app-01", "value": "nginx"}).status_code, 201)
         items = c.get("/api/apps").json["items"]
-        self.assertTrue({("web", "nodata"), ("program", "nodata")} <= {(x["type"], x["status"]) for x in items})
+        self.assertTrue({("web", "nodata"), ("docker", "nodata")} <= {(x["type"], x["status"]) for x in items})
         self.assertEqual(len(c.get("/api/alert-rules").json["rules"]), len(before) + 2)     # กฎเดิมยังอยู่
         up = c.put(f"/api/apps/{rule['id']}", json={"type": "web", "web": "app-01", "value": "localhost:9000/ping", "local": True})
         self.assertEqual(up.status_code, 200, up.json)
@@ -205,7 +202,7 @@ class Backend(unittest.TestCase):
             doc["alert_rules"].append(CommentedMap(id="legacy-noport", name="NoPort", metric="http_url", url="localhost",
                                                    targets=["app-01"], level="error", for_minutes=2, enabled=True))
             targets_service._write_doc(y, doc)
-        extra = c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "java"})
+        extra = c.post("/api/apps", json={"type": "port", "web": "app-01", "value": "8443"})
         self.assertEqual(extra.status_code, 201, extra.json)
         self.assertEqual(c.delete(f"/api/apps/{extra.json['rule']['id']}").status_code, 200)
         self.assertEqual(c.delete("/api/apps/legacy-noport").status_code, 200)
@@ -246,7 +243,7 @@ class Backend(unittest.TestCase):
         c.post("/api/users", json={"username": "v2", "password": "password2", "role": "viewer"})
         self.assertEqual(self.login("v2", "password2"), 200)
         self.assertEqual(c.get("/api/apps").status_code, 200)
-        self.assertEqual(c.post("/api/apps", json={"type": "program", "web": "app-01", "value": "x"}).status_code, 403)
+        self.assertEqual(c.post("/api/apps", json={"type": "docker", "web": "app-01", "value": "x"}).status_code, 403)
 
     def test_operator_permissions(self):
         c = self.c
@@ -261,8 +258,7 @@ class Backend(unittest.TestCase):
         self.assertEqual(c.get("/api/targets").status_code, 200)
         self.assertEqual(c.get("/api/alert-settings").status_code, 200)
         for bad in (c.post("/api/targets", json={"name": "x"}), c.delete("/api/targets/op-web"),
-                    c.put("/api/alert-settings", json={}), c.get("/api/notify-settings"), c.get("/api/users"),
-                    c.get("/api/targets/op-web/agent-setup")):
+                    c.put("/api/alert-settings", json={}), c.get("/api/notify-settings"), c.get("/api/users")):
             self.assertEqual(bad.status_code, 403)
         # operator แก้กฎของทุกคนได้ (คนสร้างยังเป็น admin)
         rs = c.get("/api/alert-rules").json["rules"]
@@ -590,7 +586,6 @@ class Backend(unittest.TestCase):
         self.assertEqual(n("s__ln-01__application__20261119T010000Z__0-9__ab.log", "application"), "ImportArkheion")   # log เก่า
         self.assertEqual(n("s__ln-01__logapp__20261119T010000Z__0-9__ab.log", "logapp"), "logapp")      # 2 ชื่อ -> ไม่เดา
         self.assertEqual(n("s__ln-01__auth__20261119T010000Z__0-9__ab.log", "loginuser"), "auth")
-        self.assertEqual(n("agent__win-01__eventlog__System", "eventlog"), "eventlog")
         rows = [{"id": f"r{i}", "web": "ln-01", "level": "ERROR", "type": "application", "name": nm, "timestamp": "2026-11-19T01:00:00Z",
                  "_ts": 100 + i, "message": f"boom {nm}", "fp": "f" + nm[:3].lower(), "source_file": ""}
                 for i, nm in enumerate(["ImportArkheion", "ImportArkheion", "auth"])]
@@ -711,47 +706,6 @@ class Backend(unittest.TestCase):
         self.assertEqual(self.login("admin", "rootpass"), 200)
         c.delete("/api/targets/ping-x")
 
-    def test_windows_pull_mode(self):
-        """Windows โหมด pull: central (Prometheus) ดึง windows_exporter เอง label cm_web = ชื่อเครื่อง"""
-        import json as _j, agent_service, targets_service
-        c = self.c
-        self.assertEqual(self.login("admin", "rootpass"), 200)
-        bad = c.post("/api/targets", json={"name": "win-pull", "type": "agent", "agent": {"mode": "pull"}}).json
-        self.assertIn("agent.exporter", bad["fields"])                                  # ไม่มี host / exporter
-        r = c.post("/api/targets", json={"name": "win-pull", "type": "agent", "host": "192.168.181.101",
-                                         "agent": {"mode": "pull", "logs": [], "channels": ["System"]}})
-        self.assertEqual(r.status_code, 201, r.json)
-        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-pull"][0]
-        self.assertEqual((t["agent"]["mode"], t["agent"]["exporter"]), ("pull", "192.168.181.101:9182"))
-        nodes = _j.load(open(os.path.join(self.tmp, "web-nodes.json")))
-        item = [n for n in nodes if n["labels"].get("cm_web") == "win-pull"][0]
-        self.assertEqual(item["targets"], ["192.168.181.101:9182"])
-        self.assertEqual(item["labels"]["job"], "cm-agent-pull")
-        info = agent_service.setup_info(agent_service.agent_target("win-pull"), "172.27.2.22")
-        self.assertIn("-Pull -Central 172.27.2.22 -Name win-pull", info["command"])
-        self.assertIn("-Channels", info["command"])
-        self.assertIn("precheck.ps1", info["precheck"])
-        self.assertIn("-Pull", info["precheck"])
-        self.assertNotIn("-Token", info["precheck"])          # ตรวจก่อนติดตั้งไม่มี token
-        # พอร์ตเฉพาะเครื่อง (push) เช่น 9182 -> คำสั่งติดตั้ง / precheck ใส่ -Port 9182
-        r = c.post("/api/targets", json={"name": "win-p9182", "type": "agent", "agent": {"mode": "push", "port": 9182, "logs": [], "channels": ["System"]}})
-        self.assertEqual(r.status_code, 201, r.json)
-        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-p9182"][0]
-        self.assertEqual(t["agent"]["port"], 9182)
-        info2 = agent_service.setup_info(agent_service.agent_target("win-p9182"), "172.27.2.22")
-        self.assertIn("-Port 9182", info2["command"])
-        self.assertIn("-Port 9182", info2["precheck"])
-        bad = c.post("/api/targets", json={"name": "win-bad", "type": "agent", "agent": {"port": 70000}}).json
-        self.assertIn("agent.port", bad["fields"])
-        self.assertNotIn("-Token", info["command"])
-        # เปลี่ยนกลับเป็น push -> ไม่อยู่ในรายการให้ Prometheus ดึง
-        r = c.put("/api/targets/win-pull", json={"type": "agent", "host": "192.168.181.101",
-                                                 "agent": {"mode": "push", "logs": [], "channels": ["System"]}})
-        self.assertEqual(r.status_code, 200, r.json)
-        nodes = _j.load(open(os.path.join(self.tmp, "web-nodes.json")))
-        self.assertFalse([n for n in nodes if n["labels"].get("cm_web") == "win-pull"])
-        c.delete("/api/targets/win-pull")
-
     def test_alert_rules(self):
         c = self.c
         self.assertEqual(self.login("admin", "rootpass"), 200)
@@ -762,28 +716,25 @@ class Backend(unittest.TestCase):
         self.assertIn("rules.0.name", bad.json["fields"])
         self.assertIn("rules.0.warning", bad.json["fields"])
         ok = c.put("/api/alert-rules", json={"rules": [
-            {"name": "Disk D", "metric": "disk", "mount": "D:", "warning": 85, "error": 95, "for_minutes": 10, "targets": ["web-01"]},
+            {"name": "Disk data", "metric": "disk", "mount": "/data", "warning": 85, "error": 95, "for_minutes": 10, "targets": ["web-01"]},
             {"name": "RAM ว่างน้อย", "metric": "mem_available", "op": "<", "warning": 15, "error": 5},
-            {"name": "IIS หยุด", "metric": "service", "service": "W3SVC", "level": "warning"},
+            {"name": "nginx หยุด", "metric": "docker", "container": "nginx", "level": "warning"},
             {"name": "Load", "metric": "promql", "promql": "node_load1{$labels}", "warning": 4},
         ]})
         # โปรแกรม / พอร์ต / เว็บ: ตรวจช่องที่ต้องมี
         sw = c.put("/api/alert-rules", json={"rules": [
-            {"name": "SQL", "metric": "process", "process": ""}, {"name": "P", "metric": "port_listen", "port": 70000},
+            {"name": "SQL", "metric": "process", "process": "x"}, {"name": "P", "metric": "tcp_port", "port": 70000},
             {"name": "U", "metric": "http_url", "url": "ftp://x"}]})
         self.assertEqual(sw.status_code, 400)
-        self.assertTrue({"rules.0.process", "rules.1.port", "rules.2.url"} <= set(sw.json["fields"]))
+        self.assertTrue({"rules.0.metric", "rules.1.port", "rules.2.url"} <= set(sw.json["fields"]), sw.json)
         self.assertEqual(ok.status_code, 200, ok.json)
         rules = ok.json["rules"]
-        self.assertEqual([r["metric"] for r in rules], ["disk", "mem_available", "service", "promql"])
+        self.assertEqual([r["metric"] for r in rules], ["disk", "mem_available", "docker", "promql"])
         sw = c.put("/api/alert-rules", json={"rules": rules + [
-            {"name": "SQL หยุด", "metric": "process", "process": "sqlservr.exe", "level": "warning"},
-            {"name": "SQL RAM", "metric": "process_mem", "process": "sqlservr", "warning": 4000},
-            {"name": "1433", "metric": "port_listen", "port": "1433"},
+            {"name": "1433", "metric": "tcp_port", "port": "1433"},
             {"name": "Web", "metric": "http_url", "url": "http://{host}:8080/health"}]})
         self.assertEqual(sw.status_code, 200, sw.json)
         got = {r["name"]: r for r in sw.json["rules"]}
-        self.assertEqual((got["SQL หยุด"]["process"], got["SQL หยุด"]["warning"]), ("sqlservr", 1))
         self.assertEqual(got["1433"]["port"], 1433)
         self.assertNotIn("op", got["Web"])
         c.put("/api/alert-rules", json={"rules": rules})
@@ -807,199 +758,6 @@ class Backend(unittest.TestCase):
         self.assertFalse(got[0]["teams_url_set"])
         bad = c.post("/api/alert-rules/test", json={"name": "x", "metric": "cpu", "warning": 1})
         self.assertEqual(bad.status_code, 400)                            # ยังไม่มีช่อง Teams
-
-    def test_netstat(self):
-        """Netstat Monitor: เครื่อง Windows · เลือกพอร์ต + เกณฑ์ · dashboard (Unavailable ไม่ใช่ 0) · history · SSE · สิทธิ์"""
-        import json as _j, time as _t, netstat_service, clients
-        c = self.c
-        self.assertEqual(self.login("admin", "rootpass"), 200)
-        r = c.post("/api/targets", json={"name": "ns-win", "type": "agent", "host": "10.9.0.5",
-                                         "agent": {"mode": "pull", "logs": [], "channels": ["System"]}})
-        self.assertEqual(r.status_code, 201, r.json)
-        c.post("/api/targets", json={"name": "ns-lx", "host": "10.9.0.6", "ssh": {"user": "cp"}, "logs": []})
-        c.post("/api/users", json={"username": "nsop", "password": "password1", "role": "operator"})
-        c.post("/api/users", json={"username": "nsview", "password": "password1", "role": "viewer"})
-        self.assertNotIn(c.get("/netstat").status_code, (302, 401, 403))
-        hosts = c.get("/api/netstat/hosts").json
-        self.assertEqual([h["web"] for h in hosts["hosts"]], ["ns-win"])                     # เฉพาะ Windows
-        self.assertEqual((hosts["hosts"][0]["status"], hosts["hosts"][0]["enabled"]), ("unknown", False))
-        # ตรวจค่า: Critical ต้องมากกว่า Warning, พอร์ต 1-65535, ไม่ซ้ำ, interval 1/2/5
-        bad = c.put("/api/netstat/hosts/ns-win", json={"enabled": True, "interval": 3, "ports": [
-            {"port": 1433, "queue": {"warning": 80, "critical": 50}}, {"port": 70000}, {"port": 443}, {"port": 443}]}).json["fields"]
-        self.assertEqual(set(bad), {"interval", "ports.0.queue.critical", "ports.1.port", "ports.3.port"})
-        body = {"enabled": True, "interval": 1, "ports": [
-            {"port": 1433, "proto": "tcp", "queue": {"warning": 50, "critical": 80}, "conn": {"warning": 200, "critical": 300}},
-            {"port": 443, "queue": {"warning": 100, "critical": 150}, "conn": {"warning": 500, "critical": 800}},
-            {"port": 8080, "enabled": False}]}
-        self.assertEqual(c.put("/api/netstat/hosts/ns-win", json=body).status_code, 200)
-        self.assertEqual(c.put("/api/netstat/hosts/ns-lx", json=body).status_code, 404)    # ไม่ใช่ Windows
-        y = open(os.path.join(self.tmp, "puller.yaml")).read()
-        self.assertIn("netstat:", y)
-        self.assertIn("{warning: 50, critical: 80}", y)
-        # แก้เครื่องจากหน้า Settings แล้ว netstat ต้องไม่หาย
-        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "ns-win"][0]
-        self.assertLess(c.put("/api/targets/ns-win", json=dict(t, group="WIN")).status_code, 300)
-        self.assertIn("netstat:", open(os.path.join(self.tmp, "puller.yaml")).read())
-        # ค่าสดจาก puller (live.json): 1433 ไม่มีคิว -> None, 443 มีคิว
-        now = _t.time()
-        os.makedirs(netstat_service.NETSTAT_DIR, exist_ok=True)
-        row = lambda key, port, conn, q, st: {"key": key, "port": port, "proto": "tcp", "dir": "in", "enabled": True, "conn": conn,
-                                               "established": conn, "queue": q, "util": None, "states": {"established": conn},
-                                               "listening": True, "proc": "sqlservr", "pid": 10, "status": st,
-                                               "queue_note": "" if q is not None else "Unsupported: x", "conn_th": {"warning": 200}}
-        live = {"updated": now, "hosts": {"ns-win": {
-            "web": "ns-win", "online": True, "stale": False, "has_data": True, "last_seen": now, "os": "Windows Server 2022",
-            "support": {"recv": False, "send": False, "accept": True},
-            "rows": [row("tcp/in/1433", 1433, 230, None, "warning"), row("tcp/in/443", 443, 12, 4, "normal")],
-            "ports": [{"key": "tcp/in/1433", "port": 1433, "proto": "tcp", "dir": "in", "listening": True, "states": {"established": 230},
-                       "total": 230, "proc": "sqlservr", "pid": 10, "addr": "0.0.0.0", "peers": []},
-                      {"key": "tcp/in/3389", "port": 3389, "proto": "tcp", "dir": "in", "listening": True, "states": {},
-                       "total": 0, "proc": "svchost", "pid": 11, "addr": "0.0.0.0", "peers": []}]}},
-            "active": [{"akey": "ns-win::tcp/in/1433::conn", "kind": "conn", "web": "ns-win", "level": "warning", "port": 1433,
-                        "value": 230, "threshold": 200, "first": now - 60, "last": now, "status": "active"}]}
-        with open(netstat_service.LIVE_FILE, "w") as f:
-            _j.dump(live, f)
-        with open(netstat_service.ALERTS_FILE, "w") as f:
-            _j.dump({"active": live["active"], "history": [{"akey": "ns-win::host", "kind": "host_offline", "web": "ns-win",
-                                                            "level": "critical", "first": now - 900, "last": now - 800,
-                                                            "recovered_at": now - 790, "status": "recovered"}]}, f)
-        d = c.get("/api/netstat/dashboard").json
-        self.assertEqual(d["summary"], {"hosts": 1, "online": 1, "connections": 230, "listening": 2, "warning": 1, "critical": 0})
-        r1433 = [x for x in d["rows"] if x["port"] == 1433][0]
-        self.assertIsNone(r1433["queue"])                                                   # Unavailable ไม่ใช่ 0
-        self.assertEqual(len(c.get("/api/netstat/dashboard?status=alert").json["rows"]), 1)
-        self.assertEqual(len(c.get("/api/netstat/dashboard?port=443").json["rows"]), 1)
-        det = c.get("/api/netstat/hosts/ns-win").json
-        ports = {p["key"]: p for p in det["ports"]}
-        self.assertTrue(ports["tcp/in/1433"]["selected"])
-        self.assertFalse(ports["tcp/in/3389"]["selected"])
-        self.assertTrue(ports["tcp/in/8080"]["missing"] and not ports["tcp/in/8080"]["selected"])   # เลือกไว้แต่ไม่พบ
-        self.assertEqual(c.get("/api/netstat/hosts").json["hosts"][0]["status"], "online")
-        # agent offline -> ค่าปัจจุบันเป็น None สถานะ offline
-        live["hosts"]["ns-win"]["online"] = False
-        with open(netstat_service.LIVE_FILE, "w") as f:
-            _j.dump(live, f)
-        os.utime(netstat_service.LIVE_FILE, (now + 1, now + 1))
-        d = c.get("/api/netstat/dashboard").json
-        self.assertEqual((d["summary"]["online"], {x["status"] for x in d["rows"]}, d["rows"][0]["conn"]), (0, {"offline"}, None))
-        self.assertEqual(c.get("/api/netstat/hosts").json["hosts"][0]["status"], "offline")
-        # alerts
-        self.assertEqual(len(c.get("/api/netstat/alerts").json["alerts"]), 1)
-        self.assertEqual(len(c.get("/api/netstat/alerts?status=all").json["alerts"]), 2)
-        # history (Prometheus)
-        calls = []
-        saved = netstat_service.prometheus_query_range
-
-        def fake(q, s, e, step):
-            calls.append(q)
-            if "accept_queue" in q or "state=" in q and False:
-                return {"data": {"result": []}}
-            if "by (state)" in q:
-                return {"data": {"result": [{"metric": {"state": "established"}, "values": [[s, "5"], [e, "7"]]}]}}
-            return {"data": {"result": [{"metric": {}, "values": [[s, "5"], [e, "7"]]}]}}
-        netstat_service.prometheus_query_range = fake
-        try:
-            h = c.get("/api/netstat/history?web=ns-win&key=tcp/in/1433&range=6h").json
-            self.assertEqual((h["conn"][-1][1], h["queue_supported"], h["queue"]), (7.0, False, []))
-            self.assertIn('cm_web="ns-win",dir="in",port="1433"', calls[0])
-            self.assertEqual(h["end"] - h["start"], 6 * 3600)
-            self.assertEqual(c.get("/api/netstat/history?web=ns-win&key=tcp/in/1433&start=100&end=50").status_code, 400)
-            self.assertEqual(c.get("/api/netstat/history?web=ns-win&key=bad").status_code, 400)
-            self.assertEqual(c.get("/api/netstat/history?web=nope&key=tcp/in/1").status_code, 404)
-        finally:
-            netstat_service.prometheus_query_range = saved
-        # SSE: ข้อความแรก = snapshot ของ dashboard
-        self.api.NS_STREAM_SECONDS = 0.5
-        r = c.get("/api/netstat/stream?every=1", buffered=False)
-        self.assertEqual(r.mimetype, "text/event-stream")
-        first = b""
-        for chunk in r.response:
-            first += chunk
-            if b"event: snapshot" in first and first.endswith(b"\n\n"):
-                break
-        r.close()
-        self.assertIn(b"retry: 1000", first)
-        self.assertIn(b'"summary"', first)
-        # สิทธิ์: viewer ดูได้ แก้ไม่ได้ · operator แก้ได้
-        self.assertEqual(self.login("nsview", "password1"), 200)
-        self.assertEqual(c.get("/api/netstat/dashboard").status_code, 200)
-        self.assertEqual(c.put("/api/netstat/hosts/ns-win", json=body).status_code, 403)
-        self.assertEqual(self.login("nsop", "password1"), 200)
-        self.assertEqual(c.put("/api/netstat/hosts/ns-win", json=dict(body, enabled=False)).status_code, 200)
-        c.post("/api/logout")
-        self.assertEqual(c.get("/api/netstat/dashboard").status_code, 401)
-        self.assertEqual(self.login("admin", "rootpass"), 200)
-        acts = [e["action"] for e in c.get("/api/events?kind=activity").json["entries"]]
-        self.assertIn("netstat.update", acts)
-        for f in (netstat_service.LIVE_FILE, netstat_service.ALERTS_FILE):
-            os.remove(f)
-        c.delete("/api/targets/ns-win"); c.delete("/api/targets/ns-lx")
-
-    def test_platforms(self):
-        """รูปแบบการใช้งาน: windows / linux / both (puller.yaml ui.platforms) เปลี่ยนได้เฉพาะ admin"""
-        c = self.c
-        self.assertEqual(self.login("admin", "rootpass"), 200)
-        self.assertEqual(c.get("/api/me").json["platforms"], "both")
-        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "mac"}).status_code, 400)
-        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "windows"}).json["platforms"], "windows")
-        self.assertEqual(c.get("/api/me").json["platforms"], "windows")
-        self.assertIn("platforms: windows", open(os.path.join(self.tmp, "puller.yaml")).read())
-        c.post("/api/users", json={"username": "plop", "password": "password1", "role": "operator"})
-        self.assertEqual(self.login("plop", "password1"), 200)
-        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "both"}).status_code, 403)
-        self.assertEqual(self.login("admin", "rootpass"), 200)
-        self.assertEqual(c.put("/api/ui-platforms", json={"platforms": "both"}).status_code, 200)
-
-    def test_netstat_app_queue(self):
-        """คิวของโปรแกรมจาก log: ตั้งค่า apps · dashboard (Output[n] + log ไม่มี INFO) · history"""
-        import json as _j, time as _t, netstat_service
-        c = self.c
-        self.assertEqual(self.login("admin", "rootpass"), 200)
-        c.post("/api/targets", json={"name": "aq-win", "type": "agent", "host": "10.9.1.5",
-                                     "agent": {"mode": "pull", "logs": [], "channels": ["System"]}})
-        bad = c.put("/api/netstat/hosts/aq-win", json={"enabled": True, "interval": 1, "ports": [],
-                                                      "apps": {"notify_after": "x", "critical_size": -1}}).json["fields"]
-        self.assertEqual(set(bad), {"apps.notify_after", "apps.critical_size"})
-        r = c.put("/api/netstat/hosts/aq-win", json={"enabled": True, "interval": 1, "ports": [],
-                                                    "apps": {"enabled": True, "notify_after": 30, "critical_size": 100000}})
-        self.assertEqual(r.status_code, 200, r.json)
-        self.assertIn("{notify_after: 30, critical_size: 100000}", open(os.path.join(self.tmp, "puller.yaml")).read())
-        now = _t.time()
-        os.makedirs(netstat_service.NETSTAT_DIR, exist_ok=True)
-        app = {"key": "THMux/Output[2]", "log": "THMux", "ch": "Output[2]", "state": 1, "size": 1200, "critical": 500, "port": 37518,
-               "peak": 1200, "since": now - 40, "counts": {"exceed": 3, "disconnect": 1}, "episodes": [{"id": "1", "start": now - 40, "end": 0, "peak": 1200, "critical": 500}]}
-        with open(netstat_service.LIVE_FILE, "w") as f:
-            _j.dump({"updated": now, "hosts": {"aq-win": {"web": "aq-win", "online": True, "stale": False, "has_data": True, "rows": [], "ports": [],
-                                                         "apps": [app], "app_events": [{"seq": 2, "ts": now - 40, "log": "THMux", "ch": "Output[2]", "level": "WARN", "msg": "queue exceed"}]}},
-                     "active": []}, f)
-        d = c.get("/api/netstat/dashboard").json
-        self.assertEqual([(a["web"], a["ch"], a["state"], a["size"]) for a in d["apps"]], [("aq-win", "Output[2]", 1, 1200)])
-        self.assertEqual([e["level"] for e in d["app_events"]], ["WARN"])
-        det = c.get("/api/netstat/hosts/aq-win").json
-        self.assertEqual(det["apps_cfg"], {"enabled": True, "notify_after": 30, "critical_size": 100000})
-        self.assertEqual(det["apps"][0]["port"], 37518)
-        self.assertEqual(d["app_hosts"][0]["status"], "ok")                 # มีข้อมูลคิวแล้ว = ok เสมอ (ไม่ขึ้นกับรายงานไฟล์)
-        st = netstat_service.app_status
-        self.assertEqual(st({"app_every": 30, "app_sources": [], "apps": [app]}, "online"), "ok")
-        self.assertEqual(st({"apps": []}, "online"), "old-agent")
-        self.assertEqual(st({"app_every": 30, "app_sources": []}, "online"), "no-path")
-        self.assertEqual(st({"app_every": 30, "app_sources": [{"files": 0}]}, "online"), "no-file")
-        self.assertEqual(st({"app_every": 30, "app_sources": [{"files": 2, "recent": 0}]}, "online"), "old-file")
-        self.assertEqual(st({"app_every": 30, "app_sources": [{"files": 2, "recent": 1, "lines": 0}]}, "online"), "no-lines")
-        self.assertEqual(st({"app_every": 30, "app_sources": [{"files": 2, "recent": 1, "lines": 5}], "apps": [{}]}, "online"), "ok")
-        self.assertEqual(st({}, "offline"), "offline")
-        saved = netstat_service.prometheus_query_range
-        calls = []
-        netstat_service.prometheus_query_range = lambda q, s, e, st: calls.append(q) or {"data": {"result": [{"metric": {}, "values": [[s, "700"], [e, "499"]]}]}}
-        try:
-            h = c.get("/api/netstat/history?web=aq-win&key=app:THMux/Output[2]&range=1h").json
-            self.assertTrue(h["app"])
-            self.assertEqual(h["size"][-1][1], 499.0)
-            self.assertIn('cm_web="aq-win",log="THMux",ch="Output[2]"', calls[0])
-        finally:
-            netstat_service.prometheus_query_range = saved
-        os.remove(netstat_service.LIVE_FILE)
-        c.delete("/api/targets/aq-win")
 
     def test_password_hash(self):
         import users_service as u

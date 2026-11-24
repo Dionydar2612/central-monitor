@@ -2,13 +2,13 @@
    apps.js - หน้า Apps & Web (apps.html)
      ภาพรวมบนสุด: ทุกอย่างทำงานปกติ / มีปัญหา N รายการ
      การ์ดละ 1 รายการ: จุดสี · ชื่อ · เครื่อง · ข้อความล่าสุด · ทำงาน / หยุด มานานเท่าไหร่  (มีปัญหาขึ้นก่อน)
-     admin: + เพิ่ม (โปรแกรม / เว็บ / พอร์ต / Service) และ × ลบ   -> สร้าง / ลบ Custom alert rule ให้
+     admin: + เพิ่ม (เว็บ / พอร์ต / Docker) และ × ลบ   -> สร้าง / ลบ Custom alert rule ให้
    ===================================================================== */
 "use strict";
 const $ = id => document.getElementById(id);
-const A = { role: "viewer", items: [], filter: "all", find: "", type: "program", local: true, targets: [], at: 0, editing: null };
-const TYPE_TH = { program: "โปรแกรม", service: "Service", web: "เว็บ", port: "พอร์ต", docker: "Docker" };
-const LOCAL_METRICS = ["http_local", "port_listen"];
+const A = { role: "viewer", items: [], filter: "all", find: "", type: "web", local: false, targets: [], at: 0, editing: null };
+const TYPE_TH = { web: "เว็บ", port: "พอร์ต", docker: "Docker" };
+const LOCAL_METRICS = ["http_local"];
 const BAD = ["error", "down"], WARN = ["warning"];
 
 function esc(v) {
@@ -50,12 +50,12 @@ function tile(x) {
         + `${x.code != null ? `<span>HTTP <b class="${x.code && x.code < 400 ? "ok" : "cr"}">${esc(x.code)}</b></span>` : ""}</div>` : "";
     const attrs = isWeb ? `href="/apps?open=${encodeURIComponent(x.rule)}&web=${encodeURIComponent(x.web)}" data-open="${esc(x.rule)}" data-oweb="${esc(x.web)}"` : `href="${href}"`;
     return `<a class="apT ${cls(x.status)}" ${attrs}><span class="apDot"></span><div class="apMain"><b title="${esc(x.what)}">${esc(x.name)}</b>`
-        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${["http_local", "port_listen"].includes(x.metric) ? " · บนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? " · จาก central" : ""}</small><p>${esc(x.message)}</p>${stat}</div>`
+        + `<small>${esc(x.web)} · ${esc(TYPE_TH[x.type] || x.type)}${LOCAL_METRICS.includes(x.metric) ? " · บนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? " · จาก central" : ""}</small><p>${esc(x.message)}</p>${stat}</div>`
         + `<span class="apAge">${esc(ageText(x))}</span>${del}</a>`;
 }
 
 function strip(x) {
-    /* ไม่มีกราฟเวลาตอบ (โปรแกรม / Service / Docker): แถบสถานะปัจจุบัน */
+    /* ไม่มีกราฟเวลาตอบ (Docker / พอร์ต): แถบสถานะปัจจุบัน */
     const c = cls(x.status) || "na";
     return `<span class="apStrip1 ${c}" aria-hidden="true"></span>`;
 }
@@ -81,7 +81,7 @@ function dur(sec) {
 function chartSvg(series, range) {
     const ms = series.ms || [], up = series.up || [];
     if (!ms.length && !up.length) return `<div class="apEmpty">ยังไม่มีข้อมูลกราฟ (เริ่มเก็บหลังอัปเดตระบบ · ทุก 30 วินาที)</div>`;
-    if (!ms.length) {                           // โปรแกรม / Service / Docker / พอร์ตบนเครื่อง: แถบทำงาน / ไม่ทำงาน ตามเวลา
+    if (!ms.length) {                           // Docker / พอร์ต: แถบทำงาน / ไม่ทำงาน ตามเวลา
         const t0 = up[0][0], t1 = Math.max(up[up.length - 1][0], t0 + 1), W = 900, H = 70, L = 8, R = 8;
         const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), step = up.length > 1 ? up[1][0] - up[0][0] : 60;
         const bars = up.map(p => `<rect class="${p[1] >= 1 ? "upb" : "dn2"}" x="${X(p[0] - step / 2).toFixed(1)}" y="8" width="${Math.max(1.5, X(p[0] + step / 2) - X(p[0] - step / 2)).toFixed(1)}" height="34"><title>${p[1] >= 1 ? "ทำงาน" : "ไม่ทำงาน"} ${fmtT(p[0], "1h")}</title></rect>`).join("");
@@ -111,7 +111,7 @@ async function loadDetail() {
     const d = D.data, x = d.item, c = cls(x.status);
     $("adDot").className = "apBig " + c;
     $("adName").textContent = x.name;
-    const where = ["http_local", "port_listen"].includes(x.metric) ? "ตรวจบนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? "ตรวจจาก central" : TYPE_TH[x.type] || "";
+    const where = LOCAL_METRICS.includes(x.metric) ? "ตรวจบนเครื่อง" : ["http_url", "tcp_port"].includes(x.metric) ? "ตรวจจาก central" : TYPE_TH[x.type] || "";
     $("adSub").textContent = `${x.what} · ${x.web} · ${where}`;
     const pct = v => v == null ? "-" : `${v.toFixed(v >= 99.9 ? 2 : 1)}%`;
     const pc = v => v == null ? "" : v >= 99.9 ? "ok" : v >= 99 ? "wr" : "cr";
@@ -157,7 +157,7 @@ function closeDetail() {
     try { history.replaceState(null, "", "/apps"); } catch (e) { /* ignore */ }
 }
 
-/* เมนูย่อย Apps & Web: ?view=apps = Applications Monitor (โปรแกรม / service / พอร์ต / docker) · ?view=web = Web Monitor · ไม่ระบุ = ทั้งหมด */
+/* เมนูย่อย Apps & Web: ?view=apps = Applications Monitor (พอร์ต / docker) · ?view=web = Web Monitor · ไม่ระบุ = ทั้งหมด */
 const VIEW = new URLSearchParams(location.search).get("view") || "";
 function inView(x) { return VIEW === "web" ? x.type === "web" : VIEW === "apps" ? x.type !== "web" : true; }
 function render() {
@@ -190,13 +190,10 @@ async function load() {
 
 /* ---------- เพิ่ม ---------- */
 const HINT = {
-    program: ["ชื่อโปรแกรม", "เช่น sqlservr, java, w3wp", "ผิดปกติเมื่อไม่มี process ชื่อนี้ทำงาน (เครื่อง Windows) · รายการที่แนะนำมาจากโปรแกรมที่ทำงานอยู่บนเครื่องตอนนี้"],
     web: ["URL", "เช่น http://{host}:8080/health", "central เรียก URL นี้ทุก 30 วินาที ผิดปกติเมื่อเรียกไม่ได้ / เกิน 10 วินาที / HTTP 4xx-5xx · {host} = Host ของเครื่อง"],
-    port: ["พอร์ต", "เช่น 1433", "ผิดปกติเมื่อพอร์ตนี้ไม่ได้เปิดรับบนเครื่อง (ดูจากรายการพอร์ตที่เครื่อง Windows ส่งมา)"],
-    service: ["ชื่อ service", "เช่น MSSQLSERVER, W3SVC, nginx.service", "ผิดปกติเมื่อ Windows service นี้ไม่ได้ Running"],
-    docker: ["ชื่อ container", "เช่น web, postgres", "ผิดปกติเมื่อ container ไม่ได้ running หรือ unhealthy · Windows: เครื่องตรวจเองทุก 1 นาที · Linux: central ตรวจผ่าน SSH ทุก ~1 นาที (user SSH ต้องใช้คำสั่ง docker ได้)"],
+    port: ["พอร์ต", "เช่น 8080", "central ต่อ TCP ไปที่ Host (IP) ของเครื่องทุก 30 วินาที (เครื่องต้องมี Host ในหน้า Settings) ผิดปกติเมื่อต่อไม่ได้"],
+    docker: ["ชื่อ container", "เช่น web, postgres", "ผิดปกติเมื่อ container ไม่ได้ running หรือ unhealthy · central ตรวจผ่าน SSH ทุก ~1 นาที (user SSH ต้องใช้คำสั่ง docker ได้)"],
 };
-const HINT_LOCAL = { port: HINT.port };
 HINT.web = ["URL", "เช่น http://localhost:8090 หรือ http://{host}:8080/health",
     "localhost / 127.0.0.1 = ตรวจบนเครื่อง · ที่อื่น = central เรียก · 2xx / 3xx = ทำงาน · 4xx / 5xx / ไม่ตอบ = ไม่ทำงาน"];
 
@@ -221,38 +218,12 @@ function showMode() {
     box.hidden = !raw;
     if (!raw) return;
     const u = normUrl(raw), p = urlParts(u), local = isLocalUrl(raw);
-    const win = (A.targets.find(x => x.name === $("apWeb").value) || {}).os === "windows";
     box.innerHTML = local
-        ? `จะตรวจ: <b>บนเครื่อง</b> (${win ? "cm-probe ทุก 1 นาที" : "curl ผ่าน SSH ทุก ~1 นาที"}) · ${esc(u)}${p.port ? "" : " · <span style=\"color:#e5484d\">ใส่พอร์ตด้วย เช่น :8090</span>"}`
+        ? `จะตรวจ: <b>บนเครื่อง</b> (curl ผ่าน SSH ทุก ~1 นาที) · ${esc(u)}${p.port ? "" : " · <span style=\"color:#e5484d\">ใส่พอร์ตด้วย เช่น :8090</span>"}`
         : `จะตรวจ: <b>จาก central</b> (ทุก 30 วินาที) · ${esc(u.replace("{host}", machineHost() || "{host}"))}`;
     document.querySelectorAll("#apPorts button[data-port]").forEach(b => b.setAttribute("aria-pressed", String(local && b.dataset.port === p.port)));
 }
-async function loadPorts() {
-    const box = $("apPorts"); box.hidden = true; box.textContent = "";
-    const web = $("apWeb").value, t = A.targets.find(x => x.name === web);
-    if (A.type !== "web" || !t || t.os !== "windows") return;
-    let d;
-    try { d = await api("GET", `/api/host/${encodeURIComponent(web)}/probe-ports`); } catch (e) { return; }
-    if (web !== $("apWeb").value || A.type !== "web") return;
-    const ports = d.ports || [];
-    if (!ports.length) {
-        box.hidden = false;
-        box.textContent = d.probe_time ? "เครื่องนี้ยังไม่พบเว็บบนพอร์ตใด" : "เครื่องนี้ยังไม่ส่งผลตรวจเว็บ (ติดตั้ง agent ซ้ำ: Settings > เครื่อง > Download zip + Make command)";
-        return;
-    }
-    const btn = p => { const c = !p.code ? "na" : p.code < 400 ? "ok" : "bad";
-        return `<button type="button" class="${c}" data-port="${p.port}" data-scheme="${esc(p.scheme)}"${p.code ? "" : " hidden"}>`
-            + `${p.port} · <b>HTTP ${p.code}</b>${p.ms != null ? ` · ${p.ms} ms` : ""}</button>`; };
-    const hidden = ports.filter(p => !p.code).length;
-    box.innerHTML = `<span>เว็บที่พบบนเครื่อง:</span>${ports.map(btn).join("")}`
-        + (hidden ? `<button type="button" class="lnk" id="apPortsAll">แสดงทั้งหมด (+${hidden} ที่ไม่ใช่เว็บ)</button>` : "");
-    box.hidden = false;
-    showMode();
-}
-const HINT_REMOTE = {
-    web: HINT.web,
-    port: ["พอร์ต", "เช่น 8080", "central ต่อ TCP ไปที่ Host (IP) ของเครื่องทุก 30 วินาที (เครื่องต้องมี Host ในหน้า Settings) ผิดปกติเมื่อต่อไม่ได้"],
-};
+function loadPorts() { $("apPorts").hidden = true; }
 async function suggest() {
     const dl = $("apSuggest"); dl.textContent = "";
     const web = $("apWeb").value;
@@ -267,13 +238,13 @@ function machineHost() {
     return t && t.host ? t.host : "";
 }
 function refreshHint() {
-    const t = A.type, both = t === "port";          // เว็บ: เลือกโหมดจาก URL เอง ไม่มีตัวเลือก
-    $("apWhere").hidden = !both;
+    const t = A.type;                                // เว็บ: เลือกโหมดจาก URL เอง · พอร์ต: central ต่อเสมอ
+    $("apWhere").hidden = true;
     $("apMore").hidden = t !== "web";
-    const [label, ph, hint] = both ? (A.local ? HINT_LOCAL : HINT_REMOTE)[t] : HINT[t];
+    const [label, ph, hint] = HINT[t] || HINT.web;
     $("apValLabel").textContent = label; $("apVal").placeholder = ph;
     const h = machineHost();
-    $("apHint").textContent = hint + (both && !A.local ? (h ? ` · Host ของเครื่องนี้: ${h} (ใช้ {host} ใน URL ได้)` : " · ⚠ เครื่องนี้ยังไม่มี Host ในหน้า Settings") : "");
+    $("apHint").textContent = hint + (t === "port" ? (h ? ` · Host ของเครื่องนี้: ${h}` : " · ⚠ เครื่องนี้ยังไม่มี Host ในหน้า Settings") : "");
     $("apVal").inputMode = t === "port" ? "numeric" : "text";
     showMode();
 }
@@ -293,7 +264,7 @@ async function openForm(edit) {
         try { A.targets = ((await api("GET", "/api/alert-rules")).targets || []); } catch (e) { A.targets = []; }
     }
     const sel = $("apWeb"); sel.textContent = "";
-    A.targets.forEach(t => { const o = document.createElement("option"); o.value = t.name; o.textContent = t.name + (t.os === "windows" ? " (Windows)" : ""); sel.append(o); });
+    A.targets.forEach(t => { const o = document.createElement("option"); o.value = t.name; o.textContent = t.name; sel.append(o); });
     A.editing = edit ? edit.rule : null;
     $("apSave").textContent = edit ? "บันทึก" : "เพิ่ม";
     if (edit) {

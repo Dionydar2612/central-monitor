@@ -64,13 +64,11 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     POST /api/targets/host-key    สแกน SSH host key ของ host:port (ยังไม่เก็บ)
 """
 
-import json
 import re
-import threading
 import time
 
 from ruamel.yaml import YAMLError
-from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, session, stream_with_context
+from flask import Flask, g, jsonify, redirect, request, send_from_directory, session
 
 import settings
 from auth import AUTH_USERNAME, check_credentials, session_role
@@ -80,14 +78,12 @@ import checks_service
 import sensors_service
 import users_service
 import retention_service
-import agent_service
 import apps_service
 import alert_settings_service
 import notify_service
 import alert_rules_service
 import host_details
 import netsec_service
-import netstat_service
 import ui_order_service
 from users_service import UserError, role_at_least
 from clients import prom_value, puller_get
@@ -110,7 +106,6 @@ from metrics_service import (
     get_cpu_cores,
     get_metrics_history,
     get_web_prometheus_config,
-    _labels,
 )
 from overview_service import get_overview
 import overview_history
@@ -174,15 +169,13 @@ _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|lo
                          r"|^/api/targets/[^/]+/sensor-(toggle|settings)$|^/api/targets/[^/]+/log-status$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 _NETSEC_REFRESH = re.compile(r"^/api/netsec/[^/]+/refresh$")
-_TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|agent-package\.zip$)[^/]+$")
+_TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$)[^/]+$")
 
 
 def _required_role(method, path):
     """role ขั้นต่ำของแต่ละเส้นทาง (ไม่ระบุ = viewer)"""
     if _PAUSE_PATH.match(path) or _NETSEC_REFRESH.match(path):
         return "operator"
-    if path.startswith("/api/netstat/") and method != "GET":
-        return "operator"                          # Netstat Monitor: เปิด / ปิด Monitoring, เลือกพอร์ต, เกณฑ์
     if path == "/api/ui-order" and method != "GET":
         return "operator"                          # ลากจัดลำดับเครื่อง / กลุ่ม
     if _SERVICES_PATH.match(path):
@@ -195,8 +188,6 @@ def _required_role(method, path):
         return "operator"                          # operator แก้ได้เฉพาะการแจ้งเตือน + log (targets_update ตรวจอีกชั้น)
     if path == "/api/alert-settings" and method == "GET":
         return "operator"                          # ค่าเริ่มต้นสำหรับแสดงในช่องว่าง
-    if path == "/api/ui-platforms":
-        return "admin"                             # รูปแบบการใช้งาน Windows / Linux / ทั้งคู่
     if path == "/api/groups/move":
         return "admin"                             # ย้ายกลุ่ม (แก้ puller.yaml)
     if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
@@ -230,8 +221,6 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.update", ("url", "group", "paused")),
     ("DELETE", re.compile(r"^/api/checks/(?P<t>[^/]+)$"), "check.delete", ()),
     ("PUT", re.compile(r"^/api/ui-order$"), "ui.order", ()),
-    ("PUT", re.compile(r"^/api/ui-platforms$"), "ui.platforms", ("platforms",)),
-    ("PUT", re.compile(r"^/api/netstat/hosts/(?P<t>[^/]+)$"), "netstat.update", ("enabled", "interval")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/group$"), "target.group", ("group",)),
     ("POST", re.compile(r"^/api/groups/move$"), "group.move", ("from", "parent")),
     ("POST", re.compile(r"^/api/sensors/ack$"), "sensor.ack", ("id", "note")),
@@ -244,7 +233,7 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/retention$"), "settings.retention",
      ("log_retention", "incident_retention", "system_history_retention")),
     ("PUT", re.compile(r"^/api/alert-settings$"), "settings.alerts",
-     ("alert_minutes", "hysteresis", "bottleneck", "critical_services", "thresholds", "thresholds_windows")),
+     ("alert_minutes", "hysteresis", "bottleneck", "thresholds")),
     ("PUT", re.compile(r"^/api/notify-settings$"), "settings.notify", ("enabled", "levels", "summary_times", "popup")),
     ("POST", re.compile(r"^/api/notify-settings/test$"), "settings.notify_test", ()),
     ("PUT", re.compile(r"^/api/notify-settings/cards$"), "settings.notify_cards", ("reset",)),
@@ -281,7 +270,7 @@ def no_stale_frontend(response):
     กันอาการ "อัปเดตแล้วแต่หน้าเว็บยังเป็นแบบเก่า" ที่ต้องกด Ctrl+F5"""
     if request.method == "GET" and not request.path.startswith("/api/") and "Cache-Control" not in response.headers:
         p = request.path
-        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/netstat", "/login") or p.endswith((".js", ".css", ".html")):
+        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/login") or p.endswith((".js", ".css", ".html")):
             response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -368,22 +357,7 @@ def current_user():
         return jsonify({"authenticated": False}), 401
 
     role = getattr(g, "role", None) or session.get("role") or "viewer"
-    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role,
-                    "platforms": settings.ui_platforms()})
-
-
-@app.put("/api/ui-platforms")
-def ui_platforms_save():
-    """รูปแบบการใช้งาน (admin): {"platforms": "windows" | "linux" | "both"}"""
-    body = _json_body()
-    if body is None:
-        return jsonify({"error": "json_required"}), 415
-    try:
-        return jsonify({"platforms": targets_service.set_platforms(body.get("platforms"))})
-    except ValidationError as e:
-        return _bad_request(e)
-    except (OSError, YAMLError) as e:
-        return _config_error(e)
+    return jsonify({"authenticated": True, "username": session.get("username", ""), "role": role})
 
 
 # ============================================================
@@ -392,30 +366,6 @@ def ui_platforms_save():
 
 def _user_error(e):
     return jsonify({"error": "validation", "fields": e.fields}), e.status
-
-
-@app.get("/api/targets/<name>/agent-setup")
-def agent_setup(name):
-    """คำสั่งติดตั้ง agent ของเครื่อง Windows นี้ (admin)  central = IP/ชื่อของ central ที่เครื่อง Windows ใช้เรียก"""
-    t = agent_service.agent_target(name)
-    if not t:
-        return jsonify({"error": "ไม่พบเครื่อง agent ชื่อนี้"}), 404
-    central = (request.args.get("central") or request.host.rsplit(":", 1)[0]).strip("[]")
-    if not re.match(r"^[A-Za-z0-9.:-]{1,253}$", central):
-        return jsonify({"error": "central ต้องเป็น IP หรือชื่อเครื่อง"}), 400
-    return jsonify({**agent_service.setup_info(t, central), "central": central,
-                    "status": agent_service.status(name)})
-
-
-@app.get("/api/targets/agent-package.zip")
-def agent_package():
-    """ชุดติดตั้ง agent Windows (สคริปต์ + central-ca.pem) ไม่มี token ในไฟล์"""
-    try:
-        data = agent_service.package_zip()
-    except OSError as e:
-        return jsonify({"error": f"ไม่พบชุดติดตั้ง: {e}"}), 500
-    return app.response_class(data, mimetype="application/zip", headers={
-        "Content-Disposition": "attachment; filename=cm-agent-windows.zip", "Cache-Control": "no-store"})
 
 
 @app.get("/api/retention")
@@ -504,7 +454,7 @@ def web_status():
 
 @app.get("/api/alert-settings")
 def alert_settings_get():
-    """เกณฑ์แจ้งเตือนทั้งระบบ (Linux / Windows), ระยะเวลาก่อนแจ้งเตือน, service สำคัญ (admin)"""
+    """เกณฑ์แจ้งเตือนทั้งระบบ, ระยะเวลาก่อนแจ้งเตือน (admin)"""
     try:
         return jsonify(alert_settings_service.get_settings())
     except (OSError, YAMLError) as e:
@@ -640,102 +590,6 @@ def network_page():
     return send_from_directory(STATIC_DIR, "network.html")
 
 
-# ============================================================
-# Netstat Monitor (Apps & Web > Netstat Monitor) - เครื่อง Windows
-#   ค่าสดจาก puller (data/state/netstat/live.json) ส่งต่อแบบ Server-Sent Events
-# ============================================================
-
-@app.get("/netstat")
-def netstat_page():
-    return send_from_directory(STATIC_DIR, "netstat.html")
-
-
-@app.get("/api/netstat/hosts")
-def netstat_hosts():
-    return jsonify(netstat_service.host_rows())
-
-
-@app.get("/api/netstat/hosts/<web>")
-def netstat_host(web):
-    d = netstat_service.host_detail(web)
-    return (jsonify(d), 200) if d is not None else (jsonify({"error": "not found"}), 404)
-
-
-@app.put("/api/netstat/hosts/<web>")
-def netstat_host_save(web):
-    """body: {enabled, interval: 1|2|5, ports: [{port, proto, dir, enabled, queue: {warning, critical}, conn: {...}}]}"""
-    body = _json_body()
-    if body is None:
-        return jsonify({"error": "json_required"}), 415
-    try:
-        out = netstat_service.save_host(web, body)
-    except ValidationError as e:
-        return _bad_request(e)
-    except (OSError, YAMLError) as e:
-        return _config_error(e)
-    if out is None:
-        return jsonify({"error": "not found"}), 404
-    return jsonify(out)
-
-
-def _netstat_filters():
-    return {k: request.args.get(k, "") for k in ("host", "port", "proto", "status")}
-
-
-@app.get("/api/netstat/dashboard")
-def netstat_dashboard():
-    return jsonify(netstat_service.dashboard(_netstat_filters()))
-
-
-@app.get("/api/netstat/history")
-def netstat_history():
-    try:
-        d = netstat_service.history(request.args.get("web", ""), request.args.get("key", ""), request.args.get("range", "1h"),
-                                    request.args.get("start"), request.args.get("end"))
-    except ValidationError as e:
-        return _bad_request(e)
-    return (jsonify(d), 200) if d is not None else (jsonify({"error": "not found"}), 404)
-
-
-@app.get("/api/netstat/alerts")
-def netstat_alerts():
-    return jsonify({"alerts": netstat_service.alerts(request.args.get("status", "active"), request.args.get("web") or None)})
-
-
-_NS_STREAMS = threading.BoundedSemaphore(4)      # ต่อ worker: SSE ถือ thread ไว้ตลอดการเชื่อมต่อ
-NS_STREAM_SECONDS = 55                           # ตัดแล้วให้ browser ต่อใหม่เอง (EventSource) -> คืน thread เป็นระยะ
-
-
-@app.get("/api/netstat/stream")
-def netstat_stream():
-    """Server-Sent Events: ส่ง dashboard ทุก every วินาที (1 / 2 / 5 / 10) เมื่อมีค่าใหม่  เต็ม -> 503 (หน้าเว็บถอยไปใช้ polling)"""
-    try:
-        every = float(request.args.get("every", "2"))
-    except ValueError:
-        every = 2.0
-    every = every if every in (1, 2, 5, 10) else 2.0
-    if not _NS_STREAMS.acquire(blocking=False):
-        return jsonify({"error": "busy", "fallback": "poll"}), 503
-    filters = _netstat_filters()
-
-    def gen():
-        try:
-            yield f"retry: {int(every * 1000)}\n\n"
-            last, sent_at, until = None, 0.0, time.time() + NS_STREAM_SECONDS
-            while time.time() < until:
-                m = netstat_service.live_mtime()
-                now = time.time()
-                if m != last or now - sent_at >= 15:          # ค่าใหม่ หรือ heartbeat ทุก 15 วิ (ให้หน้าเว็บรู้ว่ายังต่ออยู่)
-                    last, sent_at = m, now
-                    yield "event: snapshot\ndata: " + json.dumps(netstat_service.dashboard(filters), ensure_ascii=False) + "\n\n"
-                time.sleep(every)
-        finally:
-            _NS_STREAMS.release()
-
-    return Response(stream_with_context(gen()), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
 @app.get("/api/netsec")
 def netsec_overview():
     """ทุกเครื่อง: สรุป firewall / การเชื่อมต่อ / login + เส้น ใครต่อหาใคร + ปลายทางภายนอก"""
@@ -751,7 +605,7 @@ def netsec_machine(web):
 
 @app.post("/api/netsec/<web>/refresh")
 def netsec_refresh(web):
-    """Linux: สั่ง puller ดึงสถานะเครื่องนี้ทันที (Windows อัปเดตเองทุก 5 นาที)"""
+    """สั่ง puller ดึงสถานะเครื่องนี้ทันที"""
     if not any(t.get("name") == web for t in load_web_targets()):
         return jsonify({"error": "not found"}), 404
     targets_service.request_pull(web)
@@ -917,21 +771,6 @@ def _known_target(web):
     return next((t for t in load_web_targets() if t.get("name") == web), None)
 
 
-@app.get("/api/host/<web>/probe-ports")
-def host_probe_ports(web):
-    """พอร์ตเว็บที่ cm-probe บนเครื่อง Windows เจอล่าสุด [{port, scheme, code, ms}] (ปุ่มเลือกพอร์ตในหน้า Apps & Web)"""
-    if _known_target(web) is None:
-        return jsonify({"error": "not found"}), 404
-    try:
-        data = host_details.probe_ports(web)
-    except Exception as e:
-        print(f"[HOST] probe-ports {web}: {e!r}")
-        return jsonify({"error": f"อ่านข้อมูลจาก Prometheus ไม่ได้: {e}"}), 502
-    if data is None:
-        return jsonify({"error": "ไม่มีการตั้งค่า metrics ของเครื่องนี้"}), 404
-    return jsonify(data)
-
-
 @app.get("/api/host/<web>/<kind>")
 def host_detail(web, kind):
     """kind = performance | hardware | system | software | bottleneck   ค่าที่ไม่มี = null + รายการ unsupported"""
@@ -979,19 +818,6 @@ def live_processes():
     cached = _LIVE_CACHE.get(web)
     if cached and cached[0] > now:
         return jsonify(cached[2]), cached[1]
-
-    if agent_service.agent_target(web):
-        # Windows: ไม่มี SSH -> ใช้ process จาก Prometheus (windows_process_*) อัปเดตทุก ~15 วินาที
-        from datetime import datetime, timezone
-        from metrics_service import get_windows_processes
-        procs = get_windows_processes(_labels(get_web_prometheus_config(web)))
-        data = {"time": datetime.now(timezone.utc).isoformat(),
-                "memory_top": sorted([p for p in procs if p.get("memory") is not None],
-                                     key=lambda p: p["memory"], reverse=True)[:10],
-                "io_top": sorted([p for p in procs if p.get("io_mb") is not None],
-                                 key=lambda p: p["io_mb"], reverse=True)[:10]}
-        _LIVE_CACHE[web] = (now + LIVE_TTL, 200, data)
-        return jsonify(data), 200
 
     try:
         status, data = puller_get("/processes", {"target": resolve_web_name(web)})
@@ -1072,16 +898,6 @@ def log_markers():
 def summary():
     """ข้อมูลรวมของเครื่องสำหรับแถบด้านบนของ dashboard"""
     web = request.args.get("web", "web-01")
-
-    if agent_service.agent_target(web):
-        st = agent_service.status(web)
-        current = get_current_metrics(web) if st["online"] else {}
-        return jsonify({"web": web, "kind": "agent", "status": "online" if st["online"] else "offline",
-                        "last_pull": st["last_seen"], "problem_count": get_problem_count(web),
-                        "errors_15m": get_errors_15m(web),
-                        "problem_kinds": get_problem_count(web, kinds=True), "errors_15m_kinds": get_errors_15m(web, kinds=True),
-                        "current_state": classify_state(current) if st["online"] else "DOWN",
-                        "metrics": {k: current.get(k) for k in ("cpu", "memory", "disk", "load_1m")}})
 
     current = get_current_metrics(web)
     config = get_web_prometheus_config(web)
@@ -1560,19 +1376,16 @@ def targets_log_status(name):
     if result is None:
         return jsonify({"error": "not found"}), 404
     if request.args.get("check") == "1":
-        if result["agent"]:
-            result["check_error"] = "เครื่อง Windows (agent) ตรวจสดไม่ได้ ดูจากเวลาดึงล่าสุดแทน"
+        try:
+            status, data = puller_get("/log-check", {"target": name}, timeout=40)
+        except Exception as e:
+            status, data = 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
+        if status == 200:
+            live = {(r.get("name"), r.get("path")): r for r in data.get("logs") or []}
+            for row in result["logs"]:
+                row["check"] = live.get((row["name"], row["path"]))
         else:
-            try:
-                status, data = puller_get("/log-check", {"target": name}, timeout=40)
-            except Exception as e:
-                status, data = 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
-            if status == 200:
-                live = {(r.get("name"), r.get("path")): r for r in data.get("logs") or []}
-                for row in result["logs"]:
-                    row["check"] = live.get((row["name"], row["path"]))
-            else:
-                result["check_error"] = data.get("error") or f"HTTP {status}"
+            result["check_error"] = data.get("error") or f"HTTP {status}"
     return jsonify(result)
 
 

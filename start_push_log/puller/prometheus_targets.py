@@ -19,7 +19,7 @@ prometheus_targets.py - สร้างรายชื่อเครื่อ�
     - เรียกจาก scheduler.py ก่อนเริ่มดึงทุกรอบ (หรือรันเดี่ยว: python3 prometheus_targets.py)
     - อ่าน  : config/puller.yaml  (targets[].name และ targets[].prometheus.{job,instance})
     - เขียน : data/prometheus/web-nodes.json
-              data/prometheus/ping.json   (ทุกเครื่องที่มี host รวม Windows agent)
+              data/prometheus/ping.json   (ทุกเครื่องที่มี host)
               -> job "ping" ส่งให้ blackbox_exporter ping (ICMP) วัด latency / packet loss
                  label cm_target="<ชื่อเครื่อง>"
               -> Prometheus (metrics/prometheus/prometheus.yml, job "web-nodes")
@@ -63,14 +63,7 @@ def generate_targets():
         if web.get("name") and host and not web.get("paused"):
             pings.append({"targets": [host], "labels": {"cm_target": web["name"], "environment": environment}})
         if str(web.get("type") or "ssh") == "agent":
-            # push: agent ส่ง metrics เข้ามาเอง (remote write) / pull: Prometheus ดึง windows_exporter ของเครื่อง Windows
-            #   label cm_web = ชื่อเครื่อง (เหมือนข้อมูลจาก agent) ต้องตรงกับ targets_service.pull_target
-            agent = web.get("agent") or {}
-            if agent.get("mode") == "pull" and agent.get("exporter") and web.get("name") and not web.get("paused"):
-                targets.append({"targets": [str(agent["exporter"])],
-                                "labels": {"job": "cm-agent-pull", "web": web["name"], "cm_web": web["name"],
-                                           "environment": environment}})
-            continue
+            continue                     # เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
         name = web.get("name")
         prometheus = web.get("prometheus", {})
 

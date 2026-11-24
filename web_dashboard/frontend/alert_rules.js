@@ -8,24 +8,20 @@
 
 const RL = { data: null, rules: [], editing: null };
 
-const RL_STATE = ["service", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker"];   // ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก
-const RL_PROC = ["process", "process_cpu", "process_mem"];
+const RL_STATE = ["tcp_port", "http_url", "http_local", "docker"];   // ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก
 function rlMetric(key) { return ((RL.data && RL.data.metrics) || []).find(m => m.key === key) || { label: key, unit: "" }; }
 
 function rlWhere(r) {
     const parts = [];
     if ((r.targets || []).length) parts.push(r.targets.join(", "));
     if ((r.groups || []).length) parts.push("กลุ่ม " + r.groups.join(", "));
-    if (r.os && r.os !== "any") parts.push(r.os === "windows" ? "Windows" : "Linux");
+    if (r.os === "windows") parts.push("Windows (เลิกรองรับ · ไม่ตรวจแล้ว)");
     return parts.join(" · ") || "ทุกเครื่อง";
 }
 
 function rlCond(r) {
     const m = rlMetric(r.metric), u = r.metric === "promql" ? (r.unit || "") : m.unit;
     const lvT = r.level === "warning" ? "Warning" : "Error";
-    if (r.metric === "service") return `${r.service} หยุด → ${lvT}`;
-    if (r.metric === "process") return `${r.process} ไม่ทำงาน → ${lvT}`;
-    if (r.metric === "port_listen") return `พอร์ต ${r.port} ไม่เปิดรับ → ${lvT}`;
     if (r.metric === "tcp_port") return `ต่อพอร์ต ${r.port} ไม่ได้ → ${lvT}`;
     if (r.metric === "http_url") return `จาก central · ไม่ตอบ / HTTP 4xx-5xx → ${lvT}`;
     if (r.metric === "http_local") return `บนเครื่อง · ไม่ตอบ / HTTP 4xx-5xx → ${lvT}`;
@@ -49,7 +45,7 @@ function rlRender() {
         on.onchange = () => { r.enabled = on.checked; rlSave(`${on.checked ? "เปิด" : "ปิด"}กฎ ${r.name} แล้ว`); };
         const m = rlMetric(r.metric);
         const what = m.label + (r.mount ? ` · ${r.mount}` : "") + (r.metric === "promql" ? ` · ${r.promql}` : "")
-            + (RL_PROC.includes(r.metric) ? ` · ${r.process}` : "") + (["http_url", "http_local"].includes(r.metric) ? ` · ${r.url}` : "") + (r.metric === "docker" ? ` · ${r.container}` : "");
+            + (["http_url", "http_local"].includes(r.metric) ? ` · ${r.url}` : "") + (r.metric === "docker" ? ` · ${r.container}` : "");
         tb.append(el("tr", { class: r.enabled === false ? "off" : "" },
             el("td", {}, on), el("td", {}, el("b", {}, r.name)), el("td", { class: "rlwhat" }, what),
             el("td", {}, rlWhere(r)), el("td", {}, rlCond(r)), el("td", {}, `${r.for_minutes} นาที`),
@@ -86,16 +82,13 @@ function rlChecks(boxId, items, chosen) {
 function rlShowFields() {
     const m = rlMetric($("rl_metric").value);
     document.querySelectorAll("#rlForm .rl-mount").forEach(n => { n.hidden = !m.per_mount; });
-    document.querySelectorAll("#rlForm .rl-service").forEach(n => { n.hidden = m.key !== "service"; });
-    document.querySelectorAll("#rlForm .rl-process").forEach(n => { n.hidden = !RL_PROC.includes(m.key); });
-    document.querySelectorAll("#rlForm .rl-port").forEach(n => { n.hidden = !["port_listen", "tcp_port"].includes(m.key); });
+    document.querySelectorAll("#rlForm .rl-port").forEach(n => { n.hidden = m.key !== "tcp_port"; });
     document.querySelectorAll("#rlForm .rl-url").forEach(n => { n.hidden = !["http_url", "http_local"].includes(m.key); });
     document.querySelectorAll("#rlForm .rl-container").forEach(n => { n.hidden = m.key !== "docker"; });
     document.querySelectorAll("#rlForm .rl-state").forEach(n => { n.hidden = !RL_STATE.includes(m.key); });
     document.querySelectorAll("#rlForm .rl-promql").forEach(n => { n.hidden = m.key !== "promql"; });
     document.querySelectorAll("#rlForm .rl-num").forEach(n => { n.hidden = RL_STATE.includes(m.key); });
     if (RL.editing === null || !RL.rules[RL.editing] || RL.rules[RL.editing].metric !== m.key) $("rl_op").value = m.op || ">";
-    if (m.os === "windows") $("rl_os").value = "windows";
 }
 
 function rlClearErr() {
@@ -107,17 +100,17 @@ function rlOpen(i) {
     const r = i === null ? { metric: "disk", op: ">", for_minutes: 3, notify: true, enabled: true, os: "any" } : RL.rules[i];
     $("rl_title").textContent = i === null ? "กฎใหม่" : `แก้กฎ: ${r.name}`;
     $("rl_name").value = r.name || ""; $("rl_metric").value = r.metric; $("rl_enabled").checked = r.enabled !== false;
-    $("rl_mount").value = r.mount || ""; $("rl_service").value = r.service || "";
-    $("rl_process").value = r.process || ""; $("rl_port").value = r.port || ""; $("rl_url").value = r.url || ""; $("rl_container").value = r.container || ""; $("rl_level").value = r.level || "error";
+    $("rl_mount").value = r.mount || "";
+    $("rl_port").value = r.port || ""; $("rl_url").value = r.url || ""; $("rl_container").value = r.container || ""; $("rl_level").value = r.level || "error";
     $("rl_promql").value = r.promql || ""; $("rl_unit").value = r.unit || "";
     $("rl_op").value = r.op || ">"; $("rl_warn").value = r.warning ?? ""; $("rl_err").value = r.error ?? "";
-    $("rl_for").value = r.for_minutes ?? 3; $("rl_os").value = r.os || "any"; $("rl_notify").checked = r.notify !== false;
+    $("rl_for").value = r.for_minutes ?? 3; $("rl_os").value = r.os === "linux" ? "linux" : "any"; $("rl_notify").checked = r.notify !== false;
     $("rl_msg").value = r.message || "";
     $("rl_teams").value = "";
     $("rl_teams_hint").textContent = r.teams_url_set ? `ตั้งไว้แล้ว: ${r.teams_url_hint} · ใส่ - เพื่อลบ (กลับไปใช้ช่องหลัก)`
         : RL.data.main_url_set ? "ตอนนี้ใช้ช่องหลัก" : "ยังไม่มีช่องหลัก: ใส่ URL ที่นี่ หรือตั้งในการ์ด Notifications";
     rlTeamsShow();
-    rlChecks("rl_targets", (RL.data.targets || []).map(t => ({ value: t.name, label: `${t.name}${t.os === "windows" ? " (Win)" : ""}` })), r.targets || []);
+    rlChecks("rl_targets", (RL.data.targets || []).map(t => ({ value: t.name, label: t.name })), r.targets || []);
     rlChecks("rl_groups", (RL.data.groups || []).map(g => ({ value: g, label: g })), r.groups || []);
     rlShowFields(); rlClearErr(); $("rl_pv").textContent = "";
     $("rlForm").hidden = false;
@@ -134,9 +127,7 @@ function rlRead() {
     };
     if (RL.editing !== null) r.id = RL.rules[RL.editing].id;
     if (rlMetric(m).per_mount) r.mount = $("rl_mount").value.trim();
-    if (m === "service") r.service = $("rl_service").value.trim();
-    if (RL_PROC.includes(m)) r.process = $("rl_process").value.trim();
-    if (m === "port_listen" || m === "tcp_port") r.port = $("rl_port").value.trim();
+    if (m === "tcp_port") r.port = $("rl_port").value.trim();
     if (m === "http_url" || m === "http_local") r.url = $("rl_url").value.trim();
     if (m === "docker") r.container = $("rl_container").value.trim();
     if (RL_STATE.includes(m)) r.level = $("rl_level").value;

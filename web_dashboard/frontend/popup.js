@@ -1,10 +1,10 @@
 /* =====================================================================
-   popup.js - ป๊อปอัปแจ้งเตือนมุมขวาล่าง (แบบ Windows toast) ทุกหน้า · ขึ้นเองอัตโนมัติ
+   popup.js - ป๊อปอัปแจ้งเตือนมุมขวาล่าง (แบบ toast) ทุกหน้า · ขึ้นเองอัตโนมัติ
      ข้อมูล: GET /api/events?kind=system&since=<ล่าสุด> ทุก 15 วินาที (puller เขียน data/state/events.log)
      เรื่องที่แจ้ง = เหมือน Teams: "ส่งเมื่อ" ในการ์ด Notifications (Down / Error / Warning / กลับปกติ / ติดตั้ง-ถอนโปรแกรม)
                     + Custom alert rules / Apps & Web ที่ติ๊ก "ส่ง Teams" (เหมือนการ์ด Teams)
      เปิด / ปิด: Settings > Notifications > "ป๊อปอัปบนหน้าเว็บ" (GET /api/popup-settings ทุก role อ่านได้)
-     แจ้งเตือนของ Windows (desktop): ติ๊กใน Settings > Notifications (จำต่อ browser · ต้อง https:// หรือ localhost)
+     แจ้งเตือนของระบบ (desktop): ติ๊กใน Settings > Notifications (จำต่อ browser · ต้อง https:// หรือ localhost)
      ไม่แสดงของเก่าก่อนเปิดหน้า · หลายแท็บใช้เวลาล่าสุดร่วมกัน (ไม่เด้งซ้ำ)
    ใช้ใน index.html / apps.html / events.html / settings.html (ต่อจาก badges.js)
    ===================================================================== */
@@ -14,13 +14,13 @@
     const K_LAST = "cm.popup.last", K_OS = "cm.popup.os";
     const LV = {
         down: ["🔴", "Down", "bad"], error: ["🔴", "Error", "bad"], warning: ["🟡", "Warning", "wr"],
-        recovered: ["🟢", "กลับมาปกติ", "ok"], info: ["💿", "Software", "info"],
+        recovered: ["🟢", "กลับมาปกติ", "ok"],
     };
     const get = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
     const set = (k, v) => { try { localStorage.setItem(k, String(v)); } catch (e) { /* ignore */ } };
     const osOn = () => get(K_OS, "0") === "1" && "Notification" in window && Notification.permission === "granted";
     const esc = v => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    let cfg = { enabled: true, levels: ["down", "error", "warning", "recovered", "checks", "software"] }, cfgAt = 0;
+    let cfg = { enabled: true, levels: ["down", "error", "warning", "recovered", "checks"] }, cfgAt = 0;
     let last = Math.max(Number(get(K_LAST, "0")) || 0, Date.now() / 1000 - 5);
     set(K_LAST, last);
 
@@ -37,8 +37,7 @@
     function wanted(e) {
         if (!LV[e.level] || e.notify === false) return false;
         if (e.rule) return true;                                       // Custom alert rules / Apps & Web: แจ้งเสมอ
-        const kind = e.source === "software" ? "software" : e.level;
-        return (cfg.levels || []).includes(kind);
+        return (cfg.levels || []).includes(e.level);
     }
     /* Priority -> ป๊อปอัปแสดงนานเท่าไร (ms) · 0 = ค้างจนกดปิด · null = ไม่ขึ้นป๊อปอัป (ยังส่ง Teams / บันทึก log ตามปกติ) */
     function showMs(e, cls) {
@@ -107,7 +106,7 @@
     setInterval(poll, POLL_MS);
     setTimeout(poll, 3000);
 
-    /* ให้หน้า Settings ใช้: เปิด/ปิดแจ้งเตือนของ Windows + ทดลอง */
+    /* ให้หน้า Settings ใช้: เปิด/ปิดแจ้งเตือนของระบบ + ทดลอง */
     window.cmPopup = {
         osOn,
         async setOs(want) {

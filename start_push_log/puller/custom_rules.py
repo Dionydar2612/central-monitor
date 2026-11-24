@@ -4,29 +4,26 @@ custom_rules.py - กฎแจ้งเตือนที่ผู้ใช้�
 
 puller.yaml
     alert_rules:
-      - id: disk-d-host-window          # สร้างให้อัตโนมัติจากชื่อ
-        name: Disk D ของ host-window
+      - id: disk-data-web-01            # สร้างให้อัตโนมัติจากชื่อ
+        name: Disk /data ของ web-01
         enabled: true
         metric: disk                    # ดู METRICS ด้านล่าง หรือ promql
-        mount: "D:"                     # (disk / disk_free_gb / disk_latency) เว้นว่าง = ทุกไดรฟ์
-        service: ""                     # (service) ชื่อ service ของ Windows
-        process: ""                     # (process / process_cpu / process_mem) ชื่อโปรแกรม เช่น sqlservr (ไม่ต้องมี .exe)
-        port: 0                         # (port_listen / tcp_port) หมายเลขพอร์ต
+        mount: "/data"                  # (disk / disk_free_gb / disk_latency) เว้นว่าง = ทุก mount
+        port: 0                         # (tcp_port) หมายเลขพอร์ต
         url: ""                         # (http_url) เช่น http://{host}:8080/health  ({host} = Host ของเครื่อง)
                                         # (http_local) เช่น http://localhost:8080/health  ตรวจจากในเครื่องเอง
         container: ""                   # (docker) ชื่อ container
         level: error                    # (กฎแบบ "หยุด / ไม่ตอบ") ระดับเมื่อผิดปกติ: error / warning
         promql: ""                      # (promql) ใช้ $labels แทนตัวเลือกเครื่อง เช่น node_load1{$labels}
         unit: ""                        # (promql) หน่วยที่แสดง
-        targets: [host-window]          # เว้นว่าง = ทุกเครื่อง
+        targets: [web-01]               # เว้นว่าง = ทุกเครื่อง
         groups: []                      # เฉพาะกลุ่ม (รวมกลุ่มย่อย)
-        os: any                         # any / windows / linux
         op: ">"                         # ">" ยิ่งมากยิ่งแย่ · "<" ยิ่งน้อยยิ่งแย่
         warning: 85
         error: 95                       # ใส่อย่างใดอย่างหนึ่งก็ได้
         for_minutes: 10                 # ต้องเกินต่อเนื่องนานเท่านี้ถึงแจ้ง
         notify: true                    # ส่ง Microsoft Teams
-        message: ""                     # ข้อความบนการ์ดของกฎนี้ (ว่าง = ใช้แบบทั้งระบบ) เช่น "{icon} {machine} · D: เหลือ {value}{unit}"
+        message: ""                     # ข้อความบนการ์ดของกฎนี้ (ว่าง = ใช้แบบทั้งระบบ) เช่น "{icon} {machine} · /data เหลือ {value}{unit}"
 
 แต่ละกฎ = sensor ชนิด "custom" ของแต่ละเครื่อง (และแต่ละไดรฟ์ ถ้าเป็นกฎของ disk)
 -> สถานะ / ประวัติปัญหา / Acknowledge / System log / Teams เหมือน sensor ปกติ
@@ -61,11 +58,6 @@ METRICS = {
     "tcp_retx": ("TCP retransmit %", "%", False, ">", "any"),
     "packet_loss": ("Ping loss %", "%", False, ">", "any"),
     "net_latency": ("Ping latency ms", "ms", False, ">", "any"),
-    "service": ("Service หยุด (Windows)", "", False, ">", "windows"),
-    "process": ("โปรแกรมไม่ทำงาน (Windows)", "", False, ">", "windows"),
-    "process_cpu": ("CPU % ของโปรแกรม (Windows)", "%", False, ">", "windows"),
-    "process_mem": ("RAM ของโปรแกรม MB (Windows)", "MB", False, ">", "windows"),
-    "port_listen": ("พอร์ตไม่เปิดรับบนเครื่อง (Windows)", "", False, ">", "windows"),
     "tcp_port": ("พอร์ตเชื่อมต่อจาก central ไม่ได้", "", False, ">", "any"),
     "http_url": ("เว็บของโปรแกรมไม่ตอบ (HTTP จาก central)", "", False, ">", "any"),
     "http_local": ("เว็บบนเครื่องไม่ตอบ (localhost)", "", False, ">", "any"),
@@ -78,18 +70,9 @@ _EXPR_KEY = {"cpu": "cpu", "memory": "memory", "mem_available": "mem_available",
 
 
 # กฎแบบ "หยุด / ไม่ตอบ": ไม่มีเกณฑ์ตัวเลข ผิดปกติ = ระดับที่เลือก (level)
-STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker")
+STATE_METRICS = ("tcp_port", "http_url", "http_local", "docker")
 TCP_TIMEOUT = 5
 HTTP_TIMEOUT = 10
-
-
-def proc_regex(name):
-    """ชื่อโปรแกรม -> regex ของ label process ใน windows_exporter (ไม่มี .exe, ไม่สนตัวพิมพ์)"""
-    n = str(name or "").strip()
-    if n.lower().endswith(".exe"):
-        n = n[:-4]
-    rx = "(?i)" + re.sub(r"([.\\+*?^$()\[\]{}|])", r"\\\1", n)
-    return rx.replace("\\", "\\\\").replace('"', '\\"')        # อยู่ใน "..." ของ PromQL -> \ ต้องเป็น \\
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +81,6 @@ def proc_regex(name):
 #   host = localhost / 127.0.0.1 / ::1 -> ตรวจบนเครื่อง (http_local)   อย่างอื่น -> ตรวจจาก central (http_url)
 # ---------------------------------------------------------------------------
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
-PROBE_STALE = 300               # ผล cm-probe เก่ากว่านี้ = agent อาจหยุดทำงาน
-PROBE_FRESH = 120               # series ที่ไม่มีค่าใหม่เกินนี้ (เทียบกับตัวล่าสุด) = พอร์ตนั้นหายไปแล้ว
 
 
 def normalize_url(value):
@@ -147,51 +128,6 @@ def migrate_rule(r):
 def up_code(code):
     """2xx / 3xx = ทำงาน · 4xx / 5xx / 0 (ไม่ตอบ) = ไม่ทำงาน"""
     return 200 <= int(code or 0) < 400
-
-
-def probe_ports(query, labels, keep=PROBE_FRESH):
-    """ผล cm-probe ล่าสุดของเครื่อง Windows -> [{port, scheme, code, ms}] (เฉพาะ series ที่ยังส่งมาอยู่)"""
-    stamps = {(lb.get("port"), lb.get("scheme")): ts for lb, ts in query(f"timestamp(cm_http_local_code{{{labels}}})") or []}
-    if not stamps:
-        return []
-    newest = max(stamps.values())
-    codes = {(lb.get("port"), lb.get("scheme")): v for lb, v in query(f"cm_http_local_code{{{labels}}}") or []}
-    ms = {(lb.get("port"), lb.get("scheme")): v for lb, v in query(f"cm_http_local_ms{{{labels}}}") or []}
-    out = []
-    for k, ts in stamps.items():
-        if ts < newest - keep or k not in codes or not str(k[0] or "").isdigit():
-            continue
-        out.append({"port": int(k[0]), "scheme": k[1] or "http", "code": int(codes[k]),
-                    "ms": round(ms[k]) if k in ms else None})
-    return sorted(out, key=lambda x: x["port"])
-
-
-def ports_text(ports, limit=12):
-    web = [str(p["port"]) for p in ports if p["code"]]
-    return (", ".join(web[:limit]) + (" ..." if len(web) > limit else "")) if web else "ไม่พบเว็บบนเครื่อง"
-
-
-def local_web_state(url, query, labels, now=None, rule=None):
-    """Monitor เว็บโหมดบนเครื่อง (Windows / cm-probe) -> (ผิดปกติ?, ข้อความ, ms, หน่วย, ที่มา)
-    ผิดปกติ = None -> ยังบอกไม่ได้ (สถานะ unknown) เช่น agent ยังไม่ส่ง / ผลเก่า / URL ไม่มีพอร์ต"""
-    now = now or time.time()
-    q = f"max_over_time(cm_probe_timestamp_seconds{{{labels}}}[1d])"
-    rows = query(q) or []
-    if not rows:
-        return (None, "agent ยังไม่ส่งผลตรวจเว็บ · ติดตั้ง agent ซ้ำ (Settings > เครื่อง > Download zip + Make command)",
-                None, "", q)
-    age = now - rows[0][1]
-    if age > PROBE_STALE:
-        return None, f"ผลตรวจจากเครื่องล่าสุด {int(age // 60)} นาทีที่แล้ว · ตรวจว่า agent ยังทำงานอยู่", None, "", q
-    ports = probe_ports(query, labels)
-    port = url_port(url)
-    if port is None:
-        return None, f"{url} ไม่ได้ระบุพอร์ต · แก้ไข Monitor แล้วเลือกพอร์ต (พอร์ตที่พบ: {ports_text(ports)})", None, "", q
-    hit = next((p for p in ports if p["port"] == port), None)
-    q = f'cm_http_local_code{{{labels},port="{port}"}}'
-    if hit is None:
-        return True, f"ไม่พบเว็บที่พอร์ต {port} บนเครื่องนี้ · พอร์ตที่พบ: {ports_text(ports)}", None, "", q
-    return web_result(url, hit["code"], hit["ms"], rule) + (q, {"code": hit["code"], "ms": hit["ms"]})
 
 
 def web_result(url, code, ms, rule=None, body=None, ssl_days_left=None):
@@ -255,12 +191,9 @@ def rules(config):
     return out
 
 
-def applies(rule, target, windows):
-    os_ = str(rule.get("os") or "any")
-    if os_ == "windows" and not windows or os_ == "linux" and windows:
-        return False
-    if METRICS[rule["metric"]][4] == "windows" and not windows:
-        return False
+def applies(rule, target):
+    if str(rule.get("os") or "any") == "windows" or str(target.get("type") or "ssh") == "agent":
+        return False                     # กฎ / เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
     names = [str(x) for x in rule.get("targets") or []]
     groups = [str(x).strip("/") for x in rule.get("groups") or [] if str(x).strip("/")]
     if not names and not groups:
@@ -303,7 +236,7 @@ def _fmt(v):
     return f"{v:.0f}" if abs(v) >= 100 else f"{v:.1f}".rstrip("0").rstrip(".") if abs(v) >= 1 else f"{v:.2f}"
 
 
-def _values(rule, ex, labels, name, windows, query, ping_exprs):
+def _values(rule, ex, labels, name, query, ping_exprs):
     """-> [(ส่วนต่อท้ายชื่อ เช่น "C:" หรือ None, ค่า, PromQL)]"""
     m = rule["metric"]
     if m == "promql":
@@ -317,18 +250,6 @@ def _values(rule, ex, labels, name, windows, query, ping_exprs):
         pq = ping_exprs(name)
         rows = query(pq[m]) or []
         return [(None, rows[0][1], pq[m])] if rows else []
-    if m in ("process_cpu", "process_mem"):
-        name = str(rule.get("process") or "").strip()
-        if not name:
-            return []
-        sel = f'{labels},process=~"{proc_regex(name)}"'
-        if m == "process_cpu":
-            cores = f'count(count by(core) ({{__name__=~"windows_cpu_time_total|windows_cpu_processor_utility_total",{labels}}}))'
-            q = (f'sum(rate({{__name__=~"windows_process_cpu_time(_seconds)?_total",{sel}}}[2m])) * 100 / scalar({cores})')
-        else:
-            q = f"sum(windows_process_working_set_private_bytes{{{sel}}}) / 1048576"
-        rows = query(q) or []
-        return [(None, rows[0][1], q)] if rows else []
     expr = ex.get(_EXPR_KEY.get(m, ""))
     if not expr:
         return []
@@ -347,8 +268,7 @@ def _values(rule, ex, labels, name, windows, query, ping_exprs):
 
 
 # ---------------------------------------------------------------------------
-# เครื่อง Linux: docker + เว็บ localhost ผ่าน SSH (1 คำสั่งต่อเครื่อง ทุก ~1 นาที)
-# เครื่อง Windows: cm-probe.ps1 บนเครื่อง (ทุก 1 นาที) -> cm_docker_container / cm_http_local_code (Prometheus)
+# docker + เว็บ localhost ผ่าน SSH (1 คำสั่งต่อเครื่อง ทุก ~1 นาที)
 # ---------------------------------------------------------------------------
 PROBE_TTL = 55
 _probe_cache = {}
@@ -439,74 +359,26 @@ def _container_state(c):
     return bad, (status or st)
 
 
-def _state(rule, target, labels, query, windows=True, rules=None):
+def _state(rule, target, labels, query, rules=None):
     """กฎแบบ "หยุด / ไม่ตอบ" -> (ผิดปกติ?, ข้อความ, ค่าที่แสดง, หน่วย, ที่มา) หรือ None = ไม่มีข้อมูล (ไม่สร้าง sensor)"""
     m = rule["metric"]
-    if m == "service":
-        svc = str(rule.get("service") or "").strip()
-        if not svc:
-            return None
-        q = f"windows_service_state{{{labels}}} == 1"
-        state = None
-        for lb, _v in query(q) or []:
-            n = lb.get("service") or lb.get("name") or ""
-            if n.lower() == svc.lower():
-                state = lb.get("state")
-                break
-        if state is None:
-            return None                      # ไม่มี service นี้บนเครื่อง
-        return state != "running", f"Service {svc} {'ทำงานอยู่' if state == 'running' else 'หยุดทำงาน (' + str(state) + ')'}", None, "", q
-    if m == "process":
-        name = str(rule.get("process") or "").strip()
-        if not name:
-            return None
-        # มี metric ของ process ของเครื่องนี้ไหม (ไม่มีเลย = agent ไม่ส่ง / ไม่มี collector process -> ไม่เดา)
-        if not query(f"count(windows_process_working_set_private_bytes{{{labels}}})"):
-            return None
-        q = f'count(windows_process_working_set_private_bytes{{{labels},process=~"{proc_regex(name)}"}})'
-        rows = query(q) or []
-        n = int(rows[0][1]) if rows else 0
-        return n == 0, (f"{name} ทำงานอยู่ ({n} process)" if n else f"{name} ไม่ทำงาน"), n, "", q
-    if m == "port_listen":
-        port = int(rule.get("port") or 0)
-        if not query(f"cm_inventory_timestamp_seconds{{{labels}}}"):
-            return None                      # ไม่มีข้อมูลพอร์ตจากเครื่อง (agent รุ่นเก่า)
-        q = f'cm_port_listening{{{labels},port="{port}"}}'
-        rows = query(q) or []
-        who = sorted({lb.get("process") or "?" for lb, _ in rows})
-        return not rows, (f"พอร์ต {port} เปิดรับอยู่ ({', '.join(who)})" if rows else f"พอร์ต {port} ไม่ได้เปิดรับ"), \
-            None, "", q
     if m == "docker":
         cname = str(rule.get("container") or "").strip().lstrip("/")
         if not cname:
             return None
-        if windows:
-            if not query(f"cm_probe_timestamp_seconds{{{labels}}}"):
-                return None                  # agent รุ่นเก่า / ไม่มี cm-probe
-            q = f"cm_docker_container{{{labels}}}"
-            found = None
-            for lb, _v in query(q) or []:
-                if str(lb.get("name") or "").lower() == cname.lower():
-                    found = {"state": str(lb.get("state") or "").lower(), "status": lb.get("status") or "", "image": lb.get("image") or ""}
-                    break
-            if found is None and not query(f"cm_docker_up{{{labels}}} == 1"):
-                return None                  # เครื่องนี้ไม่มี docker / อ่านไม่ได้
-        else:
-            p = linux_probe(target, rules or [rule])
-            if not p or (p.get("docker_error") and not p.get("containers")):
-                return None
-            q = "ssh: docker ps -a"
-            found = p["containers"].get(cname) or next((v for k, v in p["containers"].items() if k.lower() == cname.lower()), None)
-            if found is not None:
-                found = dict(found, stats=(p.get("stats") or {}).get(cname))
+        p = linux_probe(target, rules or [rule])
+        if not p or (p.get("docker_error") and not p.get("containers")):
+            return None
+        q = "ssh: docker ps -a"
+        found = p["containers"].get(cname) or next((v for k, v in p["containers"].items() if k.lower() == cname.lower()), None)
+        if found is not None:
+            found = dict(found, stats=(p.get("stats") or {}).get(cname))
         bad, st = _container_state(found)
         return bad, f"{cname}: {st}", None, "", q, {"container": found or {}}
     if m == "http_local":
         url = normalize_url(rule.get("url"))
         if not url:
             return None
-        if windows:
-            return local_web_state(url, query, labels, rule=rule)
         p = linux_probe(target, rules or [rule])
         if not p or url not in p["http"]:
             return None
@@ -556,25 +428,25 @@ def _state(rule, target, labels, query, windows=True, rules=None):
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """ไม่ตาม redirect: 3xx = เว็บตอบแล้ว (เหมือน cm-probe บนเครื่อง)"""
+    """ไม่ตาม redirect: 3xx = เว็บตอบแล้ว"""
     def redirect_request(self, *a, **k):
         return None
 
 
-def evaluate(target, rule_list, ex, labels, windows, prev_status, hyst, base, query, ping_exprs):
+def evaluate(target, rule_list, ex, labels, prev_status, hyst, base, query, ping_exprs):
     """sensor ของกฎที่ใช้กับเครื่องนี้"""
     name = target["name"]
     out = []
-    mine = [r for r in rule_list if applies(r, target, windows)]
+    mine = [r for r in rule_list if applies(r, target)]
     for r in mine:
         meta = METRICS[r["metric"]]
         unit = str(r.get("unit") or "") if r["metric"] == "promql" else meta[1]
         try:
             if r["metric"] in STATE_METRICS:
-                res = _state(r, target, labels, query, windows, mine)
+                res = _state(r, target, labels, query, mine)
                 vals = [] if res is None else [(None, res[:4], res[4], res[5] if len(res) > 5 else {})]
             else:
-                vals = [(p, v, q, {}) for p, v, q in _values(r, ex, labels, name, windows, query, ping_exprs)]
+                vals = [(p, v, q, {}) for p, v, q in _values(r, ex, labels, name, query, ping_exprs)]
         except Exception as e:
             print(f"[RULE ERROR] {r.get('id')} {name}: {e!r}")
             continue

@@ -24,16 +24,13 @@ sensor ต่อเครื่อง
     ตอนจบเขียน System log "Recovered → OK after 25m (Error · peak 95.2%)"
     -> data/state/incidents.json  เก็บตาม storage.incident_retention (ปริยาย 30d)
 
-เกณฑ์ (puller.yaml -> thresholds: (Linux)  thresholds_windows: (Windows)  targets[].thresholds: เฉพาะเครื่อง)
-    Linux    cpu 75/90 · memory 80/90 · disk 80/90
-    Windows  cpu 80/95 · memory 80/95 · disk 80/90 · RAM ว่าง <20/<10 %
-    ทั้งคู่   disk latency 20/50 ms · packet loss 1/5 % · ping latency 100/250 ms  (warning/error)
+เกณฑ์ (puller.yaml -> thresholds:  targets[].thresholds: เฉพาะเครื่อง)
+    cpu 75/90 · memory 80/90 · disk 80/90
+    disk latency 20/50 ms · packet loss 1/5 % · ping latency 100/250 ms  (warning/error)
 
 sensor เพิ่มเติม
-    mem_available        RAM ว่างเหลือ % (Windows)
     disk_latency         latency เฉลี่ยต่อ I/O ของไดรฟ์ที่ช้าที่สุด (ms)
     packet_loss / net_latency   ping จาก central (blackbox_exporter, เฉพาะเครื่องที่มี host)
-    service:<ชื่อ>        service สำคัญของ Windows (sensors.critical_services) หยุดทั้งที่ตั้ง Automatic -> Error
     bottleneck:<cpu|memory|disk|network>   ดูหลายค่าพร้อมกัน เกิน >= 2 ค่า = Bottleneck, ค่าเดียว = trend (OK)
 
 ผลลัพธ์
@@ -56,7 +53,6 @@ from config import CHECKPOINT_FILE, STATE_DIR, SYSTEM_DIR, load_config, parse_in
 from events import append_events
 import notify
 import custom_rules
-import software_watch
 
 PROMETHEUS = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 SENSORS_FILE = os.path.join(STATE_DIR, "sensors.json")
@@ -66,11 +62,10 @@ PAUSES_FILE = os.path.join(STATE_DIR, "pauses.json")
 MAX_PAUSES = 5000
 SUMMARY_STATE_FILE = os.path.join(STATE_DIR, "notify_summary.json")       # เวลาที่ส่งสรุปล่าสุด (กันส่งซ้ำ)
 SUMMARY_REQUEST_FILE = os.path.join(STATE_DIR, "notify_summary.request")  # หน้าเว็บกด "ส่งสรุปตอนนี้"
-SOFTWARE_FILE = os.path.join(STATE_DIR, "software.json")                   # รายการโปรแกรมที่จำไว้ + ประวัติ (Windows)
 INTERVAL = 30
 MAX_INCIDENTS = 20000
 
-# เกณฑ์ปริยาย (warning / error)  ปรับได้ที่หน้า Settings > Alerts (puller.yaml thresholds / thresholds_windows)
+# เกณฑ์ปริยาย (warning / error)  ปรับได้ที่หน้า Settings > Alerts (puller.yaml thresholds)
 #   และเฉพาะเครื่องที่ targets[].thresholds
 #   mem_available = "RAM ว่างเหลือ %" ยิ่งต่ำยิ่งแย่ (warning เมื่อต่ำกว่า 20, error ต่ำกว่า 10)
 DEFAULT_THRESHOLDS = {                     # Linux (ค่าเดิม) + ชนิดใหม่
@@ -82,27 +77,14 @@ DEFAULT_THRESHOLDS = {                     # Linux (ค่าเดิม) + ช
     "net_latency": {"warning": 100, "error": 250},      # ms
     "mem_available": {"warning": 20, "error": 10},      # % (ต่ำ = แย่)
 }
-WINDOWS_DEFAULT_THRESHOLDS = {             # ตามสเปก Windows Monitoring
-    "cpu": {"warning": 80, "error": 95},
-    "memory": {"warning": 80, "error": 95},
-    "disk": {"warning": 80, "error": 90},
-    "disk_latency": {"warning": 20, "error": 50},
-    "packet_loss": {"warning": 1, "error": 5},
-    "net_latency": {"warning": 100, "error": 250},
-    "mem_available": {"warning": 20, "error": 10},
-}
 LOW_IS_BAD = ("mem_available",)
 UNITS = {"cpu": "%", "memory": "%", "disk": "%", "disk_latency": "ms", "packet_loss": "%",
          "net_latency": "ms", "mem_available": "%"}
 
-# service สำคัญของ Windows (แจ้งเตือนเมื่อหยุด และตั้งเป็น Automatic)  ปรับได้ที่ sensors.critical_services
-DEFAULT_CRITICAL_SERVICES = ["WinDefend", "wuauserv", "TermService", "Dnscache", "Dhcp", "EventLog"]
-
 # สัญญาณประกอบของ Bottleneck (ค่าคงที่ ไม่ขึ้นกับเครื่อง)
 BOTTLENECK_LIMITS = {
-    "cpu_queue_per_core": 2.0,       # งานที่รอ CPU ต่อ core (Windows: Processor Queue Length / Linux: load1)
-    "pages_input_per_sec": 100.0,    # Windows: หน้าหน่วยความจำที่ต้องอ่านจากดิสก์ (hard fault) ต่อวินาที
-    "swap_pages_per_sec": 100.0,     # Linux: swap in + out ต่อวินาที
+    "cpu_queue_per_core": 2.0,       # งานที่รอ CPU ต่อ core (load1 / cores)
+    "swap_pages_per_sec": 100.0,     # swap in + out ต่อวินาที
     "commit_pct": 90.0,              # committed / commit limit
     "disk_queue": 2.0,               # คำขอที่รอดิสก์
     "disk_busy_pct": 90.0,           # % เวลาที่ดิสก์ไม่ว่าง
@@ -118,13 +100,10 @@ _REAL_FS = (
 )
 _LINUX_DISK = 'device!~"(loop|ram|fd|sr|dm-).*"'
 _LINUX_DEV = 'device!~"(lo|veth.*|docker.*|br-.*|virbr.*|cni.*|flannel.*|cali.*)"'
-_WIN_VOL = 'volume!~"HarddiskVolume.*|_Total"'
-_WIN_NIC = 'nic!~"(?i).*(isatap|loopback|teredo|pseudo).*"'
 STATUS_TEXT = {"ok": "OK", "warning": "Warning", "error": "Error", "down": "Down",
                "paused": "Paused", "unknown": "Unknown"}
 RANK = {"ok": 0, "paused": 0, "unknown": 1, "warning": 2, "error": 3, "down": 4}
 PROBLEM = ("warning", "error", "down", "unknown")
-AGENT_TIMEOUT = 180          # วินาที: agent Windows ไม่ส่งสัญญาณนานกว่านี้ = Down
 
 
 # ------------------------------------------------------------------
@@ -161,43 +140,8 @@ def _peak(expr):
 
 
 # ------------------------------------------------------------------
-# PromQL ต่อ OS  (Windows รองรับชื่อ metric ทั้ง windows_exporter >= 0.31 และชื่อเก่า)
+# PromQL (node_exporter)
 # ------------------------------------------------------------------
-
-def _win_exprs(l):
-    cpu = f'{{__name__=~"windows_cpu_time(_seconds)?_total",{l}'
-    total = f'max({{__name__=~"windows_memory_physical_total_bytes|windows_cs_physical_memory_bytes",{l}}})'
-    avail = (f"(max(windows_memory_available_bytes{{{l}}}) or max(windows_memory_physical_free_bytes{{{l}}})"
-             f" or max(windows_os_physical_memory_free_bytes{{{l}}}))")
-    vol = f"{l},{_WIN_VOL}"
-    nic = f"{l},{_WIN_NIC}"
-    ops = f"(rate(windows_logical_disk_reads_total{{{vol}}}[5m]) + rate(windows_logical_disk_writes_total{{{vol}}}[5m]))"
-    busy_t = (f"(rate(windows_logical_disk_read_seconds_total{{{vol}}}[5m]) + "
-              f"rate(windows_logical_disk_write_seconds_total{{{vol}}}[5m]))")
-    cores = f'count(count by(core) ({cpu},mode="idle"}}))'
-    return {
-        "cpu": f'100 - (avg(rate({cpu},mode="idle"}}[5m])) * 100)',
-        "memory": f"(1 - {avail} / {total}) * 100",
-        "mem_available": f"{avail} / {total} * 100",
-        "disk": (f'label_replace((1 - windows_logical_disk_free_bytes{{{vol}}} / windows_logical_disk_size_bytes{{{vol}}})'
-                 f' * 100, "mountpoint", "$1", "volume", "(.*)")'),
-        # latency เฉลี่ยต่อ I/O (ms) ต่อไดรฟ์ เฉพาะไดรฟ์ที่มี I/O >= 1 ครั้ง/วินาที (ไดรฟ์ว่างค่าไม่นิ่ง)
-        "disk_latency_vec": f'label_replace({busy_t} / {ops} * 1000 and {ops} >= 1, "mountpoint", "$1", "volume", "(.*)")',
-        "disk_queue": f"max(windows_logical_disk_requests_queued{{{vol}}})",
-        "disk_busy": f"max(100 - clamp_max(rate(windows_logical_disk_idle_seconds_total{{{vol}}}[5m]), 1) * 100)",
-        "disk_free_gb": (f'label_replace(windows_logical_disk_free_bytes{{{vol}}} / 1e9, "mountpoint", "$1", "volume", "(.*)")'),
-        "cpu_queue_per_core": f'max({{__name__=~"windows_system_processor_queue(_length)?",{l}}}) / {cores}',
-        "pages_in": f"sum(rate(windows_memory_swap_pages_read_total{{{l}}}[5m]))",
-        "commit_pct": f"max(windows_memory_committed_bytes{{{l}}}) / max(windows_memory_commit_limit_bytes{{{l}}}) * 100",
-        "net_util": (f"max((rate(windows_net_bytes_received_total{{{nic}}}[5m]) > rate(windows_net_bytes_sent_total{{{nic}}}[5m])"
-                     f" or rate(windows_net_bytes_sent_total{{{nic}}}[5m])) / (windows_net_current_bandwidth_bytes{{{nic}}} > 0) * 100)"),
-        "net_errors": (f"sum(rate(windows_net_packets_received_errors_total{{{nic}}}[5m]) + rate(windows_net_packets_outbound_errors_total{{{nic}}}[5m])"
-                       f" + rate(windows_net_packets_received_discarded_total{{{nic}}}[5m]) + rate(windows_net_packets_outbound_discarded_total{{{nic}}}[5m]))"),
-        "net_oq": f"max(windows_net_output_queue_length_packets{{{nic}}})",
-        "tcp_retx": (f"sum(rate(windows_tcp_segments_retransmitted_total{{{l}}}[5m])) / "
-                     f"sum(rate(windows_tcp_segments_sent_total{{{l}}}[5m])) * 100"),
-    }
-
 
 def _linux_exprs(l):
     fs = f"{l},{_REAL_FS}"
@@ -257,13 +201,8 @@ def _merge_thresholds(base, override):
 
 
 def _thresholds(config):
-    """(เกณฑ์ Linux, เกณฑ์ Windows) ทั้งระบบ"""
-    return (_merge_thresholds(DEFAULT_THRESHOLDS, config.get("thresholds")),
-            _merge_thresholds(WINDOWS_DEFAULT_THRESHOLDS, config.get("thresholds_windows")))
-
-
-def _is_windows_target(t):
-    return str(t.get("type") or "ssh") == "agent" or str(t.get("os") or "").lower() == "windows"
+    """เกณฑ์ทั้งระบบ"""
+    return _merge_thresholds(DEFAULT_THRESHOLDS, config.get("thresholds"))
 
 
 def _options(config):
@@ -280,11 +219,7 @@ def _options(config):
         retention = parse_interval((config.get("storage") or {}).get("incident_retention", "30d"))
     except Exception:
         retention = 30 * 86400
-    crit = s.get("critical_services")
-    if not isinstance(crit, list):
-        crit = DEFAULT_CRITICAL_SERVICES
     return {"confirm": confirm, "hyst": hyst, "retention": retention, "rules": custom_rules.rules(config),
-            "critical_services": [str(x) for x in crit if str(x).strip()],
             "bottleneck": s.get("bottleneck", True) is not False}
 
 
@@ -582,9 +517,8 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     """ค่าดิบของทุก sensor ของเครื่อง (status = ระดับจากค่าตอนนี้ ยังไม่ผ่านการยืนยัน N รอบ)"""
     name = t["name"]
     hyst = opts["hyst"]
-    windows = _is_windows_target(t)
-    th = _merge_thresholds(global_th[1] if windows else global_th[0], t.get("thresholds"))
-    base = {"web": name, "host": t.get("host"), "group": t.get("group") or "", "os": "windows" if windows else "linux"}
+    th = _merge_thresholds(global_th, t.get("thresholds"))
+    base = {"web": name, "host": t.get("host"), "group": t.get("group") or "", "os": "linux"}
     prom = t.get("prometheus") or {}
     labels = f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
     out = []
@@ -608,31 +542,15 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         add("availability", "availability", "Availability", "paused", unit="", message=f"Paused: {reason}" if reason else "Paused by user")
         return out
 
-    agent = str(t.get("type") or "ssh") == "agent"
-    if agent:
-        # Windows agent: สัญญาณทุก 30 วินาที + metrics แบบ windows_exporter ผ่าน remote write
-        labels = f'cm_web="{name}"'
-        # push: fluentbit_uptime ที่ agent ส่งมา · pull (agent.mode: pull): Prometheus ดึง windows_exporter ได้ (up == 1)
-        age = _one(f'time() - max(timestamp({{__name__=~"fluentbit_uptime.*",{labels}}} or (up{{{labels}}} == 1)))')
-        pull = (t.get("agent") or {}).get("mode") == "pull"
-        if age is None or age > AGENT_TIMEOUT:
-            add("availability", "availability", "Availability", "down", unit="",
-                message=(f"central cannot read windows_exporter at {(t.get('agent') or {}).get('exporter')} "
-                         "(machine off, service cm-exporter stopped, or Windows Firewall / network blocks port 9182)") if pull else
-                        "agent is not sending data (service cm-agent stopped, machine off, or port 4318 blocked)")
-            return out
-        add("availability", "availability", "Availability", "ok", unit="",
-            message=f"central pulling windows_exporter ({age:.0f}s ago)" if pull else f"Agent sending ({age:.0f}s ago)")
-    else:
-        up = _one(f'up{{web="{name}"}}')
-        if up is None:
-            up = _one(f"up{{{labels}}}")
-        if up != 1:
-            add("availability", "availability", "Availability", "down", unit="",
-                message="node_exporter is not responding (machine down or port 9100 blocked)")
-            return out
-        add("availability", "availability", "Availability", "ok", unit="", message="Up")
-    ex = _win_exprs(labels) if windows and agent else _linux_exprs(labels)
+    up = _one(f'up{{web="{name}"}}')
+    if up is None:
+        up = _one(f"up{{{labels}}}")
+    if up != 1:
+        add("availability", "availability", "Availability", "down", unit="",
+            message="node_exporter is not responding (machine down or port 9100 blocked)")
+        return out
+    add("availability", "availability", "Availability", "ok", unit="", message="Up")
+    ex = _linux_exprs(labels)
 
     # --- CPU / Memory / Disk usage ---
     cpu = _one(ex["cpu"])
@@ -648,12 +566,6 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         message=_limit_msg("memory used", mem, th["memory"], st, mem_pk) if mem is not None else "no data")
 
     mem_av = None
-    if windows:
-        mem_av = _one(ex["mem_available"])
-        if mem_av is not None:
-            st = _grade(mem_av, th["mem_available"], prev("mem_available"), hyst, low=True)
-            add("mem_available", "mem_available", "Available RAM", st, mem_av, query=ex["mem_available"],
-                message=_limit_msg("RAM available", mem_av, th["mem_available"], st, low=True))
 
     peaks = {m.get("mountpoint"): v for m, v in (_query(_peak(ex["disk"])) or [])}
     seen = set()
@@ -697,22 +609,16 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
                 add("net_latency", "net_latency", "Network latency (ping)", "error", None, unit="ms",
                     message="no ping reply in 5m")
 
-    # --- Critical services (Windows) ---
-    if windows and agent:
-        out.extend(_service_sensors(t, labels, opts, add_base=base))
-
     # --- Bottleneck ---
     if opts["bottleneck"]:
-        _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, windows, add)
+        _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, add)
 
     # --- กฎแจ้งเตือนที่ผู้ใช้สร้างเอง (Settings > Custom alert rules) ---
     if opts.get("rules"):
         out.extend(custom_rules.evaluate(
-            t, opts["rules"], ex, labels, windows,
+            t, opts["rules"], ex, labels,
             lambda sid: (previous.get(sid) or {}).get("status"), hyst, base, _query, _ping_exprs))
 
-    if agent:
-        return out                       # agent ไม่ใช้ SSH -> ไม่มี sensor Log pull
     last = _last_contact(name, checkpoints)
     if last is None:
         add("logpull", "logpull", "Log pull (SSH)", "warning", unit="",
@@ -728,46 +634,7 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     return out
 
 
-def _service_sensors(t, labels, opts, add_base):
-    """service สำคัญ: หยุด + ตั้ง Automatic -> Error   ไม่มีบนเครื่อง -> ไม่สร้าง sensor"""
-    wanted = t.get("critical_services")
-    if not isinstance(wanted, list):
-        wanted = opts["critical_services"]
-    if not wanted:
-        return []
-    state = {}
-    for m, _ in _query(f"windows_service_state{{{labels}}} == 1") or []:
-        n = m.get("service") or m.get("name")
-        if n:
-            state[n.lower()] = (n, m.get("state"))
-    mode = {}
-    for m, _ in _query(f"windows_service_start_mode{{{labels}}} == 1") or []:
-        n = m.get("service") or m.get("name")
-        if n:
-            mode[n.lower()] = m.get("start_mode")
-    if not state:
-        return []                        # ไม่มีข้อมูล service (collector ปิด) -> ไม่เดา
-    out = []
-    for svc in wanted:
-        key = str(svc).lower()
-        if key not in state:
-            continue
-        real, st = state[key]
-        sm = mode.get(key)
-        if st == "running":
-            status, msg = "ok", f"running ({sm or 'start mode ?'})"
-        elif sm in ("auto", "boot", "system") or sm is None:
-            status, msg = "error", f"{st} - start mode {sm or 'unknown'} (ควรทำงานอยู่)"
-        else:
-            status, msg = "ok", f"{st} - start mode {sm} (เริ่มเมื่อมีงาน/ปิดไว้ ไม่ถือเป็นปัญหา)"
-        out.append({**add_base, "id": f"{t['name']}:service:{real}", "kind": "service", "name": f"Service: {real}",
-                    "status": status, "value": None, "unit": "", "peak": None, "message": msg, "mount": None,
-                    "query": None, "details": {"service": real, "state": st, "start_mode": sm},
-                    "low_is_bad": False, "warning": None, "error": None})
-    return out
-
-
-def _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, windows, add):
+def _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, add):
     L = BOTTLENECK_LIMITS
     q = {k: ex.get(k) for k in ("cpu_queue_per_core", "pages_in", "commit_pct", "disk_queue", "disk_busy",
                                 "net_util", "net_errors", "net_oq", "tcp_retx")}
@@ -779,14 +646,13 @@ def _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, 
         "cpu": [
             _signal("CPU usage", cpu, "%", th["cpu"]["warning"], th["cpu"]["error"]),
             _signal("CPU queue per core", val["cpu_queue_per_core"], "", L["cpu_queue_per_core"],
-                    note="Processor Queue Length / cores" if windows else "load1 / cores"),
+                    note="load1 / cores"),
         ],
         "memory": [
             _signal("Memory usage", mem, "%", th["memory"]["warning"], th["memory"]["error"], same="ram"),
             _signal("Available RAM", mem_av, "%", th["mem_available"]["warning"], th["mem_available"]["error"], low=True,
                     same="ram", note="นับรวมกับ Memory usage"),
-            _signal("Pages input/sec" if windows else "Swap pages/sec", val["pages_in"], "/s",
-                    L["pages_input_per_sec"] if windows else L["swap_pages_per_sec"]),
+            _signal("Swap pages/sec", val["pages_in"], "/s", L["swap_pages_per_sec"]),
             _signal("Committed memory", val["commit_pct"], "%", L["commit_pct"]),
         ],
         "disk": [
@@ -981,13 +847,11 @@ def run_once(previous):
     # Priority สูงแจ้งก่อนเสมอ (Teams ส่งตามลำดับ / System log / ป๊อปอัป) แล้วค่อยความรุนแรง
     events.sort(key=lambda e: (-(e.get("priority") or 3), -EVENT_RANK.get(e.get("level"), 0)))
     events = pending_events + events
-    per_target = {t["name"]: _merge_thresholds(th[1] if _is_windows_target(t) else th[0], t.get("thresholds"))
-                  for t in targets}
-    _write(SENSORS_FILE, {"updated_at": now, "thresholds": th[0], "thresholds_windows": th[1], "targets": per_target,
+    per_target = {t["name"]: _merge_thresholds(th, t.get("thresholds")) for t in targets}
+    _write(SENSORS_FILE, {"updated_at": now, "thresholds": th, "targets": per_target,
                           "options": {"confirm_checks": opts["confirm"], "hysteresis": opts["hyst"],
                                       "interval": INTERVAL, "incident_retention": opts["retention"],
-                                      "alert_after_seconds": opts["confirm"] * INTERVAL,
-                                      "critical_services": opts["critical_services"]},
+                                      "alert_after_seconds": opts["confirm"] * INTERVAL},
                           "sensors": sensors})
     if closed or not os.path.exists(INCIDENTS_FILE):
         _save_incidents(closed, opts["retention"], now)
@@ -1006,10 +870,6 @@ def run_once(previous):
         _app_metrics(sensors)
     except Exception as e:
         print(f"[APPMON ERROR] {e!r}")
-    try:
-        _software(targets, config)
-    except Exception as e:
-        print(f"[SOFTWARE ERROR] {e!r}")
     return {s["id"]: s for s in sensors}
 
 
@@ -1036,20 +896,6 @@ def _app_metrics(sensors):
             pm.app_response_ms.labels(**lb).set(float(d["ms"]))
 
 
-def _software(targets, config):
-    """ติดตั้ง / ถอน / อัปเดตโปรแกรม (Windows agent) -> System log + Teams  (ตรวจทุก 5 นาที)"""
-    wins = [(t["name"], f'cm_web="{t["name"]}"') for t in targets
-            if str(t.get("type") or "ssh") == "agent" and not t.get("paused")]
-    groups = {t["name"]: str(t.get("group") or "") for t in targets}
-
-    def changed(web, changes):
-        append_events([{"source": "software", "level": "info", "web": web, "group": groups.get(web, ""),
-                        "sensor": "Software", "message": f"{web} · {software_watch.describe(c)}"} for c in changes])
-        notify.software_event(web, groups.get(web, ""), changes, config)
-
-    software_watch.run(wins, _query, SOFTWARE_FILE, on_changes=changed)
-
-
 def preview_rule(rule):
     """ทดลองกฎ 1 ข้อกับทุกเครื่อง ณ ตอนนี้ (หน้า Settings ปุ่ม Preview) -> [{machine, name, value, unit, status, message}]"""
     config = load_config()
@@ -1059,14 +905,12 @@ def preview_rule(rule):
     for t in config.get("targets") or []:
         if not isinstance(t, dict) or not t.get("name") or t.get("paused"):
             continue
-        windows = _is_windows_target(t)
-        agent = str(t.get("type") or "ssh") == "agent"
-        if not custom_rules.applies(rule, t, windows):
+        if not custom_rules.applies(rule, t):
             continue
         prom = t.get("prometheus") or {}
-        labels = f'cm_web="{t["name"]}"' if agent else f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
-        ex = _win_exprs(labels) if windows and agent else _linux_exprs(labels)
-        rows = custom_rules.evaluate(t, [rule], ex, labels, windows, lambda sid: None, hyst, {}, _query, _ping_exprs)
+        labels = f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
+        ex = _linux_exprs(labels)
+        rows = custom_rules.evaluate(t, [rule], ex, labels, lambda sid: None, hyst, {}, _query, _ping_exprs)
         if not rows:
             out.append({"machine": t["name"], "name": None, "value": None, "unit": "", "status": "nodata",
                         "message": "ไม่มีข้อมูล"})
@@ -1090,10 +934,7 @@ def _summary_extra(targets, start=None, end=None):
         if t.get("paused"):
             continue
         prom = t.get("prometheus") or {}
-        if str(t.get("type") or "ssh") == "agent":
-            ex = _win_exprs(f'cm_web="{t["name"]}"')
-        else:
-            ex = _linux_exprs(f'job="{prom.get("job")}",instance="{prom.get("instance")}"')
+        ex = _linux_exprs(f'job="{prom.get("job")}",instance="{prom.get("instance")}"')
         out[t["name"]] = {
             "io_util": _one(ex["disk_busy"]), "io_max": _one(mx(ex["disk_busy"])),
             "cpu_max": _one(mx(ex["cpu"])), "mem_max": _one(mx(ex["memory"])),

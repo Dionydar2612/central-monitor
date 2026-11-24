@@ -107,27 +107,14 @@ CENTRAL_NODE_JOB = os.getenv("CENTRAL_NODE_JOB", "central")
 CENTRAL_NODE_INSTANCE = os.getenv("CENTRAL_NODE_INSTANCE", "node-exporter:9100")
 
 
-PLATFORMS = ("both", "windows", "linux")
-
-
-def ui_platforms():
-    """รูปแบบการใช้งาน (puller.yaml ui.platforms): windows = ซ่อนส่วนของ Linux · linux = ซ่อนส่วนของ Windows · both (ปริยาย)"""
-    try:
-        with open(CONFIG_FILE, "r") as f:
-            config = yaml.safe_load(f) or {}
-    except Exception:
-        return "both"
-    v = str(((config.get("ui") or {}) if isinstance(config.get("ui"), dict) else {}).get("platforms") or "both").lower()
-    return v if v in PLATFORMS else "both"
-
-
 def load_web_targets():
     """อ่านรายชื่อเครื่อง (targets) จาก puller.yaml  (อ่านใหม่ทุกครั้ง -> แก้แล้วเห็นเลย)"""
     try:
         with open(CONFIG_FILE, "r") as f:
             config = yaml.safe_load(f) or {}
 
-        return config.get("targets", [])
+        # เครื่อง Windows แบบเดิม (type: agent) เลิกรองรับแล้ว -> ไม่แสดง / ไม่ตรวจ (ลบได้ที่ Settings)
+        return [t for t in config.get("targets") or [] if not (isinstance(t, dict) and str(t.get("type") or "ssh") == "agent")]
 
     except Exception as e:
         print(f"[CONFIG ERROR] {e}")

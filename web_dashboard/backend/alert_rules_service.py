@@ -28,11 +28,6 @@ METRICS = {   # key: (ชื่อ, หน่วย, ต่อไดรฟ์?, 
     "tcp_retx": ("TCP retransmit %", "%", False, ">", "any"),
     "packet_loss": ("Ping loss %", "%", False, ">", "any"),
     "net_latency": ("Ping latency ms", "ms", False, ">", "any"),
-    "service": ("Service หยุด (Windows)", "", False, ">", "windows"),
-    "process": ("โปรแกรมไม่ทำงาน (Windows)", "", False, ">", "windows"),
-    "process_cpu": ("CPU % ของโปรแกรม (Windows)", "%", False, ">", "windows"),
-    "process_mem": ("RAM ของโปรแกรม MB (Windows)", "MB", False, ">", "windows"),
-    "port_listen": ("พอร์ตไม่เปิดรับบนเครื่อง (Windows)", "", False, ">", "windows"),
     "tcp_port": ("พอร์ตเชื่อมต่อจาก central ไม่ได้", "", False, ">", "any"),
     "http_url": ("เว็บของโปรแกรมไม่ตอบ (HTTP จาก central)", "", False, ">", "any"),
     "http_local": ("เว็บบนเครื่องไม่ตอบ (localhost)", "", False, ">", "any"),
@@ -40,10 +35,8 @@ METRICS = {   # key: (ชื่อ, หน่วย, ต่อไดรฟ์?, 
     "promql": ("PromQL เอง", "", False, ">", "any"),
 }
 NAME_RE = re.compile(r"^[^\x00-\x1f]{1,60}$")
-STATE_METRICS = ("service", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker")
+STATE_METRICS = ("tcp_port", "http_url", "http_local", "docker")
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")   # ไม่มีเกณฑ์ตัวเลข ผิดปกติ = level
-PROCESS_RE = re.compile(r"^[A-Za-z0-9_.+ ()-]{1,80}$")
-SERVICE_RE = re.compile(r"^[A-Za-z0-9_.$@ -]{1,80}$")
 MOUNT_RE = re.compile(r"^[^\x00-\x1f\"']{1,120}$")
 
 
@@ -72,8 +65,9 @@ def list_rules(user=None, role="admin"):
         r["owner"] = str(r.get("owner") or "")
         r["can_edit"] = can_edit(r, user, role)
     targets = [{"name": t.get("name"), "group": t.get("group") or "", "host": t.get("host") or "",
-                "os": "windows" if str(t.get("type") or "") == "agent" else "linux"}
-               for t in targets_service._plain(doc.get("targets") or []) if isinstance(t, dict) and t.get("name")]
+                "os": "linux"}
+               for t in targets_service._plain(doc.get("targets") or [])
+               if isinstance(t, dict) and t.get("name") and str(t.get("type") or "ssh") != "agent"]
     groups = sorted({t["group"] for t in targets if t["group"]})
     return {"rules": rules, "me": user or "", "role": role, "metrics": _catalog(), "main_url_set": bool(notify_service.main_url()), "targets": targets, "groups": groups,
             "template_keys": ["icon", "machine", "group", "host", "sensor", "text", "value", "unit", "threshold",
@@ -148,19 +142,6 @@ def migrate_rule(r):
     return r
 
 
-def _probe_ports_text(targets):
-    """พอร์ตเว็บที่ cm-probe เจอบนเครื่องแรกของกฎ (ใส่ในข้อความ error)"""
-    try:
-        import host_details
-        for t in targets or []:
-            ports = [str(p["port"]) for p in (host_details.probe_ports(t) or {}).get("ports") or [] if p.get("code")]
-            if ports:
-                return " · พอร์ตที่พบบน " + t + ": " + ", ".join(ports[:12])
-    except Exception as e:
-        print(f"[RULES] probe ports: {e!r}")
-    return ""
-
-
 def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None):
     """ตรวจ + จัดรูปกฎ 1 ข้อ -> (rule, errors)"""
     data = data or {}
@@ -189,19 +170,7 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None
         if m and not MOUNT_RE.match(m):
             errors["mount"] = "ชื่อไดรฟ์ / mount ไม่ถูกต้อง"
         rule["mount"] = m
-    if metric == "service":
-        sv = str(data.get("service") or "").strip()
-        if not SERVICE_RE.match(sv):
-            errors["service"] = "ใส่ชื่อ service (เช่น W3SVC, MSSQLSERVER)"
-        rule["service"] = sv
-    if metric in ("process", "process_cpu", "process_mem"):
-        pr = str(data.get("process") or "").strip()
-        if pr.lower().endswith(".exe"):
-            pr = pr[:-4]
-        if not PROCESS_RE.match(pr):
-            errors["process"] = "ใส่ชื่อโปรแกรมตามที่เห็นในแท็บ Processes (เช่น sqlservr, java, w3wp)"
-        rule["process"] = pr
-    if metric in ("port_listen", "tcp_port"):
+    if metric == "tcp_port":
         port = _num(data.get("port"), "port", errors, 1, 65535)
         if port is None and "port" not in errors:
             errors["port"] = "ใส่หมายเลขพอร์ต 1 - 65535"
@@ -212,7 +181,7 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None
             errors["url"] = "ใส่ URL เช่น http://localhost:8090 (บนเครื่อง) หรือ http://{host}:8080/health (จาก central)"
         elif metric == "http_local" and url_port(u) is None and normalize_url(old_web_url or "") != u:
             # Monitor เดิมที่บันทึกไว้แบบไม่มีพอร์ตยังบันทึกผ่าน (การ์ดบอกให้เลือกพอร์ต) ไม่ขวางการบันทึกกฎอื่น
-            errors["url"] = "ใส่พอร์ตของเว็บบนเครื่อง เช่น http://localhost:8090" + _probe_ports_text(data.get("targets"))
+            errors["url"] = "ใส่พอร์ตของเว็บบนเครื่อง เช่น http://localhost:8090"
         elif url_port(u) == -1:
             errors["url"] = "พอร์ตไม่ถูกต้อง (1 - 65535)"
         rule["url"] = u
@@ -251,7 +220,7 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None
     rule["targets"] = [str(x).strip() for x in (data.get("targets") or []) if str(x).strip()][:200]
     rule["groups"] = [str(x).strip().strip("/") for x in (data.get("groups") or []) if str(x).strip().strip("/")][:50]
     os_ = str(data.get("os") or "any")
-    rule["os"] = os_ if os_ in ("any", "windows", "linux") else "any"
+    rule["os"] = os_ if os_ in ("any", "linux") else "any"
 
     if metric not in STATE_METRICS:
         op = str(data.get("op") or meta[3])

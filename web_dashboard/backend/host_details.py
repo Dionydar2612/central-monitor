@@ -3,7 +3,6 @@ host_details.py - รายละเอียดเครื่อง 1 เค�
 ==========================================================================================================
 
 แหล่งข้อมูล: Prometheus อย่างเดียว (PromQL)  ไม่มีค่าสมมติ
-    Windows  windows_exporter (127.0.0.1:9182 บนเครื่อง -> Fluent Bit -> central-agent-gw -> remote write)  label cm_web="<เครื่อง>"
     Linux    node_exporter (Prometheus scrape :9100)                                                      label job/instance
     Ping     blackbox_exporter (icmp) job "ping"                                                          label cm_target="<เครื่อง>"
 
@@ -20,17 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from clients import prom_value, prom_vector
-from metrics_service import (
-    _WIN_NIC,
-    _WIN_VOL,
-    _finite,
-    _is_windows,
-    _labels,
-    get_web_prometheus_config,
-    win_cpu,
-    win_mem_available,
-    win_mem_total,
-)
+from metrics_service import _finite, _labels, get_web_prometheus_config
 
 _LINUX_FS = ('fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|nsfs|autofs|efivarfs|fuse.lxcfs",'
              'mountpoint!~"/(run|snap|var/lib/docker|var/lib/kubelet|var/lib/containerd)(/.*)?"')
@@ -69,9 +58,8 @@ def _by(rows, label, scale=1.0, nd=2):
 def _context(web):
     config = get_web_prometheus_config(web)
     if not config:
-        return None, None
-    labels = _labels(config)
-    return labels, _is_windows(labels)
+        return None
+    return _labels(config)
 
 
 def _ping(web):
@@ -94,108 +82,6 @@ def _ping(web):
 # ---------------------------------------------------------------------------
 # Performance
 # ---------------------------------------------------------------------------
-
-def _win_performance(l):
-    vol = f"{l},{_WIN_VOL}"
-    nic = f"{l},{_WIN_NIC}"
-    q = {
-        "cpu": f'100 - avg(rate({win_cpu(l, "idle")}[5m])) * 100',
-        "cpu_user": f'avg(rate({win_cpu(l, "user")}[5m])) * 100',
-        "cpu_privileged": f'avg(rate({win_cpu(l, "privileged")}[5m])) * 100',
-        "cpu_interrupt": f'sum(avg by(mode) (rate({win_cpu(l, "interrupt|dpc")}[5m]))) * 100',
-        "cores": f'count(count by(core) ({win_cpu(l, "idle")}))',
-        "queue": f'max({{__name__=~"windows_system_processor_queue(_length)?",{l}}})',
-        "ctx": f"sum(rate(windows_system_context_switches_total{{{l}}}[5m]))",
-        "procs": f"max(windows_system_processes{{{l}}})",
-        "threads": f"max(windows_system_threads{{{l}}})",
-        "*core": f'100 - avg by(core) (rate({win_cpu(l, "idle")}[5m])) * 100',
-        "mem_total": win_mem_total(l),
-        "mem_avail": win_mem_available(l),
-        "committed": f"max(windows_memory_committed_bytes{{{l}}})",
-        "commit_limit": f"max(windows_memory_commit_limit_bytes{{{l}}})",
-        "cache": f"max(windows_memory_cache_bytes{{{l}}})",
-        "pages": f"sum(rate(windows_memory_swap_page_operations_total{{{l}}}[5m]))",
-        "pages_in": f"sum(rate(windows_memory_swap_pages_read_total{{{l}}}[5m]))",
-        "faults": f"sum(rate(windows_memory_page_faults_total{{{l}}}[5m]))",
-        "pool_paged": f"max(windows_memory_pool_paged_bytes{{{l}}})",
-        "pool_nonpaged": f"max(windows_memory_pool_nonpaged_bytes{{{l}}})",
-        "*size": f"windows_logical_disk_size_bytes{{{vol}}}",
-        "*free": f"windows_logical_disk_free_bytes{{{vol}}}",
-        "*rd_b": f"rate(windows_logical_disk_read_bytes_total{{{vol}}}[5m])",
-        "*wr_b": f"rate(windows_logical_disk_write_bytes_total{{{vol}}}[5m])",
-        "*rd_ops": f"rate(windows_logical_disk_reads_total{{{vol}}}[5m])",
-        "*wr_ops": f"rate(windows_logical_disk_writes_total{{{vol}}}[5m])",
-        "*rd_lat": (f"rate(windows_logical_disk_read_seconds_total{{{vol}}}[5m]) / "
-                    f"rate(windows_logical_disk_reads_total{{{vol}}}[5m]) * 1000"),
-        "*wr_lat": (f"rate(windows_logical_disk_write_seconds_total{{{vol}}}[5m]) / "
-                    f"rate(windows_logical_disk_writes_total{{{vol}}}[5m]) * 1000"),
-        "*queue_d": f"windows_logical_disk_requests_queued{{{vol}}}",
-        "*busy": f"100 - clamp_max(rate(windows_logical_disk_idle_seconds_total{{{vol}}}[5m]), 1) * 100",
-        "*ro": f"windows_logical_disk_readonly{{{vol}}}",
-        "*fs": f"windows_logical_disk_info{{{vol}}}",
-        "*rx": f"rate(windows_net_bytes_received_total{{{nic}}}[5m])",
-        "*tx": f"rate(windows_net_bytes_sent_total{{{nic}}}[5m])",
-        "*bw": f"windows_net_current_bandwidth_bytes{{{nic}}}",
-        "*err": (f"rate(windows_net_packets_received_errors_total{{{nic}}}[5m]) + "
-                 f"rate(windows_net_packets_outbound_errors_total{{{nic}}}[5m])"),
-        "*disc": (f"rate(windows_net_packets_received_discarded_total{{{nic}}}[5m]) + "
-                  f"rate(windows_net_packets_outbound_discarded_total{{{nic}}}[5m])"),
-        "*oq": f"windows_net_output_queue_length_packets{{{nic}}}",
-        "*nicst": f"windows_net_nic_operation_status{{{nic}}} == 1",
-        "tcp_est": f"sum(windows_tcp_connections_established{{{l}}})",
-        "tcp_fail": f"sum(rate(windows_tcp_connection_failures_total{{{l}}}[5m]))",
-        "tcp_reset": f"sum(rate(windows_tcp_connections_reset_total{{{l}}}[5m]))",
-        "tcp_retx": (f"sum(rate(windows_tcp_segments_retransmitted_total{{{l}}}[5m])) / "
-                     f"sum(rate(windows_tcp_segments_sent_total{{{l}}}[5m])) * 100"),
-    }
-    r = _run(q)
-    total, avail = r["mem_total"], r["mem_avail"]
-    memory = {
-        "total_bytes": total, "available_bytes": avail,
-        "used_bytes": total - avail if total and avail is not None else None,
-        "used_pct": _r((1 - avail / total) * 100) if total and avail is not None else None,
-        "available_pct": _r(avail / total * 100) if total and avail is not None else None,
-        "committed_bytes": r["committed"], "commit_limit_bytes": r["commit_limit"],
-        "committed_pct": _r(r["committed"] / r["commit_limit"] * 100) if r["committed"] and r["commit_limit"] else None,
-        "cache_bytes": r["cache"], "pages_per_sec": _r(r["pages"], 1), "pages_input_per_sec": _r(r["pages_in"], 1),
-        "page_faults_per_sec": _r(r["faults"], 1),
-        "pool_paged_bytes": r["pool_paged"], "pool_nonpaged_bytes": r["pool_nonpaged"],
-    }
-    size, free = _by(r["*size"], "volume", nd=0), _by(r["*free"], "volume", nd=0)
-    maps = {k: _by(r[k], "volume") for k in ("*rd_b", "*wr_b", "*rd_ops", "*wr_ops", "*rd_lat", "*wr_lat",
-                                              "*queue_d", "*busy", "*ro")}
-    fs = {m.get("volume"): m for m, _ in r["*fs"] or []}
-    disks = []
-    for v in sorted(size):
-        s, f = size.get(v), free.get(v)
-        disks.append({
-            "volume": v, "label": (fs.get(v) or {}).get("volume_name") or None,
-            "filesystem": (fs.get(v) or {}).get("filesystem") or None,
-            "size_bytes": s, "free_bytes": f,
-            "used_pct": _r((1 - f / s) * 100) if s and f is not None else None,
-            "read_mbps": _r((maps["*rd_b"].get(v) or 0) / MB) if v in maps["*rd_b"] else None,
-            "write_mbps": _r((maps["*wr_b"].get(v) or 0) / MB) if v in maps["*wr_b"] else None,
-            "read_iops": maps["*rd_ops"].get(v), "write_iops": maps["*wr_ops"].get(v),
-            "read_latency_ms": maps["*rd_lat"].get(v), "write_latency_ms": maps["*wr_lat"].get(v),
-            "queue": maps["*queue_d"].get(v), "busy_pct": maps["*busy"].get(v),
-            "status": None if v not in maps["*ro"] else ("Read-only" if maps["*ro"][v] == 1 else "OK"),
-        })
-    nics = _nics(r, "nic")
-    return {
-        "os": "windows",
-        "cpu": {"usage": _r(r["cpu"]), "user": _r(r["cpu_user"]), "privileged": _r(r["cpu_privileged"]),
-                "interrupt_dpc": _r(r["cpu_interrupt"]), "cores": int(r["cores"]) if r["cores"] else None,
-                "queue_length": _r(r["queue"], 0), "context_switches_per_sec": _r(r["ctx"], 0),
-                "processes": _r(r["procs"], 0), "threads": _r(r["threads"], 0),
-                "per_core": [{"core": k, "usage": v} for k, v in sorted(
-                    _by(r["*core"], "core").items(), key=lambda x: _core_key(x[0]))]},
-        "memory": memory,
-        "disks": disks,
-        "network": nics,
-        "tcp": {"established": _r(r["tcp_est"], 0), "failures_per_sec": _r(r["tcp_fail"], 3),
-                "resets_per_sec": _r(r["tcp_reset"], 3), "retransmit_pct": _r(r["tcp_retx"], 3)},
-    }
-
 
 def _core_key(core):
     try:
@@ -333,10 +219,10 @@ def _linux_performance(l):
 
 
 def performance(web):
-    labels, win = _context(web)
+    labels = _context(web)
     if labels is None:
         return None
-    data = _win_performance(labels) if win else _linux_performance(labels)
+    data = _linux_performance(labels)
     data["web"] = web
     data["ping"] = _ping(web)
     data["generated_at"] = time.time()
@@ -365,94 +251,6 @@ def _clean(v):
     v = (v or "").strip()
     return None if not v or v.lower() in ("not specified", "default string", "to be filled by o.e.m.", "none",
                                           "system serial number", "0", "n/a") else v
-
-
-def _win_hardware(l):
-    # ชื่อ metric: windows_exporter (ใหม่) และตัวเก็บในตัว Fluent Bit (เก่า: windows_cs_*, windows_paging_file_*)
-    r = _run({
-        "*dmi": f"windows_dmi_info{{{l}}}",
-        "*cpu": f"windows_cpu_info{{{l}}}",
-        "*cores": f"windows_cpu_info_core{{{l}}}",
-        "*logical": f"windows_cpu_info_logical_processor{{{l}}}",
-        "logical_old": f"max(windows_cs_logical_processors{{{l}}})",
-        "*l2": f"windows_cpu_info_l2_cache_size_bytes{{{l}}}",
-        "*l3": f"windows_cpu_info_l3_cache_size_bytes{{{l}}}",
-        "freq": f"avg(windows_cpu_core_frequency_hertz{{{l}}})",
-        "cores_rate": f'count(count by(core) ({win_cpu(l, "idle")}))',
-        "mem": win_mem_total(l),
-        "page_limit": f"sum(windows_pagefile_limit_bytes{{{l}}}) or sum(windows_paging_file_limit_megabytes{{{l}}}) * 1048576",
-        "page_free": f"sum(windows_pagefile_free_bytes{{{l}}}) or sum(windows_paging_file_free_megabytes{{{l}}}) * 1048576",
-        "*drive": f"windows_diskdrive_info{{{l}}}",
-        "*drive_size": f"windows_diskdrive_size_bytes{{{l}}}",
-        "*drive_status": f"windows_diskdrive_status{{{l}}} == 1",
-        "*drive_parts": f"windows_diskdrive_partitions{{{l}}}",
-        "*vol_info": f"windows_logical_disk_info{{{l},{_WIN_VOL}}}",
-        "*vol_size": f"windows_logical_disk_size_bytes{{{l},{_WIN_VOL}}}",
-        "*vol_free": f"windows_logical_disk_free_bytes{{{l},{_WIN_VOL}}}",
-        "*nic": f"windows_net_nic_info{{{l}}}",
-        "*nic_bw": f"windows_net_current_bandwidth_bytes{{{l},{_WIN_NIC}}}",
-        "*nic_st": f"windows_net_nic_operation_status{{{l}}} == 1",
-        "*gpu_temp": f"windows_gpu_temperature_celsius{{{l}}}",
-        "*gpu_fan": f"windows_gpu_fan_speed_rpm{{{l}}}",
-        "*thermal": f"windows_thermalzone_temperature_celsius{{{l}}}",
-        "exporter": f"count(windows_exporter_build_info{{{l}}})",
-    })
-    dmi = _first(r["*dmi"])
-    system = {
-        "manufacturer": _clean(dmi.get("system_vendor")),
-        "model": _clean(dmi.get("product_name")),
-        "family": _clean(dmi.get("product_family")),
-        "serial": _clean(dmi.get("product_serial")),
-        "uuid": _clean(dmi.get("product_uuid")),
-        "board": " ".join(x for x in (_clean(dmi.get("board_vendor")), _clean(dmi.get("board_name"))) if x) or None,
-        "bios": " ".join(x for x in (_clean(dmi.get("bios_vendor")), _clean(dmi.get("bios_version"))) if x) or None,
-        "bios_date": _clean(dmi.get("bios_date")),
-    }
-    l2, l3 = _by(r["*l2"], "device_id", nd=0), _by(r["*l3"], "device_id", nd=0)
-    cpus = []
-    for m, _ in r["*cpu"]:
-        dev = m.get("device_id") or m.get("deviceid")
-        # Fluent Bit ในตัว: l2_cache_size / l3_cache_size เป็น KB ใน label
-        l2b = l2.get(dev) or (float(m["l2_cache_size"]) * 1024 if str(m.get("l2_cache_size") or "").isdigit() else None)
-        l3b = l3.get(dev) or (float(m["l3_cache_size"]) * 1024 if str(m.get("l3_cache_size") or "").isdigit() else None)
-        cpus.append({"socket": dev, "name": (m.get("name") or "").strip() or None,
-                     "description": m.get("description"), "l2_bytes": l2b or None, "l3_bytes": l3b or None})
-    cores = sum(v for _, v in r["*cores"]) or None
-    logical = sum(v for _, v in r["*logical"]) or r["logical_old"] or r["cores_rate"]
-    dsize = _by(r["*drive_size"], "device_id", nd=0)
-    dstat = {m.get("device_id"): m.get("status") for m, _ in r["*drive_status"]}
-    dparts = _by(r["*drive_parts"], "device_id", nd=0)
-    drives = [{"device": str(m.get("device_id") or "").replace("\\\\.\\", ""), "model": m.get("model") or m.get("caption"),
-               "size_bytes": dsize.get(m.get("device_id")), "partitions": dparts.get(m.get("device_id")),
-               "status": dstat.get(m.get("device_id"))} for m, _ in r["*drive"]]
-    vinfo = {m.get("volume"): m for m, _ in r["*vol_info"]}
-    vsize, vfree = _by(r["*vol_size"], "volume", nd=0), _by(r["*vol_free"], "volume", nd=0)
-    vols = [{"volume": v, "label": (vinfo.get(v) or {}).get("volume_name") or None,
-             "filesystem": (vinfo.get(v) or {}).get("filesystem") or None, "type": (vinfo.get(v) or {}).get("type") or None,
-             "size_bytes": vsize.get(v), "free_bytes": vfree.get(v)} for v in sorted(vsize)]
-    bw = _by(r["*nic_bw"], "nic", nd=0)
-    nst = {m.get("nic"): m.get("status") for m, _ in r["*nic_st"]}
-    info = {m.get("nic"): m for m, _ in r["*nic"]}
-    names = sorted(set(info) | set(bw))
-    nics = [{"nic": n, "name": (info.get(n) or {}).get("friendly_name"), "mac": (info.get(n) or {}).get("mac"),
-             "speed_mbps": _r(bw[n] * 8 / 1e6, 0) if bw.get(n) else None, "status": nst.get(n)} for n in names]
-    sensors = [{"sensor": f"GPU {m.get('phys') or m.get('luid')}", "type": "Temperature", "value": _r(v, 1), "unit": "°C"}
-               for m, v in r["*gpu_temp"]]
-    sensors += [{"sensor": f"GPU {m.get('phys') or m.get('luid')}", "type": "Fan", "value": _r(v, 0), "unit": "rpm"}
-                for m, v in r["*gpu_fan"]]
-    sensors += [{"sensor": m.get("name") or m.get("zone") or "Thermal zone", "type": "Temperature", "value": _r(v, 1),
-                 "unit": "°C"} for m, v in r["*thermal"] if _finite(v) and v > 0]
-    return {
-        "os": "windows",
-        "exporter": bool(r["exporter"]),
-        "system": system,
-        "cpu": {"models": cpus, "sockets": len(cpus) or None, "cores": int(cores) if cores else None,
-                "logical_processors": int(logical) if logical else None,
-                "frequency_mhz": _r(r["freq"] / 1e6, 0) if r["freq"] else None},
-        "memory": {"total_bytes": r["mem"], "pagefile_bytes": r["page_limit"],
-                   "pagefile_used_bytes": r["page_limit"] - r["page_free"] if r["page_limit"] and r["page_free"] is not None else None},
-        "disk_drives": drives, "volumes": vols, "network_adapters": nics, "sensors": sensors,
-    }
 
 
 def _linux_hardware(l):
@@ -499,10 +297,10 @@ def _linux_hardware(l):
 
 
 def hardware(web):
-    labels, win = _context(web)
+    labels = _context(web)
     if labels is None:
         return None
-    data = _win_hardware(labels) if win else _linux_hardware(labels)
+    data = _linux_hardware(labels)
     data["web"] = web
     return data
 
@@ -510,65 +308,6 @@ def hardware(web):
 # ---------------------------------------------------------------------------
 # System
 # ---------------------------------------------------------------------------
-
-def _win_system(l):
-    # ชื่อ metric: windows_exporter (ใหม่) และตัวเก็บในตัว Fluent Bit (เก่า: windows_cs_hostname, windows_os_timezone,
-    # windows_system_system_up_time)
-    r = _run({
-        "*host": f"windows_os_hostname{{{l}}} or windows_cs_hostname{{{l}}}",
-        "*os": f"windows_os_info{{{l}}}",
-        "install": f"max(windows_os_install_time_timestamp_seconds{{{l}}})",
-        "boot": (f"max(windows_system_boot_time_timestamp{{{l}}}) or max(windows_system_boot_time_timestamp_seconds{{{l}}})"
-                 f" or (time() - max(windows_system_system_up_time{{{l}}}))"),
-        "offset": f"max(windows_time_computed_time_offset_seconds{{{l}}})",
-        "*tz": f"windows_time_timezone{{{l}}} or windows_os_timezone{{{l}}}",
-        "*sync": f"windows_time_clock_sync_source{{{l}}} == 1",
-        "*ntp": f"windows_time_sync_source_info{{{l}}}",
-        "last_sync": f"max(windows_time_sync_last_success_timestamp_seconds{{{l}}})",
-        "*lic": f"windows_license_status{{{l}}} == 1",
-        "upd_pending": f"count(windows_update_pending_info{{{l}}})",
-        "upd_scraped": f"max(windows_update_scrape_timestamp_seconds{{{l}}})",
-        "upd_install": f"max(windows_update_last_installation_success_timestamp_seconds{{{l}}})",
-        "users": f"max(windows_os_users{{{l}}})",
-        "procs": f"max(windows_system_processes{{{l}}}) or max(windows_os_processes{{{l}}})",
-        "threads": f"max(windows_system_threads{{{l}}})",
-        "*addr": f"windows_net_nic_address_info{{{l},{_WIN_NIC}}}",
-        "*mac": f"windows_net_nic_info{{{l}}}",
-        "*exp": f"windows_exporter_build_info{{{l}}}",
-        "*coll_fail": f"windows_exporter_collector_success{{{l}}} == 0",
-        "*fb": f'{{__name__=~"fluentbit_build_info|fluentbit_uptime.*",{l}}}',
-    })
-    host, osi, exp = _first(r["*host"]), _first(r["*os"]), _first(r["*exp"])
-    fb_version = next((m.get("version") for m, _ in r["*fb"] if m.get("version")), None)
-    macs = {m.get("nic"): (m.get("friendly_name"), m.get("mac")) for m, _ in r["*mac"]}
-    addresses = sorted({(m.get("nic"), m.get("address"), m.get("family")) for m, _ in r["*addr"]
-                        if m.get("address") and not str(m.get("address")).startswith(("fe80", "169.254"))},
-                       key=lambda x: (x[0] or "", x[2] != "ipv4", x[1]))
-    build = osi.get("build_number")
-    boot = r["boot"]
-    upd_known = r["upd_scraped"] is not None
-    return {
-        "os": "windows",
-        "hostname": host.get("hostname"), "domain": host.get("domain") or None, "fqdn": host.get("fqdn") or None,
-        "os_name": osi.get("product"), "os_version": osi.get("version"),
-        "build": f"{build}.{osi['revision']}" if build and osi.get("revision") else build,
-        "installation_type": osi.get("installation_type"),
-        "install_time": r["install"], "boot_time": boot, "uptime_seconds": time.time() - boot if boot else None,
-        "timezone": next((m.get("timezone") for m, _ in r["*tz"]), None),
-        "clock_offset_seconds": _r(r["offset"], 3),
-        "clock_source": next((m.get("source") for m, _ in r["*ntp"]), None) or next((m.get("type") for m, _ in r["*sync"]), None),
-        "last_time_sync": r["last_sync"],
-        "license": next((m.get("state") for m, _ in r["*lic"]), None),
-        "updates_pending": int(r["upd_pending"] or 0) if upd_known else None,
-        "updates_last_install": r["upd_install"],
-        "users": _r(r["users"], 0), "processes": _r(r["procs"], 0), "threads": _r(r["threads"], 0),
-        "ip_addresses": [{"nic": (macs.get(n) or (None,))[0] or n, "address": a, "family": f,
-                          "mac": (macs.get(n) or (None, None))[1]} for n, a, f in addresses],
-        "agent": {"collector": "windows_exporter " + exp.get("version") if exp.get("version") else "Fluent Bit (built-in)",
-                  "fluent_bit": fb_version,
-                  "failed_collectors": sorted({m.get("collector") for m, _ in r["*coll_fail"] if m.get("collector")})},
-    }
-
 
 def _linux_system(l):
     r = _run({
@@ -599,10 +338,10 @@ def _linux_system(l):
 
 
 def system(web, target=None):
-    labels, win = _context(web)
+    labels = _context(web)
     if labels is None:
         return None
-    data = _win_system(labels) if win else _linux_system(labels)
+    data = _linux_system(labels)
     data["web"] = web
     if target:
         data.update({"host": target.get("host"), "group": target.get("group") or "",
@@ -610,131 +349,3 @@ def system(web, target=None):
         if not data["ip_addresses"] and target.get("host"):
             data["ip_addresses"] = [{"nic": None, "address": target.get("host"), "family": "configured"}]
     return data
-
-
-# ---------------------------------------------------------------------------
-# Software (Windows): โปรแกรมที่ติดตั้ง / โปรแกรมที่ทำงาน / พอร์ตที่เปิดรับ / ประวัติติดตั้ง-ถอน-อัปเดต
-#   cm_software_installed / cm_port_listening / cm_inventory_timestamp_seconds  <- cm-inventory.ps1 (textfile)
-#   windows_process_*                                                           <- windows_exporter process collector
-#   ประวัติ: data/state/software.json (puller เทียบรายการทุก 5 นาที)
-# ---------------------------------------------------------------------------
-
-SOFTWARE_STATE = "software.json"
-
-
-def _install_date(v):
-    v = str(v or "")
-    return f"{v[6:8]}/{v[4:6]}/{v[:4]}" if re.match(r"^\d{8}$", v) else v
-
-
-def _fresh(rows, keep=60):
-    """timestamp() ของแต่ละ series -> เฉพาะที่ยังส่งมาอยู่ (โปรแกรมที่ถอน / พอร์ตที่ปิด Prometheus ยังเห็นอีก ~5 นาที)"""
-    rows = [(m, v) for m, v in rows or [] if _finite(v)]
-    if not rows:
-        return []
-    newest = max(v for _, v in rows)
-    return [m for m, v in rows if v >= newest - keep]
-
-
-def software(web):
-    labels, win = _context(web)
-    if labels is None:
-        return None
-    if not win:
-        return {"web": web, "supported": False}
-    skip = 'process!~"_Total|Idle"'
-    r = _run({
-        "*inst": f"timestamp(cm_software_installed{{{labels}}})",
-        "*ports": f"timestamp(cm_port_listening{{{labels}}})",
-        "inv": f"max(cm_inventory_timestamp_seconds{{{labels}}})",
-        "probe": f"max(cm_probe_timestamp_seconds{{{labels}}})",
-        "*docker": f"timestamp(cm_docker_container{{{labels}}})",
-        "*http": f"cm_http_local_code{{{labels}}}",
-        "*httpms": f"cm_http_local_ms{{{labels}}}",
-        "*pcount": f"count by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}})",
-        "*pmem": f"sum by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}})",
-        "*pcpu": (f"sum by(process) (rate({{__name__=~\"windows_process_cpu_time(_seconds)?_total\",{labels},{skip}}}[2m]))"
-                  f" * 100 / scalar(count(count by(core) ({{__name__=~\"windows_cpu_time_total|windows_cpu_processor_utility_total\","
-                  f"{labels}}})))"),
-    })
-    installed = sorted(({"name": m.get("name"), "version": m.get("version") or "", "publisher": m.get("publisher") or "",
-                         "installed": _install_date(m.get("installed")), "arch": m.get("arch") or ""}
-                        for m in _fresh(r["*inst"])), key=lambda x: (str(x["name"]).lower(), x["version"]))
-    ports = sorted(({"port": int(m.get("port") or 0), "address": m.get("address") or "", "process": m.get("process") or ""}
-                    for m in _fresh(r["*ports"])), key=lambda x: (x["port"], x["address"]))
-    mem, cpu = _by(r["*pmem"], "process", 1 / MB, 1), _by(r["*pcpu"], "process", 1, 2)
-    listen = {}
-    for p in ports:
-        listen.setdefault(p["process"].lower(), set()).add(p["port"])
-    running = sorted(({"name": m.get("process"), "count": int(v), "mem_mb": mem.get(m.get("process")),
-                       "cpu": cpu.get(m.get("process")),
-                       "ports": sorted(listen.get(str(m.get("process") or "").lower(), ()))}
-                      for m, v in r["*pcount"] or [] if m.get("process")),
-                     key=lambda x: -(x["mem_mb"] or 0))
-    containers = sorted(({"name": m.get("name"), "image": m.get("image") or "", "state": m.get("state") or "",
-                          "status": m.get("status") or ""} for m in _fresh(r["*docker"], 120)),
-                        key=lambda x: (x["state"] == "running", str(x["name"]).lower()))
-    ms = {m.get("port"): v for m, v in r["*httpms"] or []}
-    owner = {str(p["port"]): p["process"] for p in ports}
-    local_http = sorted(({"port": int(m.get("port") or 0), "scheme": m.get("scheme") or "http", "code": int(v),
-                          "ms": _r(ms.get(m.get("port")), 0), "process": owner.get(m.get("port"), "")}
-                         for m, v in r["*http"] or [] if _finite(v)), key=lambda x: x["port"])
-    history = []
-    try:
-        import json
-        import os
-        from settings import STATE_DIR
-        with open(os.path.join(STATE_DIR, SOFTWARE_STATE), encoding="utf-8") as f:
-            history = (json.load(f).get(web) or {}).get("history") or []
-    except (OSError, ValueError):
-        pass
-    unsupported = []
-    if r["inv"] is None:
-        unsupported.append({"item": "Installed software / Listening ports",
-                            "reason": "agent รุ่นนี้ยังไม่ส่งรายการโปรแกรม: ติดตั้ง agent ใหม่ด้วยคำสั่งล่าสุดจากหน้า Settings"})
-    if r["probe"] is None:
-        unsupported.append({"item": "Docker / Web on this machine",
-                            "reason": "agent รุ่นนี้ยังไม่ตรวจ Docker / เว็บบนเครื่อง: รันคำสั่งติดตั้ง agent ซ้ำ (Make command)"})
-    if not running:
-        unsupported.append({"item": "Running programs", "reason": "windows_exporter ไม่ได้เปิด collector process"})
-    return {"web": web, "supported": True, "inventory_time": r["inv"], "probe_time": r["probe"], "containers": containers,
-            "local_http": local_http, "installed": installed, "ports": ports,
-            "running": running, "history": list(reversed(history[-100:])), "unsupported": unsupported}
-
-
-# ---------------------------------------------------------------------------
-# พอร์ตเว็บที่ cm-probe (Windows) เจอล่าสุด -> ปุ่มเลือกพอร์ตในฟอร์ม Monitor เว็บ (GET /api/host/<web>/probe-ports)
-# ---------------------------------------------------------------------------
-
-PROBE_FRESH = 120               # ต้องตรงกับ custom_rules.PROBE_FRESH
-
-
-def probe_ports(web):
-    """{ports: [{port, scheme, code, ms}], probe_time, age, supported}  ซ่อน series ที่ไม่ส่งมาแล้ว"""
-    labels, win = _context(web)
-    if labels is None:
-        return None
-    if not win:
-        return {"web": web, "supported": False, "ports": [], "probe_time": None, "age": None}
-    r = _run({
-        "*ts": f"timestamp(cm_http_local_code{{{labels}}})",
-        "*code": f"cm_http_local_code{{{labels}}}",
-        "*ms": f"cm_http_local_ms{{{labels}}}",
-        "probe": f"max(max_over_time(cm_probe_timestamp_seconds{{{labels}}}[1d]))",
-    })
-    key = lambda m: (m.get("port"), m.get("scheme"))
-    stamps = {key(m): v for m, v in r["*ts"] or [] if _finite(v)}
-    codes = {key(m): v for m, v in r["*code"] or [] if _finite(v)}
-    ms = {key(m): v for m, v in r["*ms"] or [] if _finite(v)}
-    ports = []
-    if stamps:
-        newest = max(stamps.values())
-        for k, ts in stamps.items():
-            if ts < newest - PROBE_FRESH or k not in codes or not str(k[0] or "").isdigit():
-                continue
-            ports.append({"port": int(k[0]), "scheme": k[1] or "http", "code": int(codes[k]),
-                          "ms": round(ms[k]) if k in ms else None})
-    ports.sort(key=lambda x: x["port"])
-    probe = r["probe"]
-    return {"web": web, "supported": True, "ports": ports, "probe_time": probe,
-            "age": round(time.time() - probe) if probe else None}

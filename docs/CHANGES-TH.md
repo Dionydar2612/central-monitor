@@ -1,3 +1,14 @@
+# เพิ่มเติม (24 พ.ย. 2026): เอาส่วนของเครื่อง Windows ออกทั้งหมด (รองรับเฉพาะ Linux)
+- ลบ: `agent/windows/` (ตัวติดตั้ง / สคริปต์ .ps1 / .bat ทั้งหมด), Netstat Monitor, central-agent-gw (:4318),
+  Windows โหมด pull (`puller/agent_logs.py`), ตรวจโปรแกรมติดตั้ง (`software_watch.py`), แท็บรายละเอียดเครื่องแบบ Windows,
+  รูปแบบการใช้งาน Windows / Linux / ทั้งคู่ (install.sh + Settings), เกณฑ์ `thresholds_windows`, `sensors.critical_services`,
+  กฎ / Apps & Web ชนิด service / โปรแกรม / พอร์ตบนเครื่อง, การ์ด Teams หัวข้อ Netstat / Software
+- เครื่อง `type: agent` ที่ยังค้างใน puller.yaml: ไม่ตรวจแล้ว · หน้า Settings แสดง "Windows (เลิกรองรับ)" ให้กด Delete
+- ข้อมูลเดิมใน OpenSearch / Prometheus ไม่ถูกแก้ / ลบ
+- หลัง cm-update: install.sh ลบ container `central-agent-gw` ที่ค้างให้เอง
+
+---
+
 # เพิ่มเติม (19 พ.ย. 2026): รูปแบบการใช้งาน Windows / Linux / ทั้งคู่ · Application Queue จาก log
 - `install.sh` ถามครั้งแรกว่าจะใช้ Windows อย่างเดียว / Linux อย่างเดียว / ทั้งคู่ (`PLATFORMS=` ข้ามการถาม) เก็บที่ puller.yaml `ui.platforms`
   เปลี่ยนได้ที่ Settings (admin) · Windows อย่างเดียว: ซ่อนชนิดเครื่อง Linux, ตัวกรอง OS, Load INFO log · Linux อย่างเดียว: ซ่อน Windows และ Netstat Monitor

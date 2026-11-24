@@ -7,8 +7,8 @@ const $ = id => document.getElementById(id);
 const N = { id: "", tab: "overview", d: null, hist: {}, timer: null };
 const ST = { ok: ["✓", "OK", "ok"], warning: ["!", "Warning", "wr"], error: ["✕", "Error", "cr"], down: ["▼", "Down", "cr"],
              paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"] };
-const KIND = { availability: "Availability (Ping / Agent)", cpu: "CPU Load", memory: "Memory", disk: "Disk Usage", mem_available: "Available RAM",
-               disk_latency: "Disk latency", packet_loss: "Packet loss", net_latency: "Ping latency", service: "Windows service", bottleneck: "Bottleneck",
+const KIND = { availability: "Availability (Ping)", cpu: "CPU Load", memory: "Memory", disk: "Disk Usage",
+               disk_latency: "Disk latency", packet_loss: "Packet loss", net_latency: "Ping latency", bottleneck: "Bottleneck",
                log_pull: "Log pull", rule: "Custom alert rule" };
 
 function esc(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -60,7 +60,7 @@ function renderHead() {
     $("snCrumb").innerHTML = ["Devices", ...path].map(esc).join(" » ") + ` » <a href="/?web=${encodeURIComponent(s.web)}">${esc(s.web)}</a> » ${esc(s.name)}`;
     const canOp = N.role === "operator" || N.role === "admin";
     const toggle = canOp ? `<button type="button" class="sntog" id="snToggle">${s.disabled ? "▶ เปิด sensor" : "⏸ ปิด sensor"}</button>` : "";
-    $("snWho").innerHTML = `<a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b></a>${s.host ? ` · ${esc(s.host)}` : ""}${s.os ? ` · ${esc(s.os === "windows" ? "Windows" : "Linux")}` : ""}${toggle}`;
+    $("snWho").innerHTML = `<a href="/?web=${encodeURIComponent(s.web)}"><b>${esc(s.web)}</b></a>${s.host ? ` · ${esc(s.host)}` : ""}${toggle}`;
     if (canOp) $("snToggle").onclick = toggleSensor;
     const d = N.d;
     const cell = (k, v) => `<div><small>${esc(k)}:</small><b>${v}</b></div>`;

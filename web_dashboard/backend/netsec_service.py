@@ -10,7 +10,6 @@ netsec_service.py - หน้า Network & Security (/network)
 ที่มาของข้อมูล
     Linux   puller/netsec.py ผ่าน SSH ทุกรอบสถานะ (scheduler.interval) -> data/state/system/<เครื่อง>.json "netsec"
             (กด "ดึงใหม่" ในหน้าเว็บ = สั่ง puller ดึงเครื่องนั้นทันที)
-    Windows agent/windows/cm-netsec.ps1 ทุก 15 นาที -> textfile ของ windows_exporter -> Prometheus (cm_net_conn, cm_fw_* ...)
 อ่านอย่างเดียว ไม่แก้ firewall / route บนเครื่อง
 """
 
@@ -19,8 +18,6 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import agent_service
-from clients import prom_vector
 from settings import load_web_targets
 from system_state import SYSTEM_DIR, _load_json
 
@@ -35,68 +32,6 @@ def _private(ip):
         return ipaddress.ip_address(ip).is_private
     except ValueError:
         return False
-
-
-# ------------------------------------------------------------------ Windows (Prometheus textfile)
-
-def _win(web):
-    q = lambda m: prom_vector(f'{m}{{cm_web="{web}"}}')
-    conns = [{"dir": l.get("dir"), "peer": l.get("peer"), "port": _int(l.get("port")), "proc": l.get("proc") or "", "count": int(v)}
-             for l, v in q("cm_net_conn")]
-    listening = [{"proto": "tcp", "address": l.get("address") or "*", "port": _int(l.get("port")), "process": l.get("process") or "",
-                  "local_only": str(l.get("address") or "").startswith("127.") or l.get("address") == "::1"}
-                 for l, v in q("cm_port_listening")]
-    seen, ls = set(), []
-    for x in sorted(listening, key=lambda x: (x["port"] or 0)):
-        k = (x["port"], x["address"])
-        if k not in seen:
-            seen.add(k)
-            ls.append(x)
-    routes = [{"dest": l.get("dest"), "gw": l.get("gw") if l.get("gw") not in ("0.0.0.0",) else "", "if": l.get("if"), "metric": l.get("metric")}
-              for l, v in q("cm_net_route")]
-    routes.sort(key=lambda r: (r["dest"] != "0.0.0.0/0", r["dest"] or ""))
-    addrs = [{"ip": l.get("ip"), "prefix": int(v), "if": l.get("if")} for l, v in q("cm_net_addr")]
-    svc = q("cm_fw_service")
-    profiles = [{"profile": l.get("profile"), "enabled": l.get("enabled") == "1", "in": (l.get("inbound") or "").lower(),
-                 "out": (l.get("outbound") or "").lower()} for l, v in q("cm_fw_profile")]
-    rules = [{"to": f'{l.get("port") or "Any"}/{l.get("proto") or "Any"}', "action": (l.get("action") or "").upper(),
-              "dir": l.get("dir"), "from": l.get("remote") or "Any", "comment": l.get("name") or "",
-              "program": l.get("program") or "", "custom": v == 1} for l, v in q("cm_fw_rule")]
-    running = bool(svc) and svc[0][1] == 1
-    on = [p for p in profiles if p["enabled"]]
-    fw = None
-    if svc or profiles:
-        fw = {"tool": "windows", "status": "active" if running and on else "inactive", "profiles": profiles,
-              "defaults": {"in": on[0]["in"] if on else "", "out": on[0]["out"] if on else ""},
-              "rules": sorted(rules, key=lambda r: (r["action"] != "BLOCK", not r["custom"], r["comment"])),
-              "note": "" if running else "service Windows Firewall (MpsSvc) ไม่ได้ทำงาน -> ไม่มีการกั้นใด ๆ"}
-    failed = prom_vector(f'cm_login_failed_24h{{cm_web="{web}"}}')
-    logins = None
-    if failed:
-        logins = {"source": "Security log 24h", "failed": int(failed[0][1]), "invalid_users": None, "success": None,
-                  "failed_by": sorted([{"ip": l.get("ip") or "-", "user": l.get("user") or "", "count": int(v)} for l, v in q("cm_login_failed_by")],
-                                      key=lambda x: -x["count"]),
-                  "recent_ok": sorted([{"time": v, "user": l.get("user"), "ip": l.get("ip"), "type": l.get("type")} for l, v in q("cm_login_ok")],
-                                      key=lambda x: -x["time"])}
-    has = conns or routes or fw or logins
-    note = ""
-    if not has:
-        # บอกสาเหตุให้ชัด: textfile ใช้ได้ไหม (มีข้อมูล Software ไหม) / windows_exporter ไม่ยอมอ่านไฟล์ / ยังไม่เคยมีข้อมูลเลย
-        err = prom_vector(f'windows_textfile_scrape_error{{cm_web="{web}"}}')
-        files = [l.get("file") for l, v in prom_vector(f'windows_textfile_mtime_seconds{{cm_web="{web}"}}')]
-        if err and err[0][1] == 1:
-            note = ("windows_exporter อ่านไฟล์ใน textfile ไม่ได้ (windows_textfile_scrape_error = 1) · "
-                    "ใช้ cm-netsec.ps1 จาก zip ชุดล่าสุด แล้วดู log: C:\\ProgramData\\central-monitor-agent\\windows_exporter.log")
-        elif files and not any("cm_netsec" in str(f) for f in files):
-            note = (f"เครื่องนี้ส่ง textfile มาแล้ว ({', '.join(sorted(str(f) for f in files if f))}) แต่ยังไม่มี cm_netsec.prom · "
-                    "ตรวจว่ามี scheduled task CentralMonitorNetSec และรันสำเร็จ (Get-ScheduledTaskInfo CentralMonitorNetSec)")
-        elif prom_vector(f'up{{cm_web="{web}"}}') or prom_vector(f'{{__name__=~"windows_cpu_time.*",cm_web="{web}"}}'):
-            note = ("มี metrics ของเครื่องนี้แต่ไม่มีข้อมูล Network & Security · ติดตั้ง cm-netsec.ps1 (zip ชุดล่าสุด) "
-                    "แล้วรอ ~15 นาที · ตรวจบนเครื่อง: curl.exe -s http://127.0.0.1:9182/metrics | findstr cm_fw_profile")
-        else:
-            note = "ไม่มีข้อมูลจากเครื่องนี้เลย (agent / windows_exporter ไม่ได้ส่งมา)"
-    return {"addrs": addrs, "routes": routes, "listening": ls, "connections": sorted(conns, key=lambda c: -c["count"]),
-            "firewall": fw, "logins": logins, "source": "windows", "available": bool(has), "note": note}
 
 
 def _int(v):
@@ -159,9 +94,8 @@ def get_machine(web):
     target = next((t for t in load_web_targets() if t.get("name") == web), None)
     if target is None:
         return None
-    win = agent_service.is_agent(target)
-    d = _win(web) if win else _linux(web)
-    d.update(web=web, os="windows" if win else "linux", host=target.get("host"), group=target.get("group") or "")
+    d = _linux(web)
+    d.update(web=web, os="linux", host=target.get("host"), group=target.get("group") or "")
     names = _ip_index(load_web_targets())
     for c in d["connections"]:
         c["peer_web"] = names.get(c.get("peer"))
@@ -249,13 +183,13 @@ def get_overview():
     targets = [t for t in load_web_targets() if t.get("name") and not t.get("paused")]
     with ThreadPoolExecutor(max_workers=8) as pool:
         snaps = dict(zip([t["name"] for t in targets],
-                         pool.map(lambda t: _win(t["name"]) if agent_service.is_agent(t) else _linux(t["name"]), targets)))
+                         pool.map(lambda t: _linux(t["name"]), targets)))
     idx = _ip_index(targets, snaps)
     edges, ext = {}, {}
     machines = []
     for t in targets:
         name, d = t["name"], snaps[t["name"]]
-        d.update(web=name, os="windows" if agent_service.is_agent(t) else "linux")
+        d.update(web=name, os="linux")
         d["checks"] = _checks(d, t)
         machines.append({"web": name, "os": d["os"], "host": t.get("host"), "group": t.get("group") or "",
                          "available": d.get("available"), **_summary(d), **_primary(d, t.get("host"))})

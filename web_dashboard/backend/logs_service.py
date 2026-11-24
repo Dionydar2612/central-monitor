@@ -50,8 +50,7 @@ import log_ack_service
 from clients import opensearch_request, prometheus_query_range, puller_info_logs
 from fingerprint import fingerprint
 from log_levels import detect_log_level
-from clients import prom_vector
-from metrics_service import WIN_PROMQL, _labels, get_metrics_at_time, get_web_prometheus_config, win_mem_total
+from metrics_service import _labels, get_metrics_at_time, get_web_prometheus_config
 from settings import load_web_targets, resolve_web_name
 from system_state import load_system_snapshot_at
 from timeutil import to_unix
@@ -125,7 +124,7 @@ def _resolve_timestamp(timestamp, body, filename):
 # "ชื่อ log" (ชื่อเรียกที่ตั้งใน Settings > Log = logs[].type) ใช้แสดง / กรองแทนชนิด parser
 #   1. ชื่อไฟล์ buffer มี __=<ชื่อ> (puller รุ่นใหม่ ต่อท้ายให้)            -> ชื่อนั้น
 #   2. log เก่า: เครื่อง + source ตรงกับ logs[] ใน puller.yaml ที่ตั้งชื่อไว้ชื่อเดียว -> ชื่อนั้น
-#   3. ไม่งั้น = ชื่อ source ในชื่อไฟล์ (เช่น auth, eventlog) หรือชนิด parser
+#   3. ไม่งั้น = ชื่อ source ในชื่อไฟล์ (เช่น auth) หรือชนิด parser
 # ไม่แก้ข้อมูลใน OpenSearch (คำนวณตอนแสดงผล)
 # ---------------------------------------------------------------------------
 
@@ -245,8 +244,6 @@ def _light_entry(web, marker, hit):
 _MINUTES_CACHE = {}           # web -> (หมดอายุ, t0, t1, set ของนาทีที่มีข้อมูล)
 MINUTES_TTL = 60
 PRESENCE_QUERY = "count(node_memory_MemTotal_bytes{%s})"
-# Windows (agent): metrics ของ windows_exporter (รองรับชื่อใหม่ / เก่า) label cm_web="<เครื่อง>"
-PRESENCE_QUERY_WINDOWS = 'count({__name__=~"windows_cpu_time_total|windows_cpu_time_seconds_total",%s})'
 METRIC_KEYS = ("cpu", "memory", "disk")       # ต้องมีอย่างน้อย 1 ค่า จึงถือว่า "มี Metrics at time"
 
 
@@ -271,8 +268,7 @@ def _metric_minutes(web, t0, t1):
         start = t0
         while start <= t1:                          # Prometheus รับไม่เกิน 11000 จุดต่อครั้ง
             end = min(t1, start + 10000 * 60)
-            query = PRESENCE_QUERY_WINDOWS if config.get("os") == "windows" else PRESENCE_QUERY
-            res = prometheus_query_range(query % _labels(config), start, end, 60)
+            res = prometheus_query_range(PRESENCE_QUERY % _labels(config), start, end, 60)
             for series in (res.get("data") or {}).get("result", []):
                 minutes.update(int(float(ts)) // 60 for ts, _ in series.get("values", []))
             start = end + 60
@@ -283,13 +279,8 @@ def _metric_minutes(web, t0, t1):
     return minutes
 
 
-def _is_agent(web):
-    return any(t.get("name") == web and str(t.get("type") or "ssh") == "agent" for t in load_web_targets())
-
-
 def _with_metrics(entries, web):
     """เอาเฉพาะ log ที่มี metrics ณ เวลานั้น — log ที่แสดงทุกแถวต้องมี Metrics at time เสมอ
-    ใช้กับทุกเครื่อง รวม Windows (agent: windows_exporter)
     Prometheus ถามไม่ได้และไม่มีผลเก่าใน cache -> ไม่แสดง (เดิมแสดงทั้งหมดแม้ไม่มี metrics)"""
     stamps = [e["_ts"] for e in entries if e.get("_ts")]
     if not stamps:
@@ -610,16 +601,7 @@ def get_log_detail(web, log_id):
     entry["system_events"] = system.get("system_events", [])
     entry["system_snapshot_timestamp"] = system.get("system_timestamp")
 
-    # เครื่อง Windows (agent) ไม่มี snapshot จาก SSH -> ถาม Prometheus (windows_exporter) ณ เวลาของ log แทน
     ts = to_unix(timestamp)
-    config = get_web_prometheus_config(web) or {}
-    if ts and config.get("os") == "windows":
-        labels = _labels(config)
-        if not entry["services"]:
-            entry["services"] = _win_services_at(labels, ts)
-            entry["services_note"] = "Service แบบ Automatic ที่ไม่ได้ทำงาน ณ เวลานั้น (ว่าง = ทำงานครบ)"
-        if not entry["processes"]:
-            entry["processes"] = _win_processes_at(labels, ts)
 
     # ข้อมูลประกอบ: ปัญหานี้เกิดซ้ำแค่ไหน · sensor ที่มีปัญหาตอนนั้น · log อื่นของเครื่องนี้ช่วงเดียวกัน
     try:
@@ -629,30 +611,6 @@ def get_log_detail(web, log_id):
         entry["related"] = {}
 
     return entry
-
-
-def _win_services_at(labels, ts):
-    """service ที่ตั้งเป็น Automatic แต่ไม่ได้ทำงาน ณ เวลา ts"""
-    q = (f'windows_service_state{{{labels},state!="running"}} == 1 '
-         f'and on(service, name) (windows_service_start_mode{{{labels},start_mode=~"auto|auto_delayed|automatic"}} == 1)')
-    out = []
-    for metric, _ in prom_vector(q, ts):
-        name = metric.get("service") or metric.get("name")
-        if name:
-            out.append({"name": name, "status": str(metric.get("state") or "unknown").replace(" ", "-")})
-    return sorted(out, key=lambda x: x["name"].lower())[:30]
-
-
-def _win_processes_at(labels, ts, limit=10):
-    """process ที่ใช้ CPU สูงสุด ณ เวลา ts (+ Memory % ของ process นั้น)"""
-    skip = 'process!~"_Total|Idle"'
-    sel = f'{{__name__=~"windows_process_cpu_time(_seconds)?_total",{labels},{skip}}}'
-    cpu = prom_vector(f"topk({limit}, sum by(process) (rate({sel}[2m])) * 100 / scalar({WIN_PROMQL['cores'](labels)}))", ts)
-    mem = {m.get("process"): v for m, v in prom_vector(
-        f"sum by(process) (windows_process_working_set_private_bytes{{{labels},{skip}}}) * 100 / scalar({win_mem_total(labels)})", ts)}
-    rows = [{"name": m.get("process"), "cpu": round(v, 2), "memory": round(mem[m.get("process")], 2) if m.get("process") in mem else None}
-            for m, v in cpu if m.get("process")]
-    return sorted(rows, key=lambda r: -(r["cpu"] or 0))
 
 
 def _related(web, log_id, body, ts, window=600):

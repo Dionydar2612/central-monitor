@@ -2,10 +2,10 @@
 apps_service.py - หน้า Apps & Web: โปรแกรม / เว็บ / พอร์ต ยังทำงานไหม (มุมมองแบบง่ายของ Custom alert rules)
 =============================================================================================================
 
-แต่ละรายการ = กฎใน puller.yaml alert_rules (metric process / service / http_url / tcp_port / port_listen)
+แต่ละรายการ = กฎใน puller.yaml alert_rules (metric http_url / http_local / tcp_port / docker)
 สถานะมาจาก sensor ชนิด custom ที่ puller ตรวจทุก 30 วินาที (data/state/sensors.json)
     GET    /api/apps[?web=]      รายการ + สรุป
-    POST   /api/apps             {type: program|web|port|service, web, value, name?, local?}  -> สร้างกฎ (admin)
+    POST   /api/apps             {type: web|port|docker, web, value, name?}  -> สร้างกฎ (admin)
     DELETE /api/apps/<rule id>   ลบกฎ (admin)
 """
 
@@ -15,8 +15,7 @@ import alert_rules_service
 import sensors_service
 import targets_service
 
-TYPE_OF = {"process": "program", "service": "service", "http_url": "web", "http_local": "web", "tcp_port": "port",
-           "port_listen": "port", "docker": "docker"}
+TYPE_OF = {"http_url": "web", "http_local": "web", "tcp_port": "port", "docker": "docker"}
 ORDER = {"error": 0, "down": 0, "warning": 1, "unknown": 2, "nodata": 3, "paused": 4, "ok": 5}
 
 
@@ -27,22 +26,11 @@ def _rules():
 
 def _what(r):
     m = r["metric"]
-    if m == "process":
-        return r.get("process") or ""
-    if m == "service":
-        return r.get("service") or ""
     if m in ("http_url", "http_local"):
         return r.get("url") or ""
     if m == "docker":
         return r.get("container") or ""
-    return f"{'บนเครื่อง' if m == 'port_listen' else 'จาก central'} :{r.get('port')}"
-
-
-# ข้อมูลที่ต้องมีจากเครื่อง Windows (agent) ของแต่ละประเภท -> ไม่มี = บอกให้ติดตั้ง agent ซ้ำ
-_NEEDS = {"http_local": ("cm_probe_timestamp_seconds", "ตัวตรวจเว็บบนเครื่อง (cm-probe)"),
-          "docker": ("cm_probe_timestamp_seconds", "ตัวตรวจ Docker (cm-probe)"),
-          "port_listen": ("cm_inventory_timestamp_seconds", "รายการพอร์ต (cm-inventory)"),
-          "process": ("windows_process_working_set_private_bytes", "ข้อมูล process (windows_exporter)")}
+    return f"จาก central :{r.get('port')}"
 
 
 def _why_nodata(rule, targets):
@@ -58,16 +46,9 @@ def _why_nodata(rule, targets):
                 return f"ไม่พบเครื่อง {name} ในหน้า Settings"
             if t.get("paused"):
                 return f"เครื่อง {name} ถูก Pause อยู่"
-            agent = str(t.get("type") or "ssh") == "agent"
             if m in ("http_url", "tcp_port") and "{host}" in str(rule.get("url") or "{host}") and not t.get("host"):
                 return f"เครื่อง {name} ยังไม่มี Host (IP) ในหน้า Settings"
-            if agent and m in _NEEDS:
-                metric, what = _NEEDS[m]
-                from clients import prom_value
-                if prom_value(f'count({metric}{{cm_web="{name}"}})') is None:
-                    return (f"เครื่อง {name} ยังไม่ส่ง{what} · รันคำสั่งติดตั้ง agent ซ้ำบนเครื่อง "
-                            f"(Settings > เครื่อง > Download zip + Make command) แล้วรอ 1-2 นาที")
-            if not agent and m in ("docker", "http_local"):
+            if m in ("docker", "http_local"):
                 return (f"central ยังตรวจผ่าน SSH ไม่ได้ (เครื่องต้องมี curl / user SSH ต้องใช้ docker ได้) หรือ {generic}")
     except Exception as e:
         print(f"[APPS] why {rule.get('id')}: {e!r}")
@@ -168,16 +149,13 @@ def _bytes(v):
 
 
 def _more(item, sel, range_key):
-    from clients import prom_value, prom_vector
+    from clients import prom_value
     import re as _re
     import time as _t
     sensors = sensors_service.load_sensors()
     sn = next((x for x in sensors.get("sensors", []) if x.get("id") == item.get("id")), {}) or {}
     d = sn.get("details") or {}
     web, m = item["web"], item["metric"]
-    target = next((t for t in targets_service.list_targets() if t.get("name") == web), {}) or {}
-    win = str(target.get("type") or "ssh") == "agent"
-    lab = f'cm_web="{web}"'
     facts, tables = [], []
 
     # --- การตรวจ (ทุกประเภท) ---
@@ -188,9 +166,8 @@ def _more(item, sel, range_key):
     upd = sensors.get("updated_at")
     if upd:
         facts.append(["ตรวจล่าสุด", f"{max(0, int(_t.time() - float(upd)))} วินาทีที่แล้ว (ทุก {(sensors.get('options') or {}).get('interval', 30)} วินาที)"])
-    facts.append(["วิธีตรวจ", {"http_url": "central เรียก URL", "tcp_port": "central ต่อพอร์ต", "http_local": "เครื่องเรียก localhost",
-                               "port_listen": "พอร์ตที่เครื่องเปิดรับ", "docker": "docker ps บนเครื่อง", "process": "process บนเครื่อง",
-                               "service": "service บนเครื่อง"}.get(m, m) + (" (agent)" if win else " (SSH)")])
+    facts.append(["วิธีตรวจ", {"http_url": "central เรียก URL", "tcp_port": "central ต่อพอร์ต", "http_local": "เครื่องเรียก localhost (SSH)",
+                               "docker": "docker ps บนเครื่อง (SSH)"}.get(m, m)])
     if sn.get("query"):
         facts.append(["ที่มา", str(sn["query"])[:160]])
     if sn.get("priority"):
@@ -199,10 +176,6 @@ def _more(item, sel, range_key):
     # --- เฉพาะประเภท ---
     if m == "docker":
         c = d.get("container") or {}
-        if win and not c:
-            for lb, _v in prom_vector(f"cm_docker_container{{{lab}}}"):
-                if str(lb.get("name") or "").lower() == str(item["what"]).lower():
-                    c = {"image": lb.get("image"), "state": lb.get("state"), "status": lb.get("status")}
         for k, label in (("image", "Image"), ("state", "State"), ("status", "Status"), ("id", "Container ID"),
                          ("running_for", "สร้างเมื่อ"), ("ports", "Ports"), ("networks", "Networks"), ("mounts", "Mounts"),
                          ("command", "Command")):
@@ -213,45 +186,7 @@ def _more(item, sel, range_key):
             tables.append({"title": "การใช้ทรัพยากร (ตอนตรวจล่าสุด)", "head": ["CPU", "RAM", "RAM %", "Network I/O", "Disk I/O", "Process"],
                            "rows": [[st.get("cpu") or "-", st.get("mem") or "-", st.get("mem_pct") or "-", st.get("net") or "-",
                                      st.get("block") or "-", st.get("pids") or "-"]]})
-    elif m == "process" and win:
-        base = str(item["what"])
-        base = base[:-4] if base.lower().endswith(".exe") else base
-        # PromQL string ไม่รับ \. -> ใช้ [.] แทนอักษรพิเศษ
-        rx = "(?i)" + "".join(ch if ch.isalnum() or ch in " _" else f"[{ch}]" for ch in base) + "([.]exe)?"
-        ps = f'{lab},process=~"{rx}"'
-        cores = prom_value(f'count(count by(core) ({{__name__=~"windows_cpu_time(_seconds)?_total",{lab}}}))') or 1
-        cpu = prom_value(f'sum(rate({{__name__=~"windows_process_cpu_time(_seconds)?_total",{ps}}}[5m])) * 100 / {cores}')
-        mem = prom_value(f"sum(windows_process_working_set_private_bytes{{{ps}}})")
-        if cpu is not None:
-            facts.append(["CPU (5 นาที)", f"{cpu:.1f} %"])
-        if mem is not None:
-            facts.append(["RAM (private)", _bytes(mem)])
-        rows = []
-        for lb, v in sorted(prom_vector(f"windows_process_working_set_private_bytes{{{ps}}}"), key=lambda x: -x[1])[:20]:
-            rows.append([lb.get("process") or "-", lb.get("process_id") or "-", _bytes(v)])
-        if rows:
-            tables.append({"title": f"Process ที่ทำงานอยู่ ({len(rows)})", "head": ["ชื่อ", "PID", "RAM"], "rows": rows})
-    elif m == "service":
-        svc = str(item["what"])
-        if win:
-            q = lambda metric: [lb for lb, v in prom_vector(f'{metric}{{{lab}}}') if str(lb.get("name") or lb.get("service") or "").lower() == svc.lower()]
-            info = q("windows_service_info")
-            if info:
-                for k, label in (("display_name", "ชื่อที่แสดง"), ("run_as", "รันในนาม"), ("path_name", "Path"), ("process", "Process")):
-                    if info[0].get(k):
-                        facts.append([label, info[0][k]])
-            mode = [lb for lb, v in prom_vector(f'windows_service_start_mode{{{lab}}} == 1') if str(lb.get("name") or "").lower() == svc.lower()]
-            if mode:
-                facts.append(["Start mode", mode[0].get("start_mode")])
-        else:
-            import system_state
-            snap = system_state.load_system_snapshot(web)
-            hit = next((x for x in snap.get("services") or [] if str(x.get("name") or x.get("unit") or "").lower().startswith(svc.lower())), None)
-            if hit:
-                for k, v in hit.items():
-                    if v not in (None, "") and k != "name":
-                        facts.append([k, str(v)])
-    if m in ("port_listen", "tcp_port", "http_local", "http_url"):
+    if m in ("tcp_port", "http_local", "http_url"):
         import netsec_service
         port = None
         mt = _re.search(r":(\d+)", str(item["what"]))
@@ -371,7 +306,7 @@ def _build(data, keep=None):
         errors["web"] = "เลือกเครื่อง"
     rule = dict(keep or {"enabled": True, "groups": [], "os": "any", "level": "error", "for_minutes": 2, "notify": True,
                          "message": ""})
-    for k in ("process", "service", "url", "port", "container", "op", "warning", "error"):
+    for k in ("process", "service", "url", "port", "container", "op", "warning", "error"):      # process / service = แบบเดิม
         rule.pop(k, None)
     if typ != "web":
         for k in ("keyword", "slow_ms", "ssl_days"):
@@ -379,14 +314,7 @@ def _build(data, keep=None):
     rule["targets"] = [web]
     if keep is None:
         rule["notify"] = data.get("notify", True) is not False
-    local = data.get("local", True) is not False
-    if typ == "program":
-        rule.update(metric="process", process=value[:-4] if value.lower().endswith(".exe") else value)
-        default = rule["process"]
-    elif typ == "service":
-        rule.update(metric="service", service=value)
-        default = value
-    elif typ == "docker":
+    if typ == "docker":
         rule.update(metric="docker", container=value)
         default = f"docker {value}"
     elif typ == "web":
@@ -403,7 +331,7 @@ def _build(data, keep=None):
         u = urllib.parse.urlsplit(value.replace("{host}", web))
         default = (u.netloc + u.path.rstrip("/")) or value
     elif typ == "port":
-        rule.update(metric="port_listen" if local else "tcp_port", port=value)
+        rule.update(metric="tcp_port", port=value)
         default = f"พอร์ต {value}"
     else:
         return None, {"type": "เลือกประเภท"}
@@ -412,7 +340,7 @@ def _build(data, keep=None):
     rule["name"] = name[:60]
     new, errs = alert_rules_service.clean_rule(rule, keep_id=(keep or {}).get("id"))
     for k, v in errs.items():
-        errors["value" if k in ("process", "service", "url", "port", "container") else k] = v
+        errors["value" if k in ("url", "port", "container") else k] = v
     return rule, errors
 
 
@@ -456,29 +384,13 @@ def delete_app(rule_id):
 
 
 def suggest(web, typ):
-    """ชื่อที่เลือกได้ในฟอร์ม: โปรแกรมที่ทำงาน / พอร์ตที่เปิด / container / service ของเครื่องนี้"""
-    import host_details
-    import system_state
+    """ชื่อที่เลือกได้ในฟอร์ม: พอร์ตที่เครื่องเปิดรับ (จากหน้า Network ของเครื่องนี้)"""
     out = []
     try:
-        if typ in ("program", "port", "docker", "web"):
-            d = host_details.software(web) or {}
-            if typ == "program":
-                out = [p["name"] for p in d.get("running") or []]
-            elif typ == "port":
-                out = [str(p["port"]) for p in d.get("ports") or []]
-            elif typ == "docker":
-                out = [c["name"] for c in d.get("containers") or []]
-            else:
-                out = [f"http://localhost:{w['port']}" for w in d.get("local_http") or [] if w.get("code")]
-        if typ == "service":
-            snap = system_state.load_system_snapshot(web)
-            out = [s.get("name") for s in (snap or {}).get("services") or [] if s.get("name")]
-            if not out:                                  # Windows: จาก windows_exporter
-                from clients import prom_vector
-                labels, win = host_details._context(web)
-                if labels and win:
-                    out = [m.get("name") for m, _ in prom_vector(f"windows_service_state{{{labels}}} == 1") if m.get("name")]
+        if typ == "port":
+            import netsec_service
+            ns = netsec_service.get_machine(web) or {}
+            out = [str(x.get("port")) for x in ns.get("listening") or [] if not x.get("local_only")]
     except Exception as e:
         print(f"[APPS] suggest {web} {typ}: {e!r}")
     return sorted({str(x) for x in out if x}, key=str.lower)[:300]

@@ -40,7 +40,7 @@ from datetime import datetime
 from config import load_config
 import card_templates
 
-ALL_LEVELS = ("down", "error", "warning", "recovered", "checks", "software")
+ALL_LEVELS = ("down", "error", "warning", "recovered", "checks")
 STYLE = {"down": "attention", "error": "attention", "warning": "warning", "recovered": "good", "ok": "good",
          "up": "good", "unknown": "warning"}
 LABEL = {"down": "DOWN", "error": "ERROR", "warning": "WARNING", "recovered": "RECOVERED", "ok": "OK",
@@ -126,7 +126,7 @@ def build_card(title, level, lines, footer=""):
         {"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card}]}
 
 
-COLOR = {"software": "Accent", "down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good", "ok": "Good",
+COLOR = {"down": "Attention", "error": "Attention", "warning": "Warning", "recovered": "Good", "ok": "Good",
          "up": "Good", "unknown": "Warning"}
 CARD_PREFIX = "Central Monitor Notification"
 
@@ -353,18 +353,12 @@ def sensor_events(events, config=None):
             val = None
         th = [f"{n} {'≤' if e.get('low') else '≥'} {_n(e.get(x))}{unit}" for n, x in (("Warning", "warning"), ("Error", "error"))
               if _n(e.get(x)) is not None]
-        if e.get("source") == "netstat":                    # Apps & Web > Netstat
-            cat = "queue" if e.get("netstat_event") == "light" else "netstat"
-            msg = e.get("detail") or e.get("message") or ""
-            status = f"{LABEL.get(k, k)} – {e.get('status_text') or e.get('message') or short_text(k, e)}"
-        else:
-            cat = "rule" if rid else "alert"
-            msg = render(e["template"], ctx).lstrip("🔴🟡🟢 ") if e.get("template") else ""
-            status = f"{LABEL.get(k, k)} – {short_text(k, e)}"
+        cat = "rule" if rid else "alert"
+        msg = render(e["template"], ctx).lstrip("🔴🟡🟢 ") if e.get("template") else ""
+        status = f"{LABEL.get(k, k)} – {short_text(k, e)}"
         cctx = dict(ctx, machine=web, device=_device(web, e.get("host"), e.get("group")), sensor=sensor, status=status,
                     level=LABEL.get(k, k), value=f"{val} {unit}".strip() if val is not None else "",
-                    threshold=" · ".join(th), message=msg, port=e.get("port") or "", output=e.get("output") or "",
-                    time=_time_full())
+                    threshold=" · ".join(th), message=msg, time=_time_full())
         _enqueue(url, card_templates.card(cat, k, cctx, s["cards"], summary), f"{web} {e.get('sensor')} {k}")
 
 
@@ -759,27 +753,6 @@ def maybe_summary(sensors, incidents, state_file, request_file, config=None, ext
         os.replace(tmp, state_file)
     for n, p in enumerate(payloads, 1):
         _enqueue(s["url"], p, f"daily summary {n}/{len(payloads)}" + (" (manual)" if forced else ""))
-
-
-SOFTWARE_MAX = 15
-
-
-def software_event(web, group, changes, config=None):
-    """ติดตั้ง / ถอน / อัปเดตโปรแกรม (software_watch) -> การ์ดเดียวต่อเครื่องต่อรอบ"""
-    s = settings(config)
-    if not s["enabled"] or "software" not in s["levels"] or not changes:
-        return
-    label = {"installed": "ติดตั้ง", "removed": "ถอน", "updated": "อัปเดต"}
-    lines = [f"{label[a]}: " + (f"{name} {ov} → {nv}" if a == "updated" else f"{name} {nv or ov}".strip())
-             for a, name, arch, ov, nv in changes[:SOFTWARE_MAX]]
-    if len(changes) > SOFTWARE_MAX:
-        lines.append(f"อีก {len(changes) - SOFTWARE_MAX} รายการ (ดูแท็บ Software ของเครื่อง)")
-    n = len(changes)
-    first = changes[0]
-    summary = (f"💿 {web} · {label[first[0]]} {first[1]}" + (f" และอีก {n - 1} รายการ" if n > 1 else ""))
-    ctx = {"machine": web, "group": group, "device": _device(web, "", group), "changes": lines, "count": n,
-           "sensor": "Software", "level": "SOFTWARE", "time": _time_full()}
-    _enqueue(s["url"], card_templates.card("software", "software", ctx, s["cards"], summary), f"software {web} {n}")
 
 
 def check_event(name, url, old, new, result, group="", config=None):

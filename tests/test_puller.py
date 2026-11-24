@@ -116,13 +116,10 @@ class Bottleneck(unittest.TestCase):
         # ไม่มีข้อมูล -> ไม่สร้าง sensor
         self.assertIsNone(b("disk", [None, self.sig("x", None, "", 1)]))
 
-    def test_windows_defaults(self):
-        lx, win = sensor_monitor._thresholds({"thresholds_windows": {"cpu": {"warning": 70}}})
-        self.assertEqual(lx["cpu"], {"warning": 75, "error": 90})
-        self.assertEqual(win["cpu"], {"warning": 70.0, "error": 95})
-        self.assertEqual(win["mem_available"], {"warning": 20, "error": 10})
+    def test_defaults(self):
+        th = sensor_monitor._thresholds({"thresholds": {"cpu": {"warning": 70}}})
+        self.assertEqual(th["cpu"], {"warning": 70.0, "error": 90})
         self.assertEqual(sensor_monitor._options({})["confirm"], 6)          # 3 นาที
-        self.assertTrue(sensor_monitor._is_windows_target({"type": "agent"}))
 
     def test_duration_text(self):
         self.assertTrue(sensor_monitor._fmt_duration(125))
@@ -268,7 +265,7 @@ class SensorPriority(unittest.TestCase):
         sm = sensor_monitor
         got = {}
         saved = {k: getattr(sm, k) for k in ("load_config", "_target_sensors", "_write", "append_events", "_save_incidents",
-                                             "_app_metrics", "_software")}
+                                             "_app_metrics")}
         saved_n = (sm.notify.sensor_events, sm.notify.maybe_summary)
         try:
             sm.load_config = lambda: {"targets": [{"name": "w"}]}
@@ -277,7 +274,6 @@ class SensorPriority(unittest.TestCase):
             sm.append_events = lambda ev: got.setdefault("log", []).extend(ev)
             sm._save_incidents = lambda *a: None
             sm._app_metrics = lambda s: None
-            sm._software = lambda t, c: None
             sm.notify.sensor_events = lambda ev, c: got.setdefault("notify", []).extend(e for e in ev if e.get("notify") is not False)
             sm.notify.maybe_summary = lambda *a, **k: None
             state = sm.run_once(previous)
@@ -327,7 +323,7 @@ class PauseRecord(unittest.TestCase):
                "status": "ok", "unit": "", "message": "Up", "confirm": 1, "priority": 3}
         prev = {"w:availability": dict(raw, status="paused", since=1000.0, message="Paused: ปิดซ่อมบำรุง", incident=None)}
         saved = {k: getattr(sm, k) for k in ("load_config", "_target_sensors", "_write", "_read", "append_events", "_save_incidents",
-                                             "_app_metrics", "_software")}
+                                             "_app_metrics")}
         saved_n = (sm.notify.sensor_events, sm.notify.maybe_summary)
         try:
             sm.load_config = lambda: {"targets": [{"name": "w"}]}
@@ -337,7 +333,6 @@ class PauseRecord(unittest.TestCase):
             sm.append_events = lambda ev: None
             sm._save_incidents = lambda *a: None
             sm._app_metrics = lambda s: None
-            sm._software = lambda t, c: None
             sm.notify.sensor_events = lambda ev, c: None
             sm.notify.maybe_summary = lambda *a, **k: None
             sm.run_once(prev)
@@ -390,31 +385,6 @@ class LogCheck(unittest.TestCase):
         self.assertEqual(r[1]["problem"], "ไม่พบโฟลเดอร์")
         self.assertIn("อ่านไม่ได้", r[2]["problem"])
         self.assertEqual(r[4]["problem"], "ไม่พบไฟล์ที่ตรงกับ path")
-
-
-class WindowsPullTargets(unittest.TestCase):
-    """prometheus_targets: เครื่อง Windows โหมด pull อยู่ใน web-nodes.json (label cm_web) / push ไม่อยู่"""
-
-    def test_generate(self):
-        import importlib, tempfile as _tf, yaml as _y
-        d = _tf.mkdtemp()
-        cfg = os.path.join(d, "puller.yaml")
-        _y.safe_dump({"targets": [
-            {"name": "win-pull", "type": "agent", "os": "windows", "host": "192.168.181.101",
-             "agent": {"mode": "pull", "exporter": "192.168.181.101:9182"}},
-            {"name": "win-push", "type": "agent", "os": "windows", "agent": {"logs": []}},
-            {"name": "win-off", "type": "agent", "paused": True, "agent": {"mode": "pull", "exporter": "10.0.0.9:9182"}}]},
-            open(cfg, "w"))
-        import prometheus_targets as pt
-        old = (pt.CONFIG_FILE, pt.TARGET_FILE, pt.PING_FILE)
-        pt.CONFIG_FILE, pt.TARGET_FILE, pt.PING_FILE = cfg, os.path.join(d, "web-nodes.json"), os.path.join(d, "ping.json")
-        try:
-            pt.generate_targets()
-            nodes = json.load(open(pt.TARGET_FILE))
-        finally:
-            pt.CONFIG_FILE, pt.TARGET_FILE, pt.PING_FILE = old
-        self.assertEqual(nodes, [{"targets": ["192.168.181.101:9182"],
-                                  "labels": {"job": "cm-agent-pull", "web": "win-pull", "cm_web": "win-pull", "environment": "production"}}])
 
 
 class LogFilter(unittest.TestCase):
@@ -505,66 +475,6 @@ class Scheduler(unittest.TestCase):
         self.assertLess(time.time() - started, 0.6)          # 4 เครื่องพร้อมกัน ไม่ใช่ทีละเครื่อง
         self.assertEqual(sorted(calls), ["w0", "w1", "w2", "w3"])
 
-
-
-class AgentPullLogs(unittest.TestCase):
-    """log ของ Windows โหมด pull: cm_log_entry จาก windows_exporter -> data/buffer"""
-    METRICS = (
-        '# HELP cm_log_entry x\n# TYPE cm_log_entry gauge\n'
-        'cm_log_entry{seq="1",type="eventlog",body="2026-11-13T02:00:00Z [ERROR] [System] Disk (Event 7): bad \\\\ \\"blk\\""} 1763000000\n'
-        'cm_log_entry{seq="2",type="application",body="2026-11-13T02:01:00Z [WARN] [app.log] slow"} 1763000060\n'
-        'cm_log_seq 2\nwindows_cpu_time_total{core="0"} 5\n')
-    TARGET = {"name": "win-p", "type": "agent", "agent": {"mode": "pull", "exporter": "10.0.0.5:9182"}}
-
-    def setUp(self):
-        import agent_logs
-        self.al = agent_logs
-        self.written = []
-        agent_logs.save_state = lambda st: None
-        self.kw = {"fetch": lambda x: self.METRICS,
-                   "write": lambda c, n, src, sid, a, b, d: self.written.append((n, src, a, b, d)) or ("f", "id"),
-                   "collapse": lambda c, d, n, s: (d, 0)}
-
-    def test_parse(self):
-        e = self.al.parse_entries(self.METRICS)
-        self.assertEqual([x["seq"] for x in e], [1, 2])
-        self.assertEqual(e[0]["type"], "eventlog")
-        self.assertIn('bad \\ "blk"', e[0]["body"])
-
-    def test_is_pull_agent(self):
-        self.assertTrue(self.al.is_pull_agent(self.TARGET))
-        self.assertFalse(self.al.is_pull_agent({"name": "x", "type": "agent", "agent": {"mode": "push"}}))
-        self.assertFalse(self.al.is_pull_agent(dict(self.TARGET, paused=True)))
-        self.assertFalse(self.al.is_pull_agent({"name": "l", "host": "h"}))
-
-    def test_only_new_seq(self):
-        cfg = {"site": {"name": "s"}}
-        state = {}
-        self.assertEqual(self.al.pull_agent_logs(cfg, self.TARGET, state, **self.kw), 2)
-        self.assertEqual(sorted(w[1] for w in self.written), ["application", "eventlog"])
-        self.assertEqual(state["win-p::agent-pull::10.0.0.5:9182"]["seq"], 2)
-        # รอบถัดไป: ไม่มี seq ใหม่ -> ไม่เขียนซ้ำ
-        self.written.clear()
-        self.assertEqual(self.al.pull_agent_logs(cfg, self.TARGET, state, **self.kw), 0)
-        self.assertEqual(self.written, [])
-
-    def test_seq_reset(self):
-        fresh, top = self.al.new_entries([{"seq": 1}, {"seq": 2}], 40)
-        self.assertEqual((len(fresh), top), (2, 2))          # เครื่องเริ่มนับใหม่ -> เก็บทั้งหมด
-        fresh, top = self.al.new_entries([{"seq": 39}, {"seq": 41}], 40)
-        self.assertEqual(([x["seq"] for x in fresh], top), ([41], 41))
-
-    @unittest.skipUnless(__import__("importlib").util.find_spec("prometheus_client"), "ต้องมี prometheus_client")
-    def test_scheduler_runs_pull_agents(self):
-        import scheduler as s
-        got = []
-        s.pull_target = lambda c, t, st: got.append(("ssh", t["name"]))
-        s.pull_agent_logs = lambda c, t, st: got.append(("pull", t["name"]))
-        s.collect_web_system_info = lambda c, t: None
-        cfg = {"targets": [{"name": "lin", "host": "h"}, self.TARGET,
-                           {"name": "win-push", "type": "agent", "agent": {"mode": "push"}}]}
-        s.run_once(cfg, {}, snapshot=False)
-        self.assertEqual(sorted(got), [("pull", "win-p"), ("ssh", "lin")])
 
 
 class NetSec(unittest.TestCase):
@@ -690,25 +600,25 @@ class CustomRules(unittest.TestCase):
     def test_applies(self):
         ap = self.cr.applies
         r = {"metric": "disk", "targets": ["a"], "groups": ["TQ"], "os": "any"}
-        self.assertTrue(ap(r, {"name": "a"}, False))
-        self.assertTrue(ap(r, {"name": "b", "group": "TQ/IT"}, False))
-        self.assertFalse(ap(r, {"name": "c", "group": "TQX"}, False))
-        self.assertFalse(ap({"metric": "service"}, {"name": "x"}, False))           # service = Windows เท่านั้น
-        self.assertTrue(ap({"metric": "cpu"}, {"name": "x"}, True))
+        self.assertTrue(ap(r, {"name": "a"}))
+        self.assertTrue(ap(r, {"name": "b", "group": "TQ/IT"}))
+        self.assertFalse(ap(r, {"name": "c", "group": "TQX"}))
+        self.assertFalse(ap({"metric": "cpu", "os": "windows"}, {"name": "x"}))       # กฎ Windows แบบเดิม
+        self.assertFalse(ap({"metric": "cpu"}, {"name": "x", "type": "agent"}))       # เครื่อง Windows แบบเดิม
+        self.assertTrue(ap({"metric": "cpu"}, {"name": "x"}))
 
     def test_evaluate_disk_and_confirm(self):
-        rows = {"disk": [({"mountpoint": "C:"}, 88.0), ({"mountpoint": "D:"}, 40.0)]}
+        rows = {"disk": [({"mountpoint": "/"}, 88.0), ({"mountpoint": "/data"}, 40.0)]}
         ex = {"disk": "disk"}
         out = self.cr.evaluate({"name": "w"}, [{"id": "d", "name": "Disk", "metric": "disk", "op": ">", "warning": 80,
-                                                "for_minutes": 10}], ex, 'cm_web="w"', True, lambda sid: None, 2, {},
+                                                "for_minutes": 10}], ex, 'job="w"', lambda sid: None, 2, {},
                                lambda q: rows.get(q), None)
         self.assertEqual([(s["id"], s["status"], s["confirm"]) for s in out],
-                         [("w:rule:d:C:", "warning", 20), ("w:rule:d:D:", "ok", 20)])
+                         [("w:rule:d:/", "warning", 20), ("w:rule:d:/data", "ok", 20)])
 
 
-class SoftwareRules(unittest.TestCase):
+class AppRules(unittest.TestCase):
     import custom_rules as cr
-    import software_watch as sw
 
     def q(self, data):
         def query(q):
@@ -719,27 +629,8 @@ class SoftwareRules(unittest.TestCase):
         return query
 
     def ev(self, rule, data, target=None):
-        return self.cr.evaluate(target or {"name": "w"}, [dict({"id": "r", "name": "R"}, **rule)], {}, 'cm_web="w"', True,
+        return self.cr.evaluate(target or {"name": "w"}, [dict({"id": "r", "name": "R"}, **rule)], {}, 'job="w"',
                                 lambda sid: None, 2, {}, self.q(data), None)
-
-    def test_process_running(self):
-        has = {"count(windows_process_working_set_private_bytes{cm_web=\"w\"})": [({}, 120)]}
-        up = self.ev({"metric": "process", "process": "sqlservr.exe", "level": "error"},
-                     dict(has, **{'process=~"(?i)sqlservr"': [({}, 2)]}))
-        self.assertEqual((up[0]["status"], up[0]["message"]), ("ok", "sqlservr.exe ทำงานอยู่ (2 process)"))
-        down = self.ev({"metric": "process", "process": "sqlservr", "level": "warning"}, has)
-        self.assertEqual(down[0]["status"], "warning")
-        self.assertEqual(self.ev({"metric": "process", "process": "x"}, {}), [])        # ไม่มีข้อมูล process -> ไม่เดา
-        self.assertEqual(self.cr.proc_regex("a.b"), "(?i)a\\\\.b")
-
-    def test_port_and_cpu(self):
-        inv = {"cm_inventory_timestamp_seconds": [({}, 1.0)]}
-        ok = self.ev({"metric": "port_listen", "port": 1433}, dict(inv, **{'port="1433"': [({"process": "sqlservr"}, 1)]}))
-        self.assertEqual((ok[0]["status"], ok[0]["message"]), ("ok", "พอร์ต 1433 เปิดรับอยู่ (sqlservr)"))
-        bad = self.ev({"metric": "port_listen", "port": 8080}, inv)
-        self.assertEqual(bad[0]["status"], "error")
-        cpu = self.ev({"metric": "process_cpu", "process": "java", "op": ">", "warning": 50}, {"windows_process_cpu": [({}, 70.0)]})
-        self.assertEqual((cpu[0]["status"], cpu[0]["unit"]), ("warning", "%"))
 
     def test_tcp_and_http(self):
         import socket
@@ -759,23 +650,14 @@ class SoftwareRules(unittest.TestCase):
         self.assertEqual(h[0]["status"], "error")
 
     def test_docker_and_local_web(self):
-        probe = {"cm_probe_timestamp_seconds": [({}, 1.0)], "cm_docker_up": [({}, 1.0)]}
-        rows = dict(probe, **{"cm_docker_container": [({"name": "web", "state": "running", "status": "Up 2h (healthy)"}, 1),
-                                                      ({"name": "db", "state": "exited", "status": "Exited (1)"}, 1)]})
-        self.assertEqual(self.ev({"metric": "docker", "container": "web"}, rows)[0]["status"], "ok")
-        self.assertEqual(self.ev({"metric": "docker", "container": "db"}, rows)[0]["message"], "db: Exited (1)")
-        self.assertEqual(self.ev({"metric": "docker", "container": "gone"}, rows)[0]["status"], "error")
-        self.assertEqual([self.ev({"metric": "docker", "container": n}, rows)[0]["details"]["up"] for n in ("web", "db")],
-                         [True, False])                                                       # กราฟ / uptime ทุกประเภท
-        self.assertEqual(self.ev({"metric": "docker", "container": "web"}, {}), [])                    # agent เก่า
-        # Linux: ผ่าน SSH
+        # ผ่าน SSH
         out = ('##DOCKER\n{"Names":"api","State":"running","Status":"Up 1h"}\n##HTTP\n'
                'http://localhost:3000/\t200 0.020\nhttp://localhost:4000/\t000 0.000\n')
         orig = self.cr.linux_probe
         self.cr.linux_probe = lambda t, rules, runner=None: orig(t, rules, lambda tt, cmd: out)
         self.cr._probe_cache.clear()
         try:
-            ev = lambda rule: self.cr.evaluate({"name": "l"}, [dict({"id": "r", "name": "R"}, **rule)], {}, "x", False,
+            ev = lambda rule: self.cr.evaluate({"name": "l"}, [dict({"id": "r", "name": "R"}, **rule)], {}, "x",
                                                lambda sid: None, 2, {}, lambda q: [], None)
             self.assertEqual(ev({"metric": "docker", "container": "api"})[0]["status"], "ok")
             self.assertEqual(ev({"metric": "http_local", "url": "http://localhost:3000/"})[0]["status"], "ok")
@@ -819,44 +701,7 @@ class SoftwareRules(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
-    def test_local_web_status(self):
-        now = 10_000.0
-        L = 'cm_web="w"'
-
-        def q(data):
-            return lambda s: next((v for k, v in data.items() if s.startswith(k)), [])
-        st = lambda url, data: self.cr.local_web_state(url, q(data), L, now)
-        # 1) agent ยังไม่ส่งผล probe
-        r = st("http://localhost:8090", {})
-        self.assertIsNone(r[0])
-        self.assertIn("agent ยังไม่ส่งผลตรวจเว็บ", r[1])
-        # 2) ผลเก่ากว่า 5 นาที
-        r = st("http://localhost:8090", {"max_over_time(cm_probe_timestamp": [({}, now - 900)]})
-        self.assertEqual((r[0], r[1]), (None, "ผลตรวจจากเครื่องล่าสุด 15 นาทีที่แล้ว · ตรวจว่า agent ยังทำงานอยู่"))
-        fresh = {"max_over_time(cm_probe_timestamp": [({}, now - 30)],
-                 "timestamp(cm_http_local_code": [({"port": "8090", "scheme": "http"}, now - 30),
-                                                  ({"port": "9090", "scheme": "http"}, now - 30),
-                                                  ({"port": "135", "scheme": "http"}, now - 30),
-                                                  ({"port": "7000", "scheme": "http"}, now - 900)],   # stale
-                 "cm_http_local_code": [({"port": "8090", "scheme": "http"}, 302), ({"port": "9090", "scheme": "http"}, 404),
-                                        ({"port": "135", "scheme": "http"}, 0), ({"port": "7000", "scheme": "http"}, 200)],
-                 "cm_http_local_ms": [({"port": "8090", "scheme": "http"}, 5), ({"port": "9090", "scheme": "http"}, 7)]}
-        # 3) ไม่มีพอร์ตนั้น (และพอร์ต stale ไม่นับ)
-        r = st("http://localhost:7000", fresh)
-        self.assertEqual((r[0], r[1]), (True, "ไม่พบเว็บที่พอร์ต 7000 บนเครื่องนี้ · พอร์ตที่พบ: 8090, 9090"))
-        # 4) ปกติ: 3xx = ทำงาน, 4xx = ไม่ทำงาน, แสดงรหัสเสมอ
-        r = st("http://localhost:8090", fresh)
-        self.assertEqual((r[0], r[1], r[2]), (False, "http://localhost:8090 ตอบ HTTP 302 (5 ms)", 5))
-        r = st("http://localhost:9090/x", fresh)
-        self.assertEqual((r[0], r[1]), (True, "http://localhost:9090/x ตอบ HTTP 404 (7 ms)"))
-        # URL ไม่มีพอร์ต (บันทึกแบบเก่า) -> บอกพอร์ตที่พบ
-        r = st("http://localhost", fresh)
-        self.assertIsNone(r[0])
-        self.assertIn("พอร์ตที่พบ: 8090, 9090", r[1])
-        # ผ่าน evaluate: ยังบอกไม่ได้ = unknown
-        out = self.cr.evaluate({"name": "w"}, [{"id": "r", "name": "R", "metric": "http_local", "url": "localhost"}], {}, L,
-                               True, lambda sid: None, 2, {}, q({}), None)
-        self.assertEqual(out[0]["status"], "unknown")
+    def test_up_code(self):
         self.assertEqual([self.cr.up_code(c) for c in (200, 302, 399, 400, 404, 500, 0)],
                          [True, True, True, False, False, False, False])
 
@@ -868,63 +713,6 @@ class SoftwareRules(unittest.TestCase):
         self.assertEqual(wr("u", 200, 100, {"ssl_days": 14}, ssl_days_left=5)[:2], ("warning", "u ตอบ HTTP 200 (100 ms) · SSL หมดอายุใน 5 วัน"))
         self.assertEqual(wr("u", 200, 100, {"ssl_days": 14}, ssl_days_left=-1)[0], True)
         self.assertEqual(wr("u", 503, 100, {"slow_ms": 50})[0], True)                     # ไม่ทำงานสำคัญกว่าช้า
-        # ผ่าน evaluate: ช้า = warning (ไม่ใช่ระดับของกฎ) และยังนับว่า "up"
-        now = time.time()
-        data = {"max_over_time(cm_probe_timestamp": [({}, now - 10)],
-                "timestamp(cm_http_local_code": [({"port": "8090", "scheme": "http"}, now - 10)],
-                "cm_http_local_code": [({"port": "8090", "scheme": "http"}, 200)],
-                "cm_http_local_ms": [({"port": "8090", "scheme": "http"}, 3000)]}
-        query = lambda q: next((v for k, v in data.items() if q.startswith(k)), [])
-        out = self.cr.evaluate({"name": "w"}, [{"id": "r", "name": "R", "metric": "http_local", "url": "localhost:8090",
-                                                "slow_ms": 1000, "level": "error"}], {}, 'cm_web="w"', True,
-                               lambda sid: None, 2, {}, query, None)
-        self.assertEqual((out[0]["status"], out[0]["details"]["up"], out[0]["details"]["code"]), ("warning", True, 200))
-        data["cm_http_local_code"] = [({"port": "8090", "scheme": "http"}, 500)]
-        out = self.cr.evaluate({"name": "w"}, [{"id": "r", "name": "R", "metric": "http_local", "url": "localhost:8090",
-                                                "level": "error"}], {}, 'cm_web="w"', True, lambda sid: None, 2, {}, query, None)
-        self.assertEqual((out[0]["status"], out[0]["details"]["up"]), ("error", False))
-
-    def test_software_diff_and_run(self):
-        self.assertEqual(self.sw.diff({"A|x64": "1", "B|x64": "2"}, {"A|x64": "1.1", "C|x86": "3"}),
-                         [("updated", "A", "x64", "1", "1.1"), ("removed", "B", "x64", "2", ""), ("installed", "C", "x86", "", "3")])
-        self.assertEqual(self.sw.fresh_rows([({"name": "a"}, 1000), ({"name": "old"}, 700)]), [{"name": "a"}])
-        f = os.path.join(_TMP, "software-test.json")
-        data = {"inv": 1.0, "rows": [({"name": "A", "arch": "x64", "version": "1"}, 1000.0),
-                                      ({"name": "B", "arch": "x64", "version": "2"}, 1000.0)]}
-
-        def query(q):
-            return [({}, data["inv"])] if "cm_inventory" in q else data["rows"]
-        seen = []
-        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=1000, on_changes=lambda w, c: seen.append(c)), {})
-        data["rows"] = [({"name": "A", "arch": "x64", "version": "1.1"}, 2000.0),
-                        ({"name": "B", "arch": "x64", "version": "2"}, 1500.0),        # หายไปแล้ว (ค่าเก่า)
-                        ({"name": "C", "arch": "x64", "version": "9"}, 2000.0)]
-        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=1100), {})   # ยังไม่ครบ 5 นาที
-        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=1400), {})   # รายการรอบเดิม (inventory เดิม)
-        data["inv"] = 2.0
-        out = self.sw.run([("w", 'cm_web="w"')], query, f, now=1800, on_changes=lambda w, c: seen.append(c))
-        self.assertEqual(out["w"], [("updated", "A", "x64", "1", "1.1"), ("removed", "B", "x64", "2", ""),
-                                    ("installed", "C", "x64", "", "9")])
-        self.assertEqual(len(seen), 1)
-        data["inv"], data["rows"] = 3.0, []                                            # อ่านไม่ได้ -> ไม่แจ้งถอนทั้งหมด
-        self.assertEqual(self.sw.run([("w", 'cm_web="w"')], query, f, now=2200), {})
-        self.assertEqual(self.sw.describe(("updated", "A", "x64", "1", "1.1")), "อัปเดต A 1 → 1.1")
-
-    def test_software_card(self):
-        sent = []
-        orig = notify._enqueue
-        notify._enqueue = lambda url, payload, what: sent.append(payload)
-        try:
-            notify.software_event("w", "G", [("installed", "C", "x64", "", "9")], {"notify": {"teams": {"webhook_url": "https://x"}}})
-            notify.software_event("w", "G", [("installed", "C", "x64", "", "9")],
-                                  {"notify": {"teams": {"webhook_url": "https://x", "levels": ["down"]}}})
-        finally:
-            notify._enqueue = orig
-        self.assertEqual(len(sent), 1)
-        self.assertEqual(sent[0]["summary"], "💿 w · ติดตั้ง C")
-        facts = _facts(sent[0]["attachments"][0]["content"]["body"])
-        self.assertEqual(facts["Changes:"], "ติดตั้ง: C 9")
-
 
 class TeamsNotify(unittest.TestCase):
     CFG = {"notify": {"teams": {"webhook_url": "https://example.webhook.office.com/x", "levels": ["down", "error", "recovered"]}}}
@@ -1071,301 +859,6 @@ class TeamsNotify(unittest.TestCase):
     def test_disabled_without_url(self):
         self.assertFalse(notify.settings({"notify": {"teams": {"webhook_url": ""}}})["enabled"])
         self.assertFalse(notify.settings({})["enabled"])
-
-
-# ----------------------------------------------------------------------------
-# Netstat Monitor (puller/netstat.py)
-# ----------------------------------------------------------------------------
-import netstat  # noqa: E402
-
-NS_TEXT = """# TYPE cm_netstat_info gauge
-cm_netstat_info{interval="1",os="Windows Server 2019 (10.0.17763.0)",version="1"} 1
-cm_netstat_heartbeat_seconds __HB__
-cm_netstat_listen{proto="tcp",port="1433",addr="0.0.0.0",pid="1888",proc="sqlservr"} 1
-cm_netstat_listen{proto="tcp",port="443",addr="0.0.0.0",pid="4",proc="System (HTTP.sys)"} 1
-cm_netstat_listen{proto="tcp",port="3389",addr="0.0.0.0",pid="1100",proc="svchost"} 1
-cm_netstat_listen{proto="udp",port="53",addr="0.0.0.0",pid="900",proc="dns"} 1
-cm_netstat_conn{proto="tcp",dir="in",port="1433",state="established"} __EST__
-cm_netstat_conn{proto="tcp",dir="in",port="1433",state="time_wait"} 5
-cm_netstat_conn{proto="tcp",dir="in",port="443",state="syn_received"} 2
-cm_netstat_conn{proto="tcp",dir="out",port="5432",state="established"} 3
-cm_netstat_conn_total{proto="tcp",dir="in",port="1433"} __TOT__
-cm_netstat_conn_total{proto="tcp",dir="in",port="443"} 2
-cm_netstat_conn_total{proto="tcp",dir="in",port="3389"} 0
-cm_netstat_conn_total{proto="tcp",dir="out",port="5432"} 3
-cm_netstat_conn_peak{proto="tcp",dir="in",port="1433"} __TOT__
-cm_netstat_peer{dir="in",port="1433",remote="10.0.0.7"} 9
-cm_netstat_proc{dir="out",port="5432",pid="777",proc="java"} 1
-cm_netstat_queue_supported{kind="recv"} 0
-cm_netstat_queue_supported{kind="send"} 0
-cm_netstat_queue_supported{kind="accept"} 1
-cm_netstat_accept_queue{proto="tcp",port="443",source="http.sys"} __Q__
-cm_netstat_accept_queue_peak{proto="tcp",port="443",source="http.sys"} __Q__
-cm_netstat_accept_queue_limit{proto="tcp",port="443",source="http.sys"} 1000
-cm_netstat_collect_ms 12
-""".replace("__HB__", "__HB__")
-
-
-def ns_text(hb=1000.0, est=40, q=3):
-    return (NS_TEXT.replace("__HB__", str(hb)).replace("__EST__", str(est)).replace("__TOT__", str(est + 5))
-            .replace("__Q__", str(q)))
-
-
-NS_TARGET = {"name": "db-01", "type": "agent", "host": "10.0.0.5", "agent": {"mode": "pull", "exporter": "10.0.0.5:9182"},
-             "netstat": {"enabled": True, "interval": 1, "ports": [
-                 {"port": 1433, "proto": "tcp", "queue": {"warning": 50, "critical": 80}, "conn": {"warning": 200, "critical": 300}},
-                 {"port": 443, "proto": "tcp", "queue": {"warning": 100, "critical": 150}, "conn": {"warning": 500, "critical": 800}},
-                 {"port": 8080, "proto": "tcp", "conn": {"warning": 10}},
-                 {"port": 5432, "proto": "tcp", "dir": "out", "enabled": False}]}}
-
-
-class NetstatParse(unittest.TestCase):
-    def test_snapshot(self):
-        snap = netstat.snapshot(netstat.parse_text(ns_text()))
-        self.assertEqual((snap["heartbeat"], snap["interval"]), (1000.0, 1))
-        self.assertEqual(snap["support"], {"recv": False, "send": False, "accept": True})
-        p = snap["ports"]["tcp/in/1433"]
-        self.assertEqual((p["listening"], p["proc"], p["pid"], p["total"]), (True, "sqlservr", 1888, 45))
-        self.assertEqual((p["states"]["established"], p["states"]["time_wait"], p["states"]["close_wait"]), (40, 5, 0))
-        self.assertIsNone(p["accept_queue"])                                   # ไม่ใช่ HTTP.sys -> ไม่มีคิว (ไม่ใช่ 0)
-        self.assertEqual(snap["ports"]["tcp/in/443"]["accept_queue"], 3)
-        self.assertEqual(snap["ports"]["tcp/in/3389"]["total"], 0)               # LISTEN ไม่มีใครต่อ = 0 จริง
-        self.assertEqual(snap["ports"]["tcp/out/5432"]["proc"], "java")
-        self.assertTrue(snap["ports"]["udp/in/53"]["listening"])
-        self.assertIsNone(snap["ports"]["udp/in/53"]["total"])                   # UDP ไม่มีจำนวนการเชื่อมต่อ
-        self.assertIsNone(netstat.snapshot(netstat.parse_text("windows_cpu_time_total 1\n")))
-        self.assertTrue(netstat.exporter_url("10.0.0.5:9182").endswith("/metrics?collect%5B%5D=textfile"))
-
-    def test_config_and_levels(self):
-        hc = netstat.host_config(NS_TARGET)
-        self.assertEqual([p["key"] for p in hc["ports"]], ["tcp/in/1433", "tcp/in/443", "tcp/in/8080", "tcp/out/5432"])
-        self.assertFalse(hc["ports"][3]["enabled"])
-        th = {"warning": 50, "critical": 80}
-        self.assertEqual([netstat.level_of(v, th) for v in (49, 50, 79, 80, None)], [None, "warning", "warning", "critical", None])
-
-    def test_evaluate(self):
-        hc = netstat.host_config(NS_TARGET)
-        snap = netstat.snapshot(netstat.parse_text(ns_text(est=210, q=120)))
-        rows, conds = netstat.evaluate("db-01", "10.0.0.5", hc, snap, True, False, 0, {})
-        r = {x["key"]: x for x in rows}
-        self.assertEqual((r["tcp/in/1433"]["conn"], r["tcp/in/1433"]["conn_level"], r["tcp/in/1433"]["status"]), (215, "warning", "warning"))
-        self.assertIsNone(r["tcp/in/1433"]["queue"])                            # Unsupported -> None ไม่ใช่ 0
-        self.assertIn("Unsupported", r["tcp/in/1433"]["queue_note"])
-        self.assertEqual((r["tcp/in/443"]["queue"], r["tcp/in/443"]["util"], r["tcp/in/443"]["queue_level"]), (120, 12.0, "warning"))
-        self.assertEqual((r["tcp/in/8080"]["listening"], r["tcp/in/8080"]["status"]), (False, "critical"))
-        c = {x["akey"]: x for x in conds}
-        self.assertEqual(c["db-01::tcp/in/8080::listen"]["level"], "critical")
-        self.assertIsNone(c["db-01::tcp/in/1433::queue"]["level"])
-        self.assertNotIn("db-01::tcp/out/5432::conn", c)                       # ปิดกฎไว้ -> ไม่แจ้ง
-        # เครื่องไม่ตอบ: ค่าเป็น None ทั้งหมด + host_offline
-        rows, conds = netstat.evaluate("db-01", "10.0.0.5", hc, snap, False, False, 0, {})
-        self.assertTrue(all(x["conn"] is None and x["status"] == "offline" for x in rows))
-        self.assertEqual({x["akey"]: x["level"] for x in conds}, {"db-01::host": "critical", "db-01::stale": None})
-
-    def test_alert_engine(self):
-        eng = netstat.AlertEngine()
-        cond = lambda lv, v: [{"akey": "w::tcp/in/1433::conn", "kind": "conn", "web": "w", "ip": "1.1.1.1", "port": 1433,
-                               "proto": "tcp", "dir": "in", "process": "sqlservr", "level": lv, "value": v,
-                               "threshold": 200 if lv == "warning" else 300, "message": "x"}]
-        ev = []
-        for i in range(2):
-            ev += eng.step(cond("warning", 210), i)[0]
-        self.assertEqual(ev, [])                                                # ยังไม่ครบ 3 ครั้ง
-        ev, ch = eng.step(cond("warning", 220), 2)
-        self.assertEqual([e[0] for e in ev], ["open"])
-        for i in range(3, 10):                                                  # ยังเกินอยู่ทุกวินาที -> ไม่สร้างซ้ำ
-            self.assertEqual(eng.step(cond("warning", 230 + i), i)[0], [])
-        a = eng.active["w::tcp/in/1433::conn"]
-        self.assertEqual((a["first"], a["last"], a["peak"]), (2, 9, 239))
-        for i in range(10, 13):
-            ev = eng.step(cond("critical", 350), i)[0]
-        self.assertEqual([(e[0], e[1]["level"]) for e in ev], [("escalate", "critical")])
-        self.assertEqual(eng.step(cond(None, 10), 13)[0], [])
-        self.assertEqual(eng.step(cond(None, 10), 14)[0], [])
-        ev = eng.step(cond(None, 10), 15)[0]
-        self.assertEqual([e[0] for e in ev], ["recovered"])
-        self.assertEqual((eng.history[-1]["duration"], eng.history[-1]["status"]), (13, "recovered"))
-        self.assertEqual(eng.active, {})
-        # เลิกเลือกพอร์ต -> ปิดเงียบ ๆ ไม่มี event
-        for i in range(3):
-            eng.step(cond("warning", 210), 20 + i)
-        ev, ch = eng.step([], 30, scope={"w"})
-        self.assertEqual((ev, ch, eng.history[-1]["status"]), ([], True, "removed"))
-        sys_ev = netstat.to_system_events([("open", dict(a, level="critical", threshold=300))], {"w": "DB"}, {"w": 5})
-        self.assertEqual((sys_ev[0]["to"], sys_ev[0]["level"], sys_ev[0]["priority"], sys_ev[0]["group"]), ("error", "error", 5, "DB"))
-        self.assertIn("เกณฑ์ 300", sys_ev[0]["message"])
-
-
-class NetstatAppQueue(unittest.TestCase):
-    """คิวของโปรแกรมจาก log (THMux): แยก Output[n] · ช่วงสั้นบันทึกอย่างเดียว · ช่วงยาวแจ้ง + กลับปกติ · ไม่ซ้ำหลังเริ่มใหม่"""
-    TEXT = """cm_netstat_heartbeat_seconds 1
-cm_netstat_app_state{log="THMux",ch="Output[2]"} 0
-cm_netstat_app_size{log="THMux",ch="Output[2]"} 499
-cm_netstat_app_critical{log="THMux",ch="Output[2]"} 500
-cm_netstat_app_port{log="THMux",ch="Output[2]"} 37518
-cm_netstat_app_peak{log="THMux",ch="Output[2]"} 1999999
-cm_netstat_app_ep{log="THMux",ch="Output[2]",id="100",start="100",end="101",peak="1999999",critical="500"} 1
-cm_netstat_app_ep{log="THMux",ch="Output[4]",id="900",start="900",end="0",peak="1200",critical="500"} 1
-cm_netstat_app_state{log="THMux",ch="Output[4]"} 1
-cm_netstat_app_size{log="THMux",ch="Output[4]"} 1200
-cm_netstat_app_count{log="THMux",ch="Output[2]",kind="disconnect"} 3
-cm_netstat_app_event{seq="5",log="THMux",ch="Output[2]",level="RECOVER",msg="queue decrease (size=499)."} 101
-cm_netstat_app_event{seq="4",log="THMux",ch="Output[2]",level="WARN",msg="queue exceed (size=1999999)."} 100
-"""
-
-    def test_parse_and_episodes(self):
-        snap = netstat.snapshot(netstat.parse_text(self.TEXT))
-        a2, a4 = snap["apps"]["THMux/Output[2]"], snap["apps"]["THMux/Output[4]"]
-        self.assertEqual((a2["state"], a2["size"], a2["port"], a2["counts"]["disconnect"]), (0, 499, 37518, 1 * 3))
-        self.assertEqual(a2["episodes"], [{"id": "100", "start": 100, "end": 101, "peak": 1999999, "critical": 500}])
-        self.assertEqual([e["level"] for e in snap["app_events"]], ["RECOVER", "WARN"])
-        hc = netstat.host_config({"netstat": {"enabled": True}})
-        self.assertEqual(hc["apps"], {"enabled": True, "notify_after": 10, "critical_size": None})
-        eng = netstat.AlertEngine()
-        # ช่วงที่จบไปนานแล้ว (เห็นครั้งแรกตอนเริ่มระบบ) -> บันทึก ไม่แจ้ง
-        ev, ch = eng.app_episode("w", "1.1.1.1", a2, a2["episodes"][0], hc["apps"], 1000)
-        self.assertEqual((ev, ch, eng.history[-1]["status"], eng.history[-1]["notified"]), ([], True, "recovered", False))
-        self.assertEqual(eng.app_episode("w", "1.1.1.1", a2, a2["episodes"][0], hc["apps"], 1001), ([], False))   # ไม่ซ้ำ
-        # ยังเกินอยู่: แจ้งทันทีครั้งเดียว
-        ep = a4["episodes"][0]
-        self.assertEqual([e[0] for e in eng.app_episode("w", "1.1.1.1", a4, ep, hc["apps"], 905)[0]], ["open"])
-        self.assertIn("w::app::THMux/Output[4]", eng.active)
-        self.assertEqual(eng.app_episode("w", "1.1.1.1", a4, ep, hc["apps"], 912)[0], [])
-        # step() ปกติต้องไม่ปิด alert คิวของโปรแกรม
-        eng.step([], 913, scope={"w"})
-        self.assertIn("w::app::THMux/Output[4]", eng.active)
-        ev = eng.app_episode("w", "1.1.1.1", a4, dict(ep, end=930), hc["apps"], 931)[0]
-        self.assertEqual([e[0] for e in ev], ["recovered"])
-        self.assertEqual((eng.history[-1]["duration"], eng.history[-1]["recovered_at"]), (30, 930))
-        sys_ev = netstat.to_system_events(ev)
-        self.assertEqual(sys_ev[0]["sensor"], "Netstat THMux Output[4] Queue exceed")
-        # บรรทัด ERROR ใหม่ใน log -> แจ้ง 1 ครั้ง (ไม่แจ้งของที่มีอยู่ก่อนเริ่ม)
-        m = netstat.Monitor.__new__(netstat.Monitor)
-        m.engine, m.err_seen, m.lights = netstat.AlertEngine(), {}, {}
-        h = {"online": True, "ip": "1.1.1.1", "snap": {"apps": {}, "app_events": [{"seq": 1, "ts": 990, "log": "THMux", "ch": "Output[1]", "level": "ERROR", "msg": "old"}]}}
-        hc2 = {"enabled": True, "apps": {"enabled": True}}
-        self.assertEqual(m._apps("w", h, hc2, 1000)[0], [])
-        h["snap"]["app_events"].append({"seq": 2, "ts": 995, "log": "THMux", "ch": "Output[1]", "level": "ERROR", "msg": "socket fail"})
-        ev2 = m._apps("w", h, hc2, 1000)[0]
-        self.assertEqual(ev2, [])                          # ERROR ไม่แจ้งแยก แต่รวมเป็นสีแดง
-        self.assertEqual([r["status"] for r in m.engine.history], ["logged"])
-        # ไฟสถานะ: แจ้งทุกครั้งที่สีเปลี่ยน
-        m.lights = {}
-        app = {"key": "THMux/Output[1]", "log": "THMux", "ch": "Output[1]", "state": 1, "size": 600, "critical": 500, "port": 16100}
-        ev = lambda lv, ts: {"seq": ts, "ts": ts, "log": "THMux", "ch": "Output[1]", "level": lv, "msg": lv.lower()}
-        h = {"online": True, "ip": "1.1.1.1", "snap": {"apps": {"THMux/Output[1]": dict(app, episodes=[])}, "app_events": [ev("WARN", 10)]}}
-        hc3 = {"enabled": True, "apps": {"enabled": True, "critical_size": None}}
-        l1 = m._lights("w", h, hc3, 20)
-        self.assertEqual([(e[1]["color"], e[1]["prev"], e[1]["port"]) for e in l1], [("yellow", "green", 16100)])
-        self.assertEqual(m._lights("w", h, hc3, 21), [])                       # สีเดิม ไม่แจ้งซ้ำ
-        h["snap"]["app_events"].append(ev("ERROR", 30))
-        self.assertEqual([e[1]["color"] for e in m._lights("w", h, hc3, 31)], ["red"])
-        h["snap"]["app_events"].append(ev("RECOVER", 40)); h["snap"]["apps"]["THMux/Output[1]"].update(state=0, size=499)
-        l3 = m._lights("w", h, hc3, 41)
-        self.assertEqual([(e[1]["color"], e[1]["prev"]) for e in l3], [("green", "red")])
-        se = netstat.to_system_events(l3)[0]
-        self.assertEqual((se["level"], se["from"], se["sensor"]), ("recovered", "error", "Netstat THMux Output[1] port 16100"))
-        # ERROR ไม่มี "กลับปกติ": แดงไว้ ERR_HOLD วินาทีแล้วกลับเขียว
-        inp = {"key": "THMux/Input[1]", "log": "THMux", "ch": "Input[1]", "state": 0, "size": None, "port": None, "episodes": []}
-        h["snap"]["apps"]["THMux/Input[1]"] = inp
-        h["snap"]["app_events"].append({"seq": 50, "ts": 50, "log": "THMux", "ch": "Input[1]", "level": "ERROR", "msg": "received notify disconnect."})
-        h["snap"]["ports"] = {"tcp/out/37404": {"proc": "THMux.exe"}, "tcp/in/16100": {"proc": "THMux.exe"}}
-        hc3["ports"] = [{"key": "tcp/in/16100", "port": 16100, "dir": "in", "enabled": True},
-                        {"key": "tcp/out/37404", "port": 37404, "dir": "out", "enabled": True}]
-        l4 = m._lights("w", h, hc3, 60)
-        self.assertEqual([(e[1]["ch"], e[1]["color"], e[1]["pkey"], e[1]["port"]) for e in l4], [("Input[1]", "red", "tcp/out/37404", 37404)])
-        self.assertEqual(m.lights["w"]["THMux/Output[1]"]["pkey"], "tcp/in/16100")
-        self.assertEqual([(e[1]["ch"], e[1]["color"]) for e in m._lights("w", h, hc3, 50 + netstat.ERR_HOLD + 1)], [("Input[1]", "green")])
-        # เพิ่งจบ + size เกิน critical_size ที่ตั้ง -> แจ้งครั้งเดียวแบบ "กลับปกติแล้ว" ระดับ critical
-        cfg = dict(hc["apps"], critical_size=1000000)
-        ev = eng.app_episode("w", "", a2, dict(a2["episodes"][0], start=2000, end=2001, id="2000"), cfg, 2010)[0]
-        self.assertEqual([(e[0], e[1]["level"]) for e in ev], [("episode", "critical")])
-        self.assertIn("กลับปกติแล้วหลัง 1 วินาที", netstat.to_system_events(ev)[0]["message"])
-        # เริ่ม puller ใหม่: โหลดจาก alerts.json แล้วไม่บันทึกซ้ำ
-        eng2 = netstat.AlertEngine(eng.dump())
-        self.assertEqual(eng2.app_episode("w", "", a2, a2["episodes"][0], hc["apps"], 3000), ([], False))
-        self.assertTrue(eng2.app_close_all("x", 1) is False)
-
-    def test_sources_and_port_queue(self):
-        """agent บอกว่าอ่านไฟล์ไหน (ทำไมยังว่าง) · Output ที่ port change มาที่พอร์ตที่ Monitor -> ใช้เป็น Listening Queue ของพอร์ตนั้น"""
-        text = self.TEXT + """cm_netstat_app_every_seconds 30
-cm_netstat_app_source{path="D:/THMux/*.txt",files="3",recent="1",newest="20261119.txt"} 37
-cm_netstat_listen{proto="tcp",port="37518",addr="0.0.0.0",pid="7988",proc="THMux"} 1
-cm_netstat_conn_total{proto="tcp",dir="in",port="37518"} 1
-"""
-        snap = netstat.snapshot(netstat.parse_text(text))
-        self.assertEqual(snap["app_every"], 30)
-        self.assertEqual(snap["app_sources"], [{"path": "D:/THMux/*.txt", "files": 3, "recent": 1, "newest": "20261119.txt", "lines": 37}])
-        cp = netstat.host_config({"netstat": {"enabled": True, "ports": [{"port": 37518, "queue": {"warning": 400, "critical": 1000}}]}})["ports"][0]
-        row = netstat.port_row(cp, snap)
-        self.assertEqual((row["queue"], row["accept_limit"], row["queue_kind"], row["util"]), (499, 500, "THMux Output[2]", 99.8))
-        self.assertEqual(netstat.level_of(row["queue"], cp["queue"]), "warning")
-
-
-class NetstatMonitorLoop(unittest.TestCase):
-    def test_live_heartbeat_when_disabled(self):
-        """ยังไม่เปิด Monitoring (อ่านทุก 10 วิ) live.json ต้องอัปเดตอย่างน้อยทุก 5 วิ ไม่งั้นหน้าเว็บขึ้น "ข้อมูลไม่อัปเดต" """
-        import tempfile as _tf
-        d = _tf.mkdtemp()
-        saved = (netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config)
-        netstat.LIVE_FILE, netstat.ALERTS_FILE = os.path.join(d, "live.json"), os.path.join(d, "alerts.json")
-        off = dict(NS_TARGET, netstat={"enabled": False})
-        netstat.load_config = lambda: {"targets": [off]}
-        try:
-            m = netstat.Monitor(fetch_pull=lambda e: netstat.parse_text(ns_text()), fetch_push=lambda w: [], emit=None)
-            ups = []
-            for i in range(0, 13):
-                m.tick(500.0 + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
-                with open(netstat.LIVE_FILE) as f:
-                    ups.append(json.load(f)["updated"])
-            gaps = [b - a for a, b in zip(sorted(set(ups)), sorted(set(ups))[1:])]
-            self.assertTrue(gaps and max(gaps) <= netstat.LIVE_HEARTBEAT, gaps)
-            with open(netstat.LIVE_FILE) as f:
-                h = json.load(f)["hosts"]["db-01"]
-            self.assertTrue(h["online"] and h["has_data"] and not h["enabled"])     # ค้นพบพอร์ตได้แม้ยังไม่เปิด
-            self.assertTrue(any(p["port"] == 1433 for p in h["ports"]))
-        finally:
-            netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config = saved
-
-    def test_tick(self):
-        import tempfile as _tf
-        d = _tf.mkdtemp()
-        saved = (netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config)
-        netstat.LIVE_FILE, netstat.ALERTS_FILE = os.path.join(d, "live.json"), os.path.join(d, "alerts.json")
-        state = {"hb": 1000.0, "fail": False}
-        emitted = []
-
-        def fetch(exporter):
-            if state["fail"]:
-                raise OSError("timed out")
-            return netstat.parse_text(ns_text(hb=state["hb"]))
-        netstat.load_config = lambda: {"targets": [NS_TARGET, {"name": "lx", "host": "1.1.1.1"}]}
-        try:
-            m = netstat.Monitor(fetch_pull=fetch, fetch_push=lambda w: [], emit=lambda ev, cfg: emitted.extend(ev))
-            t = 100.0
-            for i in range(8):
-                state["hb"] += 1
-                m.tick(t + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
-            live = json.load(open(netstat.LIVE_FILE))
-            h = live["hosts"]["db-01"]
-            self.assertEqual(list(live["hosts"]), ["db-01"])                       # เฉพาะเครื่อง Windows
-            self.assertTrue(h["online"] and not h["stale"] and h["has_data"])
-            self.assertEqual(h["os"], "Windows Server 2019 (10.0.17763.0)")
-            self.assertEqual([e["sensor"] for e in emitted], ["Netstat :8080/tcp Not listening"])
-            # heartbeat ไม่เปลี่ยน > 10 วิ -> agent หยุดส่ง
-            for i in range(8, 24):
-                m.tick(t + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
-            self.assertIn("Netstat Agent stopped", [e["sensor"] for e in emitted])
-            # ติดต่อไม่ได้ -> Host offline
-            state["fail"] = True
-            for i in range(24, 30):
-                m.tick(t + i); m.pool.shutdown(wait=True); m.pool = netstat.ThreadPoolExecutor(max_workers=2)
-            self.assertIn("Netstat Host offline", [e["sensor"] for e in emitted])
-            self.assertFalse(json.load(open(netstat.LIVE_FILE))["hosts"]["db-01"]["online"])
-            alerts = json.load(open(netstat.ALERTS_FILE))
-            self.assertIn("db-01::host", [a["akey"] for a in alerts["active"]])
-        finally:
-            netstat.LIVE_FILE, netstat.ALERTS_FILE, netstat.load_config = saved
 
 
 if __name__ == "__main__":

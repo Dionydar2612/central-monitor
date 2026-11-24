@@ -71,10 +71,7 @@ WILDCARDS = "*?["
 GROUP_PART = r"[A-Za-z0-9฀-๿ _.()&+-]{1,40}"
 GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,9}}$")
 GROUP_MAX_DEPTH = 10
-# เครื่อง Windows (agent): path ไฟล์ log เช่น C:\inetpub\logs\LogFiles\*\*.log (ห้าม , ; " ' เพราะใช้คั่น/ใส่ใน config)
-WINPATH_RE = re.compile(r"^[A-Za-z]:\\[^\x00-\x1f,;\"'<>|]{1,300}$")
-CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,99}$")
-TARGET_TYPES = ("ssh", "agent")
+TARGET_TYPES = ("ssh",)
 
 
 PRIORITY_DEFAULT = 3
@@ -293,53 +290,6 @@ def clean_sensor_settings(value, errors, field="alert.sensors"):
 SENSOR_KEY_RE = re.compile(r"^[A-Za-z0-9_.:$@ /\\()&+-]{1,120}\*?$")
 
 
-def set_platforms(value):
-    """รูปแบบการใช้งาน ui.platforms = windows | linux | both"""
-    value = str(value or "").lower()
-    if value not in settings.PLATFORMS:
-        raise ValidationError({"platforms": "เลือก windows, linux หรือ both"})
-    y = _yaml()
-    with _locked():
-        doc = _load_doc(y)
-        ui = doc.get("ui")
-        if not isinstance(ui, CommentedMap):
-            ui = CommentedMap()
-            doc["ui"] = ui
-        ui["platforms"] = value
-        _write_doc(y, doc)
-    return value
-
-
-def set_netstat(name, cfg):
-    """Netstat Monitor ของเครื่อง (targets[].netstat) cfg ผ่าน netstat_service.clean_host แล้ว  ไม่มีเครื่อง -> None
-    ปิด Monitoring และไม่มีพอร์ต + interval ปริยาย -> ลบ key ทิ้ง"""
-    y = _yaml()
-    with _locked():
-        doc = _load_doc(y)
-        node = _find_target(doc, name)
-        if node is None:
-            return None
-        if not cfg.get("enabled") and not cfg.get("ports") and not cfg.get("apps") and int(cfg.get("interval") or 1) == 1:
-            _set_or_drop(node, "netstat", None)
-        else:
-            m = CommentedMap()
-            m["enabled"] = bool(cfg.get("enabled"))
-            m["interval"] = int(cfg.get("interval") or 1)
-            ports = CommentedSeq()
-            for p in cfg.get("ports") or []:
-                item = CommentedMap()
-                for k, v in p.items():
-                    item[k] = _flow(v) if isinstance(v, dict) else v
-                item.fa.set_flow_style()
-                ports.append(item)
-            m["ports"] = ports
-            if cfg.get("apps"):
-                m["apps"] = _flow(dict(cfg["apps"]))
-            node["netstat"] = m
-        _write_doc(y, doc)
-    return cfg
-
-
 def set_sensor_disabled(name, sensor, disabled):
     """ปิด / เปิด sensor เดียวของเครื่อง (targets[].alert.disabled_sensors)  ไม่มีเครื่อง -> None"""
     sensor = str(sensor or "").strip()
@@ -398,28 +348,6 @@ def set_sensor_settings(name, sensor, priority=None, minutes=None, warning=None,
     return {"name": name, "sensor": sensor, "settings": one, "sensors": cur}
 
 
-def clean_services(value, errors, field="critical_services"):
-    """รายชื่อ service (list หรือข้อความคั่นด้วย , / ขึ้นบรรทัด)  None = ใช้ค่าทั้งระบบ"""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        value = [x for x in re.split(r"[,\n]", value)]
-    if not isinstance(value, list):
-        errors[field] = "ต้องเป็นรายชื่อ service"
-        return None
-    out = []
-    for x in value[:50]:
-        x = str(x or "").strip()
-        if not x:
-            continue
-        if not SERVICE_RE.match(x):
-            errors[field] = f"ชื่อ service ไม่ถูกต้อง: {x[:40]}"
-            continue
-        if x.lower() not in [o.lower() for o in out]:
-            out.append(x)
-    return out
-
-
 # systemd journal แทนไฟล์: "journal" หรือ "journal:nginx.service,ssh.service" (ดู puller/journal.py)
 JOURNAL_RE = re.compile(r"^journal(?::[A-Za-z0-9@._:-]{1,128}(?:,[A-Za-z0-9@._:-]{1,128}){0,9})?$")
 
@@ -453,87 +381,8 @@ def _text(data, key):
     return value.strip() if isinstance(value, str) else ""
 
 
-def validate_agent_target(data, existing_names, editing=None):
-    """เครื่อง Windows ที่ส่งข้อมูลเองผ่าน agent (Fluent Bit) ไม่ใช้ SSH
-    puller.yaml:  type: agent / os: windows / agent: {logs: [C:\...], channels: [System, Application]}"""
-    errors = {}
-    name = editing or _text(data, "name")
-    if not NAME_RE.match(name):
-        errors["name"] = "ใช้ a-z 0-9 และ - เท่านั้น (ขึ้นต้นด้วยตัวอักษร/ตัวเลข ยาวไม่เกิน 40)"
-    elif editing is None and name in existing_names:
-        errors["name"] = "มีชื่อนี้อยู่แล้ว"
-
-    host = _text(data, "host")                      # ไม่บังคับ (ใช้แสดงในหน้าเว็บ)
-    if host and not _valid_host(host):
-        errors["host"] = "ต้องเป็น IP หรือชื่อโดเมนที่ถูกต้อง (หรือเว้นว่าง)"
-
-    agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
-    logs_in = agent.get("logs") if isinstance(agent.get("logs"), list) else []
-    logs = []
-    if len(logs_in) > MAX_LOGS_PER_TARGET:
-        errors["agent.logs"] = f"เพิ่มได้ไม่เกิน {MAX_LOGS_PER_TARGET} path"
-    for p in logs_in[:MAX_LOGS_PER_TARGET]:
-        p = str(p or "").strip()
-        if not p:
-            continue
-        if not WINPATH_RE.match(p):
-            errors["agent.logs"] = f"path ไม่ถูกต้อง: {p[:80]} (ต้องขึ้นต้นด้วยไดรฟ์ เช่น C:\\ ห้ามมี , ; \" ')"
-        logs.append(p)
-
-    ch_in = agent.get("channels") if isinstance(agent.get("channels"), list) else ["System", "Application"]
-    channels = []
-    for c in ch_in[:20]:
-        c = str(c or "").strip()
-        if not c:
-            continue
-        if not CHANNEL_RE.match(c):
-            errors["agent.channels"] = f"ชื่อ channel ไม่ถูกต้อง: {c[:60]}"
-        channels.append(c)
-
-    # วิธีรับข้อมูล: push = Windows ส่งมาเอง (Fluent Bit + token) / pull = central (Prometheus) ดึง windows_exporter เอง
-    #   pull ใช้เมื่อเครื่อง Windows ต่อไปหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าไปได้ — metrics + log (cm-logs.ps1 -> textfile -> puller/agent_logs.py)
-    mode = str(agent.get("mode") or "push").strip().lower()
-    exporter = str(agent.get("exporter") or "").strip()
-    if mode not in ("push", "pull"):
-        errors["agent.mode"] = "เลือก push หรือ pull"
-        mode = "push"
-    # พอร์ตของ central ที่เครื่องนี้ส่งไป (โหมด push) ว่าง = CENTRAL_AGENT_PORT (4318)
-    aport = agent.get("port")
-    if aport in (None, "") or mode == "pull":
-        aport = None
-    else:
-        try:
-            aport = int(aport)
-            if not 1 <= aport <= 65535:
-                raise ValueError
-        except (TypeError, ValueError):
-            errors["agent.port"] = "พอร์ต 1-65535 (ว่าง = ค่าปริยาย 4318)"
-            aport = None
-    if mode == "pull":
-        if not exporter and host:
-            exporter = f"{host}:9182"
-        if not exporter:
-            errors["agent.exporter"] = "โหมด pull ต้องใส่ IP:พอร์ต ของ windows_exporter (เช่น 192.168.181.101:9182) หรือใส่ Host"
-        elif not INSTANCE_RE.match(exporter) or int(exporter.rsplit(":", 1)[1]) > 65535:
-            errors["agent.exporter"] = "รูปแบบ IP:พอร์ต เช่น 192.168.181.101:9182"
-
-    group = clean_group(data.get("group"), errors)
-    priority = clean_priority(data.get("priority"), errors)
-    paused = bool(data.get("paused", False))
-    pause = clean_pause(data, paused, errors)
-    thresholds = clean_thresholds(data.get("thresholds"), errors)
-    alert = clean_alert(data.get("alert"), errors)
-    crit = data.get("critical_services")
-    crit = clean_services(crit, errors) if crit not in (None, "") else None
-    if errors:
-        raise ValidationError(errors)
-    return {"name": name, "type": "agent", "os": "windows", "host": host, "group": group, "priority": priority, "paused": paused, "pause": pause,
-            "thresholds": thresholds, "alert": alert, "critical_services": crit,
-            "agent": {"logs": logs, "channels": channels, "mode": mode, **({"exporter": exporter} if mode == "pull" else {}),
-                      **({"port": aport} if aport else {})}}
-
-
 def is_agent(t):
+    """เครื่อง Windows แบบเดิม (type: agent) ที่ยังค้างใน puller.yaml -> แสดงให้ลบได้เท่านั้น"""
     return isinstance(t, dict) and str(t.get("type") or "ssh") == "agent"
 
 
@@ -544,9 +393,7 @@ def validate_target(data, existing_names, editing=None):
     if not isinstance(data, dict):
         raise ValidationError({"_": "invalid body"})
     if str(data.get("type") or "ssh") not in TARGET_TYPES:
-        raise ValidationError({"type": "ชนิดเครื่องต้องเป็น ssh หรือ agent"})
-    if data.get("type") == "agent":
-        return validate_agent_target(data, existing_names, editing)
+        raise ValidationError({"type": "รองรับเฉพาะเครื่อง Linux (ssh) · เครื่อง Windows เลิกรองรับแล้ว"})
 
     name = editing or _text(data, "name")
     if not NAME_RE.match(name):
@@ -685,48 +532,9 @@ def _targets_seq(doc):
     return seq
 
 
-def _agent_node(t):
-    a = CommentedMap()
-    logs = CommentedSeq()
-    logs.extend(t["agent"]["logs"])
-    a["logs"] = logs
-    ch = CommentedSeq(t["agent"]["channels"])
-    ch.fa.set_flow_style()
-    a["channels"] = ch
-    if t["agent"].get("mode") == "pull":
-        a["mode"] = "pull"
-        a["exporter"] = t["agent"]["exporter"]
-    if t["agent"].get("port"):
-        a["port"] = int(t["agent"]["port"])
-    return a
-
-
 def _to_node(t):
     node = CommentedMap()
     node["name"] = t["name"]
-    if is_agent(t):
-        node["type"] = "agent"
-        node["os"] = t.get("os", "windows")
-        if t.get("host"):
-            node["host"] = t["host"]
-        if t.get("group"):
-            node["group"] = t["group"]
-        if t.get("priority") and t["priority"] != PRIORITY_DEFAULT:
-            node["priority"] = t["priority"]
-        if t.get("paused"):
-            node["paused"] = True
-            if t.get("pause"):
-                node["pause"] = _flow(t["pause"])
-        if t.get("thresholds"):
-            node["thresholds"] = _thresholds_node(t["thresholds"])
-        if t.get("alert"):
-            node["alert"] = _flow(t["alert"])
-        if t.get("critical_services") is not None:
-            cs = CommentedSeq(t["critical_services"])
-            cs.fa.set_flow_style()
-            node["critical_services"] = cs
-        node["agent"] = _agent_node(t)
-        return node
     node["host"] = t["host"]
     if t.get("group"):
         node["group"] = t["group"]
@@ -752,15 +560,9 @@ def _to_node(t):
 
 def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
-    if is_agent(t) or is_agent(node):
-        for key in ("ssh", "prometheus", "logs", "host", "type", "os", "agent", "critical_services",
-                    "group", "priority", "paused", "pause", "thresholds", "alert"):
-            if key in node:
-                del node[key]
-        for k, v in _to_node(t).items():
-            if k != "name":
-                node[k] = v
-        return
+    for key in ("type", "os", "agent", "critical_services"):     # เครื่อง Windows แบบเดิม -> แก้เป็น Linux
+        if key in node:
+            del node[key]
     node["host"] = t["host"]
     _set_or_drop(node, "group", t.get("group") or None)
     _set_or_drop(node, "priority", t["priority"] if t.get("priority") and t["priority"] != PRIORITY_DEFAULT else None)
@@ -838,27 +640,12 @@ def _plain(node):
 # Prometheus file_sd + สั่ง puller ดึงทันที
 # ------------------------------------------------------------------
 
-def pull_target(web, environment="production"):
-    """เครื่อง Windows โหมด pull -> รายการให้ Prometheus ดึง (file_sd) ไม่ใช่ pull / paused -> None
-    ต้องตรงกับ start_push_log/puller/prometheus_targets.py"""
-    agent = web.get("agent") or {}
-    if not web.get("name") or web.get("paused") or agent.get("mode") != "pull" or not agent.get("exporter"):
-        return None
-    return {"targets": [str(agent["exporter"])],
-            "labels": {"job": "cm-agent-pull", "web": web["name"], "cm_web": web["name"], "environment": environment}}
-
-
 def regenerate_prometheus_targets(doc):
     environment = (doc.get("site") or {}).get("environment", "production")
     out = []
     for web in doc.get("targets") or []:
         prom = web.get("prometheus") or {}
         if is_agent(web):
-            # agent แบบ push ส่ง metrics เข้ามาเอง (remote write) / แบบ pull -> Prometheus ดึง windows_exporter
-            #   label cm_web = ชื่อเครื่อง เหมือนข้อมูลที่ agent ส่งมา -> query ของ Windows ใช้ได้ทั้ง 2 แบบ
-            item = pull_target(web, environment)
-            if item:
-                out.append(item)
             continue
         if web.get("name") and prom.get("job") and prom.get("instance"):
             labels = {"job": prom["job"], "web": web["name"], "environment": environment}
@@ -994,15 +781,9 @@ def _prio(t):
 def _view(t):
     t = _plain(t)
     if is_agent(t):
-        agent = t.get("agent") or {}
-        return {"name": t.get("name"), "type": "agent", "os": t.get("os") or "windows", "host": t.get("host") or "",
-                "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t), "thresholds": t.get("thresholds") or {},
-                "alert": t.get("alert") or {},
-                "agent": {"logs": agent.get("logs") or [], "channels": agent.get("channels") or ["System", "Application"],
-                          "mode": "pull" if agent.get("mode") == "pull" else "push", "exporter": agent.get("exporter") or "",
-                          "port": agent.get("port") or ""},
-                "critical_services": t.get("critical_services"),
-                "watch_services": t.get("watch_services") or []}
+        return {"name": t.get("name"), "type": "agent", "legacy": True, "host": t.get("host") or "",
+                "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t),
+                "thresholds": {}, "alert": {}, "logs": [], "watch_services": []}
     ssh = t.get("ssh") or {}
     port = ssh.get("port", 22)
     return {
@@ -1053,12 +834,10 @@ def log_status(name):
         times = sorted(str(v.get("updated_at")) for v in rows if v.get("updated_at"))
         out.append({"name": lname, "path": path, "type": str(src.get("type") or ""), "files": len(rows),
                     "last_pull": times[-1] if times else None, "offset": sum(int(v.get("offset") or 0) for v in rows)})
-    return {"name": name, "agent": is_agent(t), "logs": out}
+    return {"name": name, "logs": out}
 
 
 def _confirm_host_key(t, payload):
-    if is_agent(t):
-        return
     fps = payload.get("trust_fingerprints")
     if fps:
         trust_host_keys(t["host"], t["ssh"]["port"], fps)
@@ -1077,8 +856,7 @@ def add_target(payload):
         seq.append(_to_node(t))
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
-        if not is_agent(t):
-            request_pull(t["name"])
+        request_pull(t["name"])
     return _view(t)
 
 
@@ -1095,31 +873,24 @@ def update_target(name, payload):
         _apply(node, t)
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
-        if not is_agent(t):
-            request_pull(name)
+        request_pull(name)
     return _view(t)
 
 
 # operator แก้ได้เฉพาะส่วนนี้ของเครื่อง (การแจ้งเตือน + log) ส่วนอื่นคงค่าเดิมเสมอ
-OPERATOR_FIELDS = ("thresholds", "alert", "critical_services", "logs")
+OPERATOR_FIELDS = ("thresholds", "alert", "logs")
 
 
 def update_monitoring(name, payload):
-    """แก้เฉพาะ เกณฑ์ / ค่าแจ้งเตือน / service สำคัญ / log ของเครื่อง (สิทธิ์ operator)  ไม่มีเครื่อง -> None"""
+    """แก้เฉพาะ เกณฑ์ / ค่าแจ้งเตือน / log ของเครื่อง (สิทธิ์ operator)  ไม่มีเครื่อง -> None"""
     payload = payload if isinstance(payload, dict) else {}
     cur = next((t for t in list_targets() if t.get("name") == name), None)
-    if cur is None:
+    if cur is None or is_agent(cur):
         return None
     body = {k: v for k, v in cur.items() if k not in ("host_key_known", "watch_services")}
     for k in OPERATOR_FIELDS:
         if k in payload:
             body[k] = payload[k]
-    if is_agent(cur) and isinstance(payload.get("agent"), dict):
-        agent = dict(cur.get("agent") or {})
-        for k in ("logs", "channels"):
-            if k in payload["agent"]:
-                agent[k] = payload["agent"][k]
-        body["agent"] = agent
     return update_target(name, body)
 
 

@@ -40,7 +40,6 @@ from ondemand import start_server as start_ondemand_server
 from scheduler import run_forever
 from sensor_monitor import start as start_sensor_monitor
 from web_checks import start as start_web_checks
-from netstat import start as start_netstat
 
 
 def main():
@@ -57,7 +56,6 @@ def main():
 
     start_web_checks()          # เช็คเว็บ/SSL (puller.yaml -> checks:) thread แยก
     start_sensor_monitor()      # สถานะ sensor ต่อเครื่อง (CPU/Memory/Disk/Availability/Log pull) + System log
-    start_netstat()             # Netstat Monitor ของเครื่อง Windows (real-time ต่อพอร์ต + แจ้งเตือน) thread แยก
 
     run_forever()
 
