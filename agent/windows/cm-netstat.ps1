@@ -37,6 +37,9 @@ $ConfF   = Join-Path $Dir "cm-netstat.json"
 New-Item -ItemType Directory -Force -Path $TextDir | Out-Null
 
 # ทำงานได้ทีละ 1 process (task ทุก 5 นาทีแค่ตรวจว่ายังรันอยู่)
+# ทำงานเบื้องหลังด้วยความสำคัญต่ำ ไม่แย่ง CPU กับโปรแกรมหลักของเครื่อง
+try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch { }
+$Started = Get-Date
 $mutex = New-Object System.Threading.Mutex($false, "Global\CentralMonitorNetstat")
 try { if (-not $mutex.WaitOne(0)) { exit 0 } } catch [System.Threading.AbandonedMutexException] { }
 
@@ -61,23 +64,39 @@ $StateName = @{
     "Closing" = "closing"; "Closed" = "closed"; "DeleteTcb" = "delete_tcb"
 }
 
-# ---------------- PID / โปรแกรม (อัปเดตทุก 15 วิ ใช้ CIM ซึ่งหนักกว่า .NET) ----------------
+# ---------------- PID / โปรแกรม (อัปเดตทุก $PidEvery วิ) ----------------
+# ใช้ netstat.exe -ano (native) แทน Get-NetTCPConnection / Get-NetUDPEndpoint (CIM/WMI)
+# เรียก WMI ถี่ ๆ ตลอดเวลาทำให้ WmiPrvSE.exe กิน CPU / หน่วยความจำสะสม (เคยเป็นสาเหตุเครื่องอืด / ค้างบน Windows Server 2016)
+$PidEvery = 30
 $PidMap = @{}; $UdpMap = @{}; $OutProc = @{}; $ProcName = @{}; $PidAt = [datetime]::MinValue
+function PortOf($ep) { $i = $ep.LastIndexOf(":"); if ($i -lt 0) { return "" } return $ep.Substring($i + 1) }
 function Update-Pids {
     $script:ProcName = @{}
-    Get-Process | ForEach-Object { $script:ProcName[[int]$_.Id] = $_.ProcessName }
+    foreach ($pr in [Diagnostics.Process]::GetProcesses()) { $script:ProcName[[int]$pr.Id] = $pr.ProcessName; $pr.Dispose() }
     $script:ProcName[4] = "System (HTTP.sys)"
-    $script:PidMap = @{}
-    Get-NetTCPConnection -State Listen | ForEach-Object { $script:PidMap["$($_.LocalPort)"] = [int]$_.OwningProcess }
-    $script:UdpMap = @{}
-    Get-NetUDPEndpoint | ForEach-Object { $script:UdpMap["$($_.LocalPort)"] = [int]$_.OwningProcess }
-    $script:OutProc = @{}
-    $lp = $script:PidMap
-    Get-NetTCPConnection -State Established | Where-Object { -not $lp.ContainsKey("$($_.LocalPort)") } |
-        Group-Object RemotePort, OwningProcess | Sort-Object Count -Descending | ForEach-Object {
-            $p = $_.Group[0]
-            if (-not $script:OutProc.ContainsKey("$($p.RemotePort)")) { $script:OutProc["$($p.RemotePort)"] = [int]$p.OwningProcess }
+    $pm = @{}; $um = @{}; $est = @{}
+    foreach ($line in (& netstat.exe -ano 2>$null)) {
+        $f = ([string]$line).Trim() -split '\s+'
+        if ($f[0] -eq "TCP" -and $f.Count -ge 5) {
+            $lport = PortOf $f[1]; $rport = PortOf $f[2]; $procId = [int]$f[$f.Count - 1]
+            if ($rport -eq "0") { if (-not $pm.ContainsKey($lport)) { $pm[$lport] = $procId } }     # remote x:0 = LISTEN
+            elseif ($procId -gt 0) { $k = "$lport|$rport|$procId"; $est[$k] = 1 + [int]$est[$k] }
+        } elseif ($f[0] -eq "UDP" -and $f.Count -ge 4) {
+            $lport = PortOf $f[1]; if (-not $um.ContainsKey($lport)) { $um[$lport] = [int]$f[$f.Count - 1] }
         }
+    }
+    $script:PidMap = $pm; $script:UdpMap = $um
+    $cnt = @{}
+    foreach ($k in $est.Keys) {
+        $x = $k -split '\|'
+        if ($pm.ContainsKey($x[0])) { continue }                                    # ขาเข้า (พอร์ตที่เปิดรับ) ไม่ใช่ขาออก
+        $ck = "$($x[1])|$($x[2])"; $cnt[$ck] = $est[$k] + [int]$cnt[$ck]
+    }
+    $script:OutProc = @{}
+    foreach ($e in ($cnt.GetEnumerator() | Sort-Object Value -Descending)) {
+        $x = $e.Key -split '\|'
+        if (-not $script:OutProc.ContainsKey($x[0])) { $script:OutProc[$x[0]] = [int]$x[1] }
+    }
     $script:PidAt = Get-Date
 }
 
@@ -232,7 +251,7 @@ while ($true) {
     $t0 = [Diagnostics.Stopwatch]::StartNew()
     $nowDt = Get-Date
     $now = [double]([DateTimeOffset]$nowDt).ToUnixTimeMilliseconds() / 1000
-    if (($nowDt - $PidAt).TotalSeconds -ge 15) { Update-Pids }
+    if (($nowDt - $PidAt).TotalSeconds -ge $PidEvery) { Update-Pids }
     if (($nowDt - $HttpAt).TotalSeconds -ge 300) { Update-Http }
     if (($nowDt - $AppAt).TotalSeconds -ge $AppEvery) { Update-AppSources; Read-AppLogs }
 
@@ -399,8 +418,14 @@ while ($true) {
         Move-Item $tmp $out -Force
     } catch { }
 
-    # คืนหน่วยความจำเป็นระยะ (ลูปยาว)
-    if ((++$loop % 300) -eq 0) { [GC]::Collect() }
+    # คืนหน่วยความจำเป็นระยะ (ลูปยาว) + ล้างค่าสูงสุดของพอร์ตที่หายไป
+    if ((++$loop % 300) -eq 0) {
+        foreach ($k in @($Hist.Keys)) { $q = $Hist[$k]; if ($q.Count -eq 0 -or ($now - $q.ToArray()[-1][0]) -gt 60) { $Hist.Remove($k) } }
+        [GC]::Collect()
+        # กันกินหน่วยความจำสะสม: ใช้เกิน 300 MB หรือรันครบ 6 ชม. -> ออก (task ตรวจทุก 5 นาทีจะเปิดใหม่ให้)
+        $me = [Diagnostics.Process]::GetCurrentProcess()
+        if ($me.WorkingSet64 -gt 300MB -or ($nowDt - $Started).TotalHours -ge 6) { try { $mutex.ReleaseMutex() } catch { }; exit 0 }
+    }
     $wait = [int]($Interval * 1000 - $t0.ElapsedMilliseconds)
     if ($wait -lt 200) { $wait = 200 }
     Start-Sleep -Milliseconds $wait

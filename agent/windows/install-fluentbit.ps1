@@ -469,11 +469,12 @@ Move-Item $tmp (Join-Path $Dir "cm_probe.prom") -Force
                 try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $NetScript } catch { }
                 $act4 = New-ScheduledTaskAction -Execute "powershell.exe" `
                     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$NetScript`""
-                $trg4 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 5) `
+                # ทุก 15 นาที (เดิม 5): อ่านกฎ firewall / Security log ผ่าน WMI ค่อนข้างหนัก
+                $trg4 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 15) `
                     -RepetitionDuration (New-TimeSpan -Days 3650)
                 $set4 = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -StartWhenAvailable -MultipleInstances IgnoreNew
                 Register-ScheduledTask -TaskName "CentralMonitorNetSec" -Action $act4 -Trigger $trg4 -Principal $pr -Settings $set4 -Force | Out-Null
-                Write-Host "   Network & Security (การเชื่อมต่อ / route / firewall / logon): scheduled task 'CentralMonitorNetSec' ทุก 5 นาที"
+                Write-Host "   Network & Security (การเชื่อมต่อ / route / firewall / logon): scheduled task 'CentralMonitorNetSec' ทุก 15 นาที"
             } else { Warn "ไม่พบ cm-netsec.ps1 ข้างสคริปต์นี้ -> หน้า Network & Security ของเครื่องนี้จะว่าง (แตก zip ใหม่ทั้งชุด)" }
             # Netstat Monitor: process เดียวรันค้าง เก็บทุก $NetstatInterval วินาที (cm-netstat.ps1 ข้างสคริปต์นี้)
             $NsSrc = Join-Path $PSScriptRoot "cm-netstat.ps1"

@@ -1,7 +1,7 @@
 ﻿<#
   cm-netsec.ps1 (Central Monitor) - Network & Security ของเครื่อง Windows -> textfile ของ windows_exporter
   ---------------------------------------------------------------------------------------------
-  scheduled task "CentralMonitorNetSec" ทุก 5 นาที (SYSTEM) เขียน cm_netsec.prom:
+  scheduled task "CentralMonitorNetSec" ทุก 15 นาที (SYSTEM) เขียน cm_netsec.prom:
     cm_net_conn{dir,peer,port,proc}            การเชื่อมต่อ TCP ที่ค้างอยู่ (Established) รวมตาม ขาเข้า/ขาออก + ปลายทาง + พอร์ต + โปรแกรม
                                                in  = เครื่องอื่นต่อเข้าพอร์ตที่เครื่องนี้เปิดรับ (port = พอร์ตของเครื่องนี้)
                                                out = เครื่องนี้ต่อออกไปหาเครื่องอื่น (port = พอร์ตปลายทาง)

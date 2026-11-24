@@ -10,7 +10,7 @@ netsec_service.py - หน้า Network & Security (/network)
 ที่มาของข้อมูล
     Linux   puller/netsec.py ผ่าน SSH ทุกรอบสถานะ (scheduler.interval) -> data/state/system/<เครื่อง>.json "netsec"
             (กด "ดึงใหม่" ในหน้าเว็บ = สั่ง puller ดึงเครื่องนั้นทันที)
-    Windows agent/windows/cm-netsec.ps1 ทุก 5 นาที -> textfile ของ windows_exporter -> Prometheus (cm_net_conn, cm_fw_* ...)
+    Windows agent/windows/cm-netsec.ps1 ทุก 15 นาที -> textfile ของ windows_exporter -> Prometheus (cm_net_conn, cm_fw_* ...)
 อ่านอย่างเดียว ไม่แก้ firewall / route บนเครื่อง
 """
 
@@ -92,7 +92,7 @@ def _win(web):
                     "ตรวจว่ามี scheduled task CentralMonitorNetSec และรันสำเร็จ (Get-ScheduledTaskInfo CentralMonitorNetSec)")
         elif prom_vector(f'up{{cm_web="{web}"}}') or prom_vector(f'{{__name__=~"windows_cpu_time.*",cm_web="{web}"}}'):
             note = ("มี metrics ของเครื่องนี้แต่ไม่มีข้อมูล Network & Security · ติดตั้ง cm-netsec.ps1 (zip ชุดล่าสุด) "
-                    "แล้วรอ ~5 นาที · ตรวจบนเครื่อง: curl.exe -s http://127.0.0.1:9182/metrics | findstr cm_fw_profile")
+                    "แล้วรอ ~15 นาที · ตรวจบนเครื่อง: curl.exe -s http://127.0.0.1:9182/metrics | findstr cm_fw_profile")
         else:
             note = "ไม่มีข้อมูลจากเครื่องนี้เลย (agent / windows_exporter ไม่ได้ส่งมา)"
     return {"addrs": addrs, "routes": routes, "listening": ls, "connections": sorted(conns, key=lambda c: -c["count"]),
