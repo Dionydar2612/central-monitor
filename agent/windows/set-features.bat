@@ -38,15 +38,14 @@ function Save-Off($off) {
 function Set-Feature($key, [bool]$on) {
     $f = $F[$key]
     $t = Get-ScheduledTask -TaskName $f.task
-    if (-not $t) { Write-Host "[SKIP] $key : task $($f.task) not installed on this machine"; return }
+    if (-not $t -and $on) { Write-Host "[SKIP] $key : task $($f.task) not installed (reinstall the agent to get it back)"; return }
     $off = @(Load-Off | Where-Object { $_ -ne $key })
     if ($on) {
         Enable-ScheduledTask -TaskName $f.task | Out-Null
         Start-ScheduledTask -TaskName $f.task
         Write-Host "[ON ] $key"
     } else {
-        Stop-ScheduledTask -TaskName $f.task
-        Disable-ScheduledTask -TaskName $f.task | Out-Null
+        if ($t) { Stop-ScheduledTask -TaskName $f.task; Disable-ScheduledTask -TaskName $f.task | Out-Null }   # no task (deleted by hand) -> still stop the process
         if ($f.ps) { Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*$($f.ps)*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }
         Remove-Item (Join-Path $Text $f.prom) -Force
         $off += $key

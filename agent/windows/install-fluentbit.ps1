@@ -157,6 +157,14 @@ if (-not $wu -or $wuStart -eq 4 -or "$($wu.StartType)" -eq 'Disabled') {        
 }
 # textfile: โปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ (cm-inventory.ps1 เขียนทุก 15 นาที)
 $TextDir = Join-Path $DataDir "textfile"
+# task จากโค้ดรุ่นเก่าที่เลิกใช้แล้ว (เช่น CentralMonitorAgentSync ของแบบ one-line install ที่ถอนออกไปแล้ว) -> ลบทิ้ง
+foreach ($old in @("CentralMonitorAgentSync")) {
+    if (Get-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $old -Confirm:$false -ErrorAction SilentlyContinue
+        Write-Host "   ลบ scheduled task เก่าที่เลิกใช้แล้ว: $old"
+    }
+}
 # ฟังก์ชันที่ปิดไว้ด้วย set-features.bat (features.json) -> ติดตั้งใหม่ / อัปเดตแล้วยังปิดอยู่เหมือนเดิม
 function Apply-Features {
     $fc = Join-Path $DataDir "features.json"

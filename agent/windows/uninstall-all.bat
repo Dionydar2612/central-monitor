@@ -2,7 +2,7 @@
 REM ======================================================================
 REM  uninstall-all.bat - Central Monitor: remove EVERYTHING from this Windows machine
 REM    push + pull mode: services cm-agent, cm-exporter
-REM    scheduled tasks CentralMonitor* + running cm-netstat.ps1
+REM    ALL scheduled tasks CentralMonitor* (also from old versions) + leftover cm-*.ps1 processes
 REM    firewall rule "Central Monitor Exporter (pull)"
 REM    folders %ProgramFiles%\central-monitor-agent, %ProgramData%\central-monitor-agent
 REM    re-enables an OLD windows_exporter service that the installer had disabled
@@ -17,10 +17,10 @@ if errorlevel 1 (
 )
 echo Removing Central Monitor from %COMPUTERNAME% ...
 echo.
-for %%T in (CentralMonitorNetstat CentralMonitorNetSec CentralMonitorLogs CentralMonitorProbe CentralMonitorInventory) do (
-    schtasks /query /tn "%%T" >nul 2>&1 && (schtasks /end /tn "%%T" >nul 2>&1 & schtasks /delete /tn "%%T" /f >nul && echo [OK] removed scheduled task %%T)
-)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $_.CommandLine -like '*cm-netstat.ps1*' -or $_.CommandLine -like '*cm-logs.ps1*' -or $_.CommandLine -like '*cm-netsec.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Host ('[OK] stopped ' + $_.ProcessId) }"
+REM every CentralMonitor* task (current + old versions, e.g. CentralMonitorAgentSync)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ScheduledTask -TaskName 'CentralMonitor*' -ErrorAction SilentlyContinue | ForEach-Object { Stop-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -Confirm:$false; Write-Host ('[OK] removed scheduled task ' + $_.TaskName) }"
+REM leftover scripts still running (cm-netstat, cm-logs, cm-netsec, cm-inventory, cm-probe, cm-agent-sync ...)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $_.CommandLine -match 'central-monitor-agent|cm-[a-z-]+\.ps1' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Write-Host ('[OK] stopped leftover process ' + $_.ProcessId) }"
 for %%S in (cm-agent cm-exporter) do (
     sc query %%S >nul 2>&1
     if not errorlevel 1 (
