@@ -188,6 +188,8 @@ def _subject(e):
         return "Ping loss"
     if k == "net_latency":
         return "Ping latency"
+    if k == "time_offset":
+        return "เวลา / NTP"
     if k == "service":
         return f"Service {name.split(':', 1)[-1].strip()}"
     if k == "bottleneck":
@@ -230,6 +232,10 @@ def short_text(kind, e, with_limit=True):
         return f"Ping หาย {v}%{gate}" if v else "Ping หาย"
     if k == "net_latency":
         return f"Ping ช้า {v} ms{gate}" if v else "Ping ไม่ตอบ"
+    if k == "time_offset":
+        if "not synchronized" in str(e.get("message") or ""):
+            return "NTP ไม่ sync (เวลาไม่อัปเดต)"
+        return f"เวลาคลาด {v} ms{gate}" if v else "เวลาคลาด"
     if k == "service":
         return f"{sub} หยุดทำงาน"
     if k == "bottleneck":

@@ -22,10 +22,20 @@ log / journal / สถานะ  <── puller ผ่าน SSH (user central-p
 | Disk latency ms | 20 / 50 |
 | Packet loss % | 1 / 5 |
 | Ping latency ms | 100 / 250 |
+| เวลาคลาด (NTP) ms | 500 / 2000 |
 
 - ปรับได้ที่ **Settings > Alerts** (ทั้งระบบ) และฟอร์มของเครื่อง (เฉพาะเครื่อง)
   เก็บใน `puller.yaml`: `thresholds:`, `targets[].thresholds`
 - **แจ้งเตือนเมื่อเกินต่อเนื่อง** ค่าเริ่มต้น **3 นาที** (`sensors.confirm_checks: 6` × 30 วินาที) ปรับได้ 0.5–60 นาที
+
+### Time sync (NTP)
+
+sensor `Time sync (NTP)` ของทุกเครื่อง Linux ใช้ค่าจาก node_exporter (timex collector เปิดอยู่แล้ว ไม่ต้องติดตั้งเพิ่ม)
+
+- **ไม่ sync** (`node_timex_sync_status = 0` เช่น chrony / systemd-timesyncd หยุด หรือไปไม่ถึง NTP server UDP 123) = **Error**
+- **sync แล้ว** ดูว่านาฬิกาคลาดจาก central เท่าไร (`node_time_seconds` เทียบเวลาที่ Prometheus scrape) เกินเกณฑ์ = Warning / Error
+- แจ้งเตือน / กลับปกติ ผ่าน Alert และการ์ด Teams เดิม · ปิดรายเครื่องได้ (ปิด sensor > Time sync) · node_exporter ที่ไม่มีค่า timex จะไม่มี sensor นี้
+- ถ้าทุกเครื่องเตือนพร้อมกัน ให้ตรวจนาฬิกาของ central ก่อน
 
 ## 3. Bottleneck (หลายค่าพร้อมกัน)
 

@@ -8,7 +8,7 @@ const N = { id: "", tab: "overview", d: null, hist: {}, timer: null };
 const ST = { ok: ["✓", "OK", "ok"], warning: ["!", "Warning", "wr"], error: ["✕", "Error", "cr"], down: ["▼", "Down", "cr"],
              paused: ["II", "Paused", "ps"], unknown: ["?", "Unknown", "na"] };
 const KIND = { availability: "Availability (Ping)", cpu: "CPU Load", memory: "Memory", disk: "Disk Usage",
-               disk_latency: "Disk latency", packet_loss: "Packet loss", net_latency: "Ping latency", bottleneck: "Bottleneck",
+               disk_latency: "Disk latency", packet_loss: "Packet loss", net_latency: "Ping latency", time_offset: "Time sync (NTP)", bottleneck: "Bottleneck",
                log_pull: "Log pull", rule: "Custom alert rule" };
 
 function esc(v) { return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }

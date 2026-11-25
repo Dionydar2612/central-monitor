@@ -151,7 +151,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <div class="fsec"><div class="fsec-h">Priority / เวลาแจ้งเฉพาะ sensor</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:8px">Priority สูง = แจ้งก่อนเสมอเมื่อเกิดพร้อมกัน (ว่าง = Priority ของเครื่อง) · ยังไม่ครบนาทีที่ตั้ง = บันทึกใน System log แต่ไม่แจ้ง · ตั้งจากหน้า sensor ได้ด้วย</div>
 <div class="st-f" data-f="alert.sensors"><table class="st-tbl senstbl"><thead><tr><th>sensor</th><th>Priority</th><th>แจ้งเมื่อเป็นต่อเนื่อง (นาที)</th><th></th></tr></thead><tbody id="fa_sens"></tbody></table>
-<datalist id="sensKeys"><option value="availability"><option value="cpu"><option value="memory"><option value="disk"><option value="mem_available"><option value="net_latency"><option value="packet_loss"><option value="disk_latency"><option value="log_pull"><option value="service"><option value="bottleneck:*"><option value="custom"></datalist>
+<datalist id="sensKeys"><option value="availability"><option value="cpu"><option value="memory"><option value="disk"><option value="mem_available"><option value="net_latency"><option value="packet_loss"><option value="disk_latency"><option value="log_pull"><option value="time_sync"><option value="service"><option value="bottleneck:*"><option value="custom"></datalist>
 <button type="button" class="st-btn sm" id="fa_sens_add" style="margin-top:8px">+ เพิ่ม sensor</button><div class="st-err"></div></div>
 </div>
 <div class="fsec"><div class="fsec-h">ปิด sensor</div>
@@ -161,6 +161,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <label class="st-check"><input type="checkbox" data-ds="disk_latency"> Disk latency</label>
 <label class="st-check"><input type="checkbox" data-ds="bottleneck:*"> Bottleneck ทั้งหมด</label>
 <label class="st-check"><input type="checkbox" data-ds="log_pull"> Log pull (ดึง log)</label>
+<label class="st-check"><input type="checkbox" data-ds="time_sync"> Time sync (NTP)</label>
 </div>
 <label for="fa_ds_more" style="margin-top:8px">อื่น ๆ (ชื่อ sensor คั่นด้วย , เช่น <code>disk:/boot</code> <code>service:Spooler</code>)</label><input id="fa_ds_more" autocomplete="off" placeholder="ว่าง = ไม่มี"><small>ปิด / เปิดทีละตัวได้จากปุ่มในหน้า sensor ด้วย</small><div class="st-err"></div></div>
 </div>
@@ -172,6 +173,7 @@ journal log: path = <code>journal</code> (ทั้งเครื่อง) ห
 <tr class=""><th><b>Disk latency</b> <span class="st-mut">ms</span></th><td><div class="st-f" data-f="thresholds.disk_latency.warning"><input id="th_disk_latency_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.disk_latency.error"><input id="th_disk_latency_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
 <tr class=""><th><b>Packet loss (ping)</b> <span class="st-mut">%</span></th><td><div class="st-f" data-f="thresholds.packet_loss.warning"><input id="th_packet_loss_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.packet_loss.error"><input id="th_packet_loss_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
 <tr class=""><th><b>Ping latency</b> <span class="st-mut">ms</span></th><td><div class="st-f" data-f="thresholds.net_latency.warning"><input id="th_net_latency_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.net_latency.error"><input id="th_net_latency_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
+<tr class=""><th><b>เวลาคลาด (NTP)</b> <span class="st-mut">ms</span><small>เทียบกับนาฬิกา central · ไม่ sync = Error</small></th><td><div class="st-f" data-f="thresholds.time_offset.warning"><input id="th_time_offset_warning" inputmode="decimal"><div class="st-err"></div></div></td><td><div class="st-f" data-f="thresholds.time_offset.error"><input id="th_time_offset_error" inputmode="decimal"><div class="st-err"></div></div></td></tr>
 </tbody></table>
 </div>
 </div>

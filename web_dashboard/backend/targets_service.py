@@ -129,12 +129,12 @@ def clean_group(value, errors, field="group"):
     return group
 
 
-THRESHOLD_KINDS = ("cpu", "memory", "disk", "disk_latency", "packet_loss", "net_latency", "mem_available")
+THRESHOLD_KINDS = ("cpu", "memory", "disk", "disk_latency", "packet_loss", "net_latency", "mem_available", "time_offset")
 # (ต่ำสุด, สูงสุด, หน่วย)  mem_available = RAM ว่างเหลือ % (ยิ่งต่ำยิ่งแย่ -> warning ต้องมากกว่า error)
 THRESHOLD_RANGES = {
     "cpu": (1, 100, "%"), "memory": (1, 100, "%"), "disk": (1, 100, "%"),
     "disk_latency": (1, 10000, "ms"), "packet_loss": (0.1, 100, "%"), "net_latency": (1, 10000, "ms"),
-    "mem_available": (1, 99, "%"),
+    "mem_available": (1, 99, "%"), "time_offset": (10, 600000, "ms"),
 }
 LOW_IS_BAD = ("mem_available",)
 SERVICE_RE = re.compile(r"^[A-Za-z0-9_.$@ -]{1,80}$")

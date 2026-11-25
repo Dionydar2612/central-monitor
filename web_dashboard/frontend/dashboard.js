@@ -2351,7 +2351,7 @@ function devTime(v) {
 }
 const DEV_CAT = [
     ["perf", "ประสิทธิภาพ", ["cpu", "memory", "mem_available", "disk", "disk_latency"]],
-    ["net", "การเชื่อมต่อ / เครือข่าย", ["availability", "net_latency", "packet_loss", "log_pull"]],
+    ["net", "การเชื่อมต่อ / เครือข่าย", ["availability", "net_latency", "packet_loss", "time_offset", "log_pull"]],
     ["svc", "Service / โปรแกรม", ["service", "rule", "process", "port_listen", "tcp_port", "http_url", "http_local", "docker"]],
     ["bn", "Bottleneck", ["bottleneck"]],
 ];
@@ -2379,7 +2379,7 @@ function renderDevice() {
     /* เกจ: เฉพาะค่าตัวเลข (ประสิทธิภาพ + เครือข่าย) ขนาดเท่ากันทุกใบ */
     const gauges = sorted.filter(x => num(x) && x.unit && ["perf", "net"].includes(devCat(x)))
         .sort((a, b) => ["cpu", "memory", "disk"].indexOf(b.kind) - ["cpu", "memory", "disk"].indexOf(a.kind));
-    const gk = ["cpu", "memory", "mem_available", "disk", "disk_latency", "net_latency", "packet_loss"];
+    const gk = ["cpu", "memory", "mem_available", "disk", "disk_latency", "net_latency", "packet_loss", "time_offset"];
     gauges.sort((a, b) => (gk.indexOf(a.kind) + 1 || 99) - (gk.indexOf(b.kind) + 1 || 99) || String(a.name).localeCompare(String(b.name)));
     const tiles = gauges.length ? `<div class="dtiles">${gauges.map(x => `<a class="dtile ${cls(x)}" href="${sl(x.id)}" title="${escapeHtml(x.message || "")}">${CMGauge.svg(x, { size: "sm" })}<span><small>${escapeHtml(x.name)}</small><b>${escapeHtml(CMGauge.fmt(x.value, x.unit))}</b></span></a>`).join("")}</div>` : "";
     /* รายการแยกหมวด (พับได้ จำไว้ระหว่างรีเฟรช) */

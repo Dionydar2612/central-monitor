@@ -12,7 +12,7 @@
 const $ = id => document.getElementById(id);
 const S = { targets: [], publicKey: null, editing: null, scanned: [], hostKeyKnown: false, checks: [], editingCheck: null, me: null };
 
-const TH_KINDS = ["cpu", "memory", "disk", "disk_latency", "packet_loss", "net_latency"];
+const TH_KINDS = ["cpu", "memory", "disk", "disk_latency", "packet_loss", "net_latency", "time_offset"];
 
 /* ---------- ตัวช่วย ---------- */
 
@@ -871,6 +871,7 @@ let AL = null;
 const AL_LABEL = {
     cpu: "CPU %", memory: "Memory used %", disk: "Disk used %", disk_latency: "Disk latency (ms)",
     packet_loss: "Packet loss (ping) %", net_latency: "Ping latency (ms)", mem_available: "Available RAM % (ต่ำกว่า = แจ้ง)",
+    time_offset: "เวลาคลาด / NTP (ms)",
 };
 function alInput(id, v) { return el("input", { id, type: "number", step: "any", min: "0", inputmode: "decimal", value: v ?? "" }); }
 function renderAlerts(d) {

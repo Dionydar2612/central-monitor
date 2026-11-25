@@ -46,7 +46,7 @@ sensors:
                       # หมายเหตุ: memory/disk ใช้ค่าสูงสุดใน 1 นาทีล่าสุด (เก็บ spike สั้นๆ ที่เกิดระหว่างรอบตรวจ)
 
 # เกณฑ์ทั้งระบบ (warning / error) ไม่ใส่ = ค่าปริยาย
-#   thresholds:  cpu 75/90 · memory 80/90 · disk 80/90 · disk_latency 20/50 ms · packet_loss 1/5 % · net_latency 100/250 ms
+#   thresholds:  cpu 75/90 · memory 80/90 · disk 80/90 · disk_latency 20/50 ms · packet_loss 1/5 % · net_latency 100/250 ms · time_offset 500/2000 ms
 # thresholds:
 #   cpu: {warning: 75, error: 90}
 

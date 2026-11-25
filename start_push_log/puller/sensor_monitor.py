@@ -76,10 +76,11 @@ DEFAULT_THRESHOLDS = {                     # Linux (ค่าเดิม) + ช
     "packet_loss": {"warning": 1, "error": 5},          # %
     "net_latency": {"warning": 100, "error": 250},      # ms
     "mem_available": {"warning": 20, "error": 10},      # % (ต่ำ = แย่)
+    "time_offset": {"warning": 500, "error": 2000},     # ms นาฬิกาเครื่องคลาดจาก central
 }
 LOW_IS_BAD = ("mem_available",)
 UNITS = {"cpu": "%", "memory": "%", "disk": "%", "disk_latency": "ms", "packet_loss": "%",
-         "net_latency": "ms", "mem_available": "%"}
+         "net_latency": "ms", "mem_available": "%", "time_offset": "ms"}
 
 # สัญญาณประกอบของ Bottleneck (ค่าคงที่ ไม่ขึ้นกับเครื่อง)
 BOTTLENECK_LIMITS = {
@@ -170,6 +171,11 @@ def _linux_exprs(l):
         "net_oq": None,
         "tcp_retx": (f"sum(rate(node_netstat_Tcp_RetransSegs{{{l}}}[5m])) / "
                      f"sum(rate(node_netstat_Tcp_OutSegs{{{l}}}[5m])) * 100"),
+        # เวลา / NTP (timex collector ของ node_exporter เปิดอยู่แล้วโดยปริยาย)
+        #   ntp_sync    1 = kernel บอกว่านาฬิกา sync กับ NTP อยู่ (chrony / ntpd / systemd-timesyncd) · 0 = ไม่ sync
+        #   time_offset นาฬิกาเครื่องคลาดจากนาฬิกาของ central (เวลาที่ Prometheus scrape) หน่วย ms
+        "ntp_sync": f"max(node_timex_sync_status{{{l}}})",
+        "time_offset": f"max(abs(node_time_seconds{{{l}}} - timestamp(node_time_seconds{{{l}}}))) * 1000",
     }
 
 
@@ -623,6 +629,10 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
                 add("net_latency", "net_latency", "Network latency (ping)", "error", None, unit="ms",
                     message="no ping reply in 5m")
 
+    # --- เวลา / NTP (เครื่อง Linux ที่มี node_exporter) ---
+    if not is_win:
+        _time_sensor(ex, th, prev("time_sync"), hyst, add)
+
     # --- Bottleneck ---
     if opts["bottleneck"]:
         _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, add)
@@ -660,6 +670,29 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
             add("logpull", "logpull", "Log pull (SSH)", "ok", age / 60, unit="min",
                 message=f"last pull {age / 60:.0f} min ago")
     return out
+
+
+def _time_sensor(ex, th, prev, hyst, add):
+    """Time sync (NTP): ไม่ sync = Error ทันที (ผ่านการยืนยัน N รอบเหมือน sensor อื่น) · sync แล้วดูว่าคลาดจาก central เท่าไร
+    node_exporter รุ่นเก่า / ปิด timex collector -> ไม่มีค่าทั้งคู่ -> ไม่สร้าง sensor"""
+    sync, off = _one(ex["ntp_sync"]), _one(ex["time_offset"])
+    if sync is None and off is None:
+        return
+    lim = th["time_offset"]
+    if sync is not None and sync < 1:
+        st = "error"
+        msg = "NTP not synchronized - check chrony / systemd-timesyncd and access to the NTP server (UDP 123)"
+        if off is not None:
+            msg += f" · clock offset {off:.0f} ms"
+    elif off is None:
+        st, msg = "ok", "NTP synchronized"
+    else:
+        st = _grade(off, lim, prev, hyst)
+        msg = _limit_msg("clock offset vs central", off, lim, st, unit=" ms")
+        if st != "ok":
+            msg += " (if every machine shows this, check the central clock first)"
+    add("time_sync", "time_offset", "Time sync (NTP)", st, off, unit="ms", query=ex["time_offset"], message=msg,
+        details={"ntp_synced": None if sync is None else sync >= 1})
 
 
 def _bottleneck_sensors(t, ex, th, cpu, mem, mem_av, disk_lat, lat_mount, loss, rtt, add):

@@ -125,6 +125,34 @@ class Bottleneck(unittest.TestCase):
         self.assertTrue(sensor_monitor._fmt_duration(125))
 
 
+class TimeSync(unittest.TestCase):
+    """sensor Time sync (NTP): ไม่ sync = Error · คลาดเกินเกณฑ์ = Warning / Error · ไม่มีค่า = ไม่สร้าง sensor"""
+    def run_case(self, sync, off, prev=None):
+        ex = sensor_monitor._linux_exprs('job="j",instance="i"')
+        vals = {ex["ntp_sync"]: sync, ex["time_offset"]: off}
+        out, orig = [], sensor_monitor._one
+        sensor_monitor._one = lambda q: vals.get(q)
+        try:
+            th = sensor_monitor._thresholds({})
+            sensor_monitor._time_sensor(ex, th, prev, 2.0, lambda sid, kind, label, st, v=None, **k: out.append((sid, kind, st, v, k)))
+        finally:
+            sensor_monitor._one = orig
+        return out
+
+    def test_states(self):
+        self.assertEqual(self.run_case(None, None), [])
+        self.assertEqual(self.run_case(1, 30)[0][2], "ok")
+        self.assertEqual(self.run_case(1, 800)[0][2], "warning")
+        self.assertEqual(self.run_case(1, 2500)[0][2], "error")
+        r = self.run_case(0, 10)[0]
+        self.assertEqual((r[0], r[1], r[2]), ("time_sync", "time_offset", "error"))
+        self.assertIn("not synchronized", r[4]["message"])
+        self.assertEqual(notify.short_text("down", {"kind": "time_offset", "message": r[4]["message"]}), "NTP ไม่ sync (เวลาไม่อัปเดต)")
+
+    def test_threshold_default(self):
+        self.assertEqual(sensor_monitor._thresholds({})["time_offset"], {"warning": 500, "error": 2000})
+
+
 class LogLevels(unittest.TestCase):
     def test_levels(self):
         d = log_levels.detect_log_level

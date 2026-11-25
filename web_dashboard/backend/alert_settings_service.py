@@ -25,11 +25,12 @@ DEFAULT_THRESHOLDS = {
     "cpu": {"warning": 75, "error": 90}, "memory": {"warning": 80, "error": 90},
     "disk": {"warning": 80, "error": 90}, "disk_latency": {"warning": 20, "error": 50},
     "packet_loss": {"warning": 1, "error": 5}, "net_latency": {"warning": 100, "error": 250},
-    "mem_available": {"warning": 20, "error": 10},
+    "mem_available": {"warning": 20, "error": 10}, "time_offset": {"warning": 500, "error": 2000},
 }
 LABELS = {
     "cpu": "CPU %", "memory": "Memory used %", "disk": "Disk used %", "disk_latency": "Disk latency ms",
     "packet_loss": "Packet loss %", "net_latency": "Ping latency ms", "mem_available": "Available RAM % (ต่ำ = แย่)",
+    "time_offset": "Clock offset ms (NTP)",
 }
 
 
