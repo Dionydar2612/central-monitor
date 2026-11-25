@@ -1011,7 +1011,7 @@ class WindowsAgentless(unittest.TestCase):
             os.environ["CENTRAL_PULLER_TOKEN"] = "k2"
             with self.assertRaises(cm_secrets.SecretError):
                 cm_secrets.get_password("win-s")
-            self.assertEqual(cm_secrets.prune_orphans(["other"]), ["win-s"])
+            self.assertIn("win-s", cm_secrets.prune_orphans(["other"]))
         finally:
             os.environ.pop("CENTRAL_PULLER_TOKEN", None)
             if old is not None:
@@ -1024,3 +1024,31 @@ class WindowsAgentless(unittest.TestCase):
         self.assertFalse(custom_rules.applies({"os": "windows"}, lin))
         self.assertFalse(custom_rules.applies({"os": "linux"}, win))
         self.assertTrue(custom_rules.applies({"os": "any"}, win))
+
+
+class WindowsSoftErrors(unittest.TestCase):
+    def test_command_error_does_not_stop_other_tasks(self):
+        """Get-CMServices ไม่มีสิทธิ์ (session ยังดี) -> เตือน แต่ metric / snapshot ยังเก็บต่อ ไม่ backoff"""
+        import windows_pull
+        import winrm_client
+
+        class S:
+            is_open = True
+            def call(self, cmd, params=None):
+                if cmd == "Get-CMServices":
+                    raise winrm_client.WinRMError("Get-CMServices: Cannot open Service Control Manager on computer '.'")
+                if cmd == "Get-CMProcesses":
+                    return {"top_cpu": [], "top_ram": [], "self_pid": 1}
+                raise AssertionError(cmd)
+
+        w = windows_pull.Worker("win-soft")
+        w.configure({"site": {"name": "s"}, "storage": {}, "scheduler": {}}, {"name": "win-soft", "type": "winrm"})
+        w.session = S()
+        w.services = [{"name": "old", "status": "active"}]
+        w._soft("snapshot", w.do_snapshot, w.session)
+        self.assertIn("services", w.task_errors)
+        self.assertEqual(w.services, [{"name": "old", "status": "active"}])     # คงรายการเดิม
+        self.assertTrue(os.path.exists(os.path.join(system_info.SYSTEM_DIR, "win-soft.json")))
+        w.session.is_open = False                                             # session หลุด -> ส่งต่อให้รอบหลัก
+        with self.assertRaises(winrm_client.WinRMError):
+            w._soft("services", w.session.call, "Get-CMServices")

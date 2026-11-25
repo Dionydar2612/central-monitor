@@ -356,6 +356,7 @@ class Worker(threading.Thread):
         self.history_at = 0.0
         self.busy = False
         self.last_metrics = {}
+        self.task_errors = {}                 # งานที่ล้มแต่ session ยังดี (เช่น สิทธิ์ไม่พอ) -> เตือน ไม่หยุดงานอื่น
         self.call_lock = threading.Lock()     # session ใช้ได้ทีละงาน (รอบปกติ / ปุ่มบนหน้าเว็บ)
 
     # --- ตั้งค่า / session ---
@@ -389,6 +390,22 @@ class Worker(threading.Thread):
             self.session = winrm_client.Session(self.target.get("host"), w["port"], w["user"], password, w["thumbprint"])
             self.session_key = key
         return self.session
+
+    def _soft(self, key, fn, *args):
+        """ทำงานหนึ่งอย่าง: คำสั่งบนเครื่องล้ม (session ยังต่ออยู่) = จำเป็นคำเตือนแล้วทำงานอื่นต่อ
+        ต่อไม่ได้ / session หลุด = ส่งต่อให้รอบหลักรอแล้วต่อใหม่"""
+        try:
+            out = fn(*args)
+            self.task_errors.pop(key, None)
+            return out
+        except winrm_client.WinRMError as e:
+            if self.session is None or not self.session.is_open:
+                raise
+            msg = str(e)[:300]
+            if self.task_errors.get(key) != msg:
+                print(f"[WINRM WARN] {self.target_name} {key}: {msg}")
+            self.task_errors[key] = msg
+            return None
 
     def call(self, cmd, params=None, wait=25):
         """เรียกจากหน้าเว็บ (ondemand) ผ่าน session เดิมของเครื่อง ไม่เปิด session ใหม่"""
@@ -434,7 +451,10 @@ class Worker(threading.Thread):
         for log_name in winrm_settings(self.target)["event_logs"]:
             for _ in range(MAX_EVENT_PAGES):
                 after = int(marks.get(log_name, -1))
-                r = s.call("Get-CMEvents", {"LogName": log_name, "AfterRecordId": after, "MaxEvents": 200, "MaxLevel": max_level})
+                r = self._soft(f"eventlog {log_name}", s.call, "Get-CMEvents",
+                               {"LogName": log_name, "AfterRecordId": after, "MaxEvents": 200, "MaxLevel": max_level})
+                if r is None:
+                    break
                 newest = int(r.get("newest") or 0)
                 evs = r.get("events") or []
                 if after < 0 or newest < after:            # ครั้งแรก / log ถูกล้าง -> เริ่มจากตอนนี้
@@ -479,9 +499,11 @@ class Worker(threading.Thread):
             for path in paths[:50]:
                 key = f"{src['name']}::{path}"
                 prev = tails.get(key) or {}
-                r = s.call("Get-CMLogTail", {"Path": path, "Offset": int(prev.get("offset", -1)),
-                                             "Fingerprint": prev.get("fp", ""), "MaxBytes": MAX_TAIL_BYTES,
-                                             "Encoding": src.get("encoding") or "utf8"})
+                r = self._soft(f"log {path}", s.call, "Get-CMLogTail", {"Path": path, "Offset": int(prev.get("offset", -1)),
+                                                                     "Fingerprint": prev.get("fp", ""), "MaxBytes": MAX_TAIL_BYTES,
+                                                                     "Encoding": src.get("encoding") or "utf8"})
+                if r is None:
+                    continue
                 text = r.get("text") or ""
                 start, end = int(r.get("start") or 0), int(r.get("next_offset") or 0)
                 data = text.encode("utf-8")
@@ -496,15 +518,13 @@ class Worker(threading.Thread):
                               "updated_at": datetime.now(timezone.utc).isoformat(), "rotated": bool(r.get("rotated"))}
 
     def do_snapshot(self, s):
-        svc = s.call("Get-CMServices", {"All": True}).get("services") or []
-        self.services = [{"name": x.get("name"), "status": _svc_status(x), "display": x.get("display"),
-                          "start": x.get("start")} for x in svc]
+        svc = self._soft("services", s.call, "Get-CMServices", {"All": True})
+        if svc is not None:
+            self.services = [{"name": x.get("name"), "status": _svc_status(x), "display": x.get("display"),
+                              "start": x.get("start")} for x in svc.get("services") or []]
         procs = {}
         if not self.busy:
-            try:
-                procs = s.call("Get-CMProcesses", {"Top": 10})
-            except winrm_client.WinRMError as e:
-                print(f"[WINRM] {self.target_name} processes: {e}")
+            procs = self._soft("processes", s.call, "Get-CMProcesses", {"Top": 10}) or {}
         self.write_snapshot(procs)
 
     def write_snapshot(self, procs):
@@ -587,15 +607,15 @@ class Worker(threading.Thread):
                 st = _load_state().get(name) or {}
                 changed = False
                 if self._due("inventory", INVENTORY_EVERY):
-                    self.do_inventory(s)
+                    self._soft("inventory", self.do_inventory, s)
                 if self._due("metrics", METRICS_EVERY):
-                    self.do_metrics(s)
+                    self._soft("metrics", self.do_metrics, s)
                 if not self.busy and self._due("events", log_every):
-                    self.do_events(s, st)
-                    self.do_logs(s, st)
+                    self._soft("events", self.do_events, s, st)
+                    self._soft("logs", self.do_logs, s, st)
                     changed = True
                 if self._due("snapshot", SNAPSHOT_EVERY):
-                    self.do_snapshot(s)
+                    self._soft("snapshot", self.do_snapshot, s)
                 if changed:
                     st["updated_at"] = datetime.now(timezone.utc).isoformat()
                     _save_target_state(name, st)
@@ -690,7 +710,8 @@ def status(name):
     if not w:
         return None
     return {"connected": bool(w.session and w.session.is_open), "last_ok": w.last_ok or None,
-            "last_error": w.last_error, "fails": w.fails, "module": w.metrics.module}
+            "last_error": w.last_error, "fails": w.fails, "module": w.metrics.module,
+            "warnings": dict(w.task_errors)}
 
 
 def get_worker(name):

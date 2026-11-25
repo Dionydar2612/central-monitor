@@ -637,6 +637,10 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         st = windows_status(name) or {}
         if st.get("last_error"):
             add("logpull", "logpull", "WinRM collection", "warning", unit="", message=f"WinRM: {st['last_error'][:250]}")
+        elif st.get("warnings"):
+            k, v = next(iter(st["warnings"].items()))
+            more = f" (+{len(st['warnings']) - 1} more)" if len(st["warnings"]) > 1 else ""
+            add("logpull", "logpull", "WinRM collection", "warning", unit="", message=f"WinRM {k}: {v[:220]}{more}")
         elif st.get("last_ok"):
             age = time.time() - st["last_ok"]
             add("logpull", "logpull", "WinRM collection", "ok" if age < 300 else "warning", age / 60, unit="min",

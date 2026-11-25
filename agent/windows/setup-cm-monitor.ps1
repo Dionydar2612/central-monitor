@@ -270,6 +270,27 @@ try {
         }
         Ok "member of $($g.Name)"
     }
+    # Service Control Manager: by default a NETWORK logon (WinRM) may only connect, not list services
+    # ("Cannot open Service Control Manager"). Allow cm-monitor read-only access: CC connect, LC enumerate,
+    # RP query lock status, RC read permissions. No start / stop / change rights. Undone by remove-cm-monitor.
+    try {
+        $scm = @(& sc.exe sdshow scmanager | Where-Object { $_ -match '^D:' })[0]
+        if (-not $scm) { throw 'sc.exe sdshow scmanager returned nothing' }
+        $scm = $scm.Trim()
+        $ace = '(A;;CCLCRPRC;;;' + $userSid + ')'
+        if ($scm.Contains($ace)) {
+            Ok 'Service Control Manager: cm-monitor may list services (read-only) - already set'
+        } else {
+            $i = $scm.IndexOf('S:')
+            if ($i -ge 0) { $newSd = $scm.Substring(0, $i) + $ace + $scm.Substring($i) } else { $newSd = $scm + $ace }
+            $out = & sc.exe sdset scmanager $newSd
+            if ($LASTEXITCODE -ne 0) { throw "sc.exe sdset scmanager exit $LASTEXITCODE $out" }
+            $m.created['scm_ace'] = $ace
+            Save-Manifest $m
+            Ok 'Service Control Manager: cm-monitor may list services (read-only)'
+        }
+    } catch { Warn "could not allow cm-monitor to list services: $($_.Exception.Message)" }
+
     if ($cfg.DenyLogon -match '^(yes|y|true|1)$') {
         try {
             Set-DenyLogonRights -Sid $userSid -Add $true

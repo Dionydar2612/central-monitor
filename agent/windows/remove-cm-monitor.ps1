@@ -120,6 +120,15 @@ if ($null -ne $userSid -and $c.ContainsKey('acl_dirs') -and $null -ne $c['acl_di
     }
 }
 
+# Service Control Manager permission added by setup (read-only ACE for cm-monitor)
+if ($null -ne $userSid) {
+    $scm = @(& sc.exe sdshow scmanager | Where-Object { $_ -match '^D:' })[0]
+    if ($scm -and $scm.Contains($userSid)) {
+        $newSd = [regex]::Replace($scm.Trim(), '\(A;;[A-Z]*;;;' + [regex]::Escape($userSid) + '\)', '')
+        Try-Do 'Service Control Manager permission for cm-monitor removed' { $o = & sc.exe sdset scmanager $newSd; if ($LASTEXITCODE -ne 0) { throw "exit $LASTEXITCODE $o" } }
+    }
+}
+
 # deny logon rights
 if ($null -ne $userSid) {
     Try-Do 'deny-logon rights for cm-monitor removed' { Set-DenyLogonRights -Sid $userSid }

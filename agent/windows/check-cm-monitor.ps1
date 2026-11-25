@@ -87,6 +87,13 @@ else {
     }
 }
 
+Head 'Service Control Manager'
+if ($null -ne $u) {
+    $scm = @(& sc.exe sdshow scmanager | Where-Object { $_ -match '^D:' })[0]
+    if ($scm -and $scm.Contains($u.SID.Value)) { Ok 'cm-monitor may list services (read-only)' }
+    else { Bad 'cm-monitor cannot list services over WinRM - run setup-cm-monitor.bat again' }
+}
+
 Head 'Allowed log paths'
 $allow = Join-Path $DataDir 'allowed-paths.txt'
 if (Test-Path $allow) {
