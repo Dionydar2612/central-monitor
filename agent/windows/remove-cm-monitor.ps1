@@ -96,6 +96,13 @@ if ($c.ContainsKey('listener_https') -and $c['listener_https']) {
         }
     }
 }
+# module signing certificate (created by setup): My + Root + TrustedPublisher
+if ($c.ContainsKey('sign_thumbprint') -and $c['sign_thumbprint']) {
+    foreach ($storeName in @('My', 'Root', 'TrustedPublisher')) {
+        $sp = 'Cert:\LocalMachine\' + $storeName + '\' + [string]$c['sign_thumbprint']
+        if (Test-Path -LiteralPath $sp) { Try-Do "module signing certificate removed from $storeName" { Remove-Item -LiteralPath $sp -Force } }
+    }
+}
 if ($c.ContainsKey('cert_thumbprint') -and $c['cert_thumbprint']) {
     $cp = 'Cert:\LocalMachine\My\' + [string]$c['cert_thumbprint']
     if (Test-Path -LiteralPath $cp) { Try-Do 'certificate (created by setup) removed' { Remove-Item -LiteralPath $cp -Force } }

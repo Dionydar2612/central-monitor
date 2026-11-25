@@ -49,6 +49,9 @@ if (Test-Path $psm) {
     $zone = Get-Item -LiteralPath $psm -Stream Zone.Identifier -ErrorAction SilentlyContinue
     if ($null -ne $zone) { Bad 'CentralMonitor.psm1 is marked as downloaded from the internet (blocked) - run setup-cm-monitor.bat again' }
     else { Ok 'module file not blocked' }
+    $sig = Get-AuthenticodeSignature -FilePath $psm
+    if ($sig.Status -eq 'Valid') { Ok ("module signature valid (" + $sig.SignerCertificate.Subject + ")") }
+    else { Bad ("module signature: " + $sig.Status + " - run setup-cm-monitor.bat again") }
 }
 
 Head 'JEA endpoint'

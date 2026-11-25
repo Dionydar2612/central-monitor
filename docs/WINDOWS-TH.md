@@ -29,6 +29,7 @@ central ดึงข้อมูลเองผ่าน **WinRM HTTPS (5986)** 
 | ไฟล์ log | อ่านได้เฉพาะ path ที่ตรงกับ `C:\ProgramData\CentralMonitor\allowed-paths.txt` (แก้ได้เฉพาะ admin ของเครื่อง) · ไม่ผ่าน link / junction |
 | การเชื่อมต่อ | HTTPS + NTLM · central ตรวจ thumbprint ก่อนส่งรหัสทุกครั้ง (ไม่ตรง = ไม่เชื่อมต่อ) · firewall รับ 5986 จาก IP central เท่านั้น · ไม่เปิด Basic / AllowUnencrypted / TrustedHosts |
 | รหัสบน central | `data/state/secrets/winrm/<ชื่อ>.json` สิทธิ์ 0600 เข้ารหัสด้วย `CENTRAL_SECRET_KEY` · ไม่อยู่ใน puller.yaml / API / log · ลบเครื่อง = ลบรหัส |
+| module | setup เซ็นไฟล์ด้วยใบรับรอง code signing ของเครื่องนั้นเอง (private key ส่งออกไม่ได้) ใช้ได้กับ RemoteSigned / AllSigned และแก้ไฟล์ = ลายเซ็นเสีย โหลดไม่ได้ |
 | สิทธิ์ในหน้าเว็บ | เพิ่ม / แก้การเชื่อมต่อ / ดาวน์โหลดชุดติดตั้ง = admin · operator แก้ได้แค่แท็บการแจ้งเตือน + Log |
 
 ## 3. ไม่รบกวนโปรแกรมอื่น
@@ -68,7 +69,7 @@ puller (windows_pull.py) ── WinRM HTTPS 5986 ──> JEA CentralMonitor (Win
 | ทดสอบ: เชื่อมต่อ ...:5986 ไม่ได้ | ยังไม่ได้รัน setup / firewall ระหว่างวงบล็อก 5986 (ทดสอบ: `nc -vz <ip> 5986` บน central) |
 | ใบรับรองไม่ตรง | ติดตั้งใหม่แล้วใบรับรองเปลี่ยน -> Scan certificate แล้วเทียบกับที่ setup แสดง |
 | รหัสผ่าน / user ไม่ถูกต้อง | ใส่รหัสใหม่ หรือ `setup-cm-monitor.bat resetpw` |
-| `... CentralMonitor.psm1 is not digitally signed` | zip ที่ดาวน์โหลดผ่าน browser ติดป้าย "มาจากอินเทอร์เน็ต" -> รัน `setup-cm-monitor.bat` (ตั้งแต่ bd3b9ad+1 ลบป้ายให้เอง) · ถ้า GPO บังคับ AllSigned ต้อง sign module ก่อน |
+| `... CentralMonitor.psm1 is not digitally signed` | เครื่องบังคับลายเซ็น / ไฟล์ติดป้ายจากอินเทอร์เน็ต -> รัน `setup-cm-monitor.bat` รุ่นที่เซ็น module เอง (ใบรับรอง CN=Central Monitor Module Signing เชื่อถือเฉพาะเครื่องนั้น ถอนด้วย remove-cm-monitor.bat) |
 | ไม่พบ endpoint CentralMonitor | รัน setup-cm-monitor.bat (ต้องการ PowerShell 5.1 = Server 2016 ขึ้นไป) |
 | log ไฟล์ไม่เข้า / ตรวจ log บอกไม่พบไฟล์ | โฟลเดอร์ไม่อยู่ใน LogPaths -> แก้ config แล้วรัน setup ซ้ำ |
 | puller log: `pypsrp not installed` | `cm-update --rebuild` (image ของ puller ต้อง build ใหม่) |

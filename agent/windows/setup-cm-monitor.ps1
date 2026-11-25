@@ -169,8 +169,7 @@ try {
     Ok "PowerShell $psv"
     # A GPO forcing AllSigned blocks the unsigned module inside JEA (the .bat Bypass only covers setup itself)
     $gpoPolicy = [string](Get-ExecutionPolicy -Scope MachinePolicy)
-    if ($gpoPolicy -eq 'AllSigned') { throw 'Group Policy forces ExecutionPolicy AllSigned on this machine: the CentralMonitor module must be code-signed first. Nothing was changed.' }
-    Info ("ExecutionPolicy: machine=" + (Get-ExecutionPolicy -Scope LocalMachine) + " gpo=" + $gpoPolicy + " (the endpoint uses RemoteSigned)")
+    Info ("ExecutionPolicy: machine=" + (Get-ExecutionPolicy -Scope LocalMachine) + " gpo=" + $gpoPolicy + " user-gpo=" + (Get-ExecutionPolicy -Scope UserPolicy) + " (module is signed by setup, works with AllSigned too)")
     $cfg = Read-Config
     $ip = $null
     if (-not [System.Net.IPAddress]::TryParse($cfg.CentralIP, [ref]$ip)) { throw "CentralIP in cm-monitor-config.txt is not an IP address: '$($cfg.CentralIP)'" }
@@ -212,6 +211,31 @@ try {
         -VisibleFunctions $funcs -Description 'Central Monitor: read-only Get-CM* functions only'
     $m.created['module_dir'] = $ModDir
     Ok "module installed: $ModDir"
+
+    # Sign the module with a code-signing certificate trusted on THIS machine only, so the JEA session loads it
+    # under any execution policy (RemoteSigned / AllSigned) and any change to the file breaks the signature.
+    # Private key: LocalMachine\My, not exportable. Public cert: LocalMachine\Root + TrustedPublisher.
+    $sign = $null
+    if ($m.created.ContainsKey('sign_thumbprint') -and $m.created['sign_thumbprint']) {
+        $sign = Get-Item -LiteralPath ('Cert:\LocalMachine\My\' + [string]$m.created['sign_thumbprint']) -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $sign) {
+        $sign = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Central Monitor Module Signing' -CertStoreLocation 'Cert:\LocalMachine\My' `
+            -NotAfter (Get-Date).AddYears(10) -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy NonExportable -FriendlyName 'Central Monitor module signing'
+        $m.created['sign_thumbprint'] = $sign.Thumbprint
+        Save-Manifest $m
+    }
+    $pub = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (,[byte[]]$sign.RawData)
+    foreach ($storeName in @('Root', 'TrustedPublisher')) {
+        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, 'LocalMachine')
+        $store.Open('ReadWrite')
+        try { $store.Add($pub) } finally { $store.Close() }
+    }
+    foreach ($f in @('CentralMonitor.psm1', 'CentralMonitor.psd1')) {
+        $r = Set-AuthenticodeSignature -FilePath (Join-Path $ModDir $f) -Certificate $sign -HashAlgorithm SHA256
+        if ($r.Status -ne 'Valid') { throw "signing $f failed: $($r.Status) $($r.StatusMessage)" }
+    }
+    Ok "module signed (certificate $($sign.Thumbprint), trusted on this machine only)"
 
     # ----------------------------------------------------------- user
     Step '3/8 Local user cm-monitor (not an administrator)'
