@@ -1209,3 +1209,17 @@ class WindowsUninstallJob(unittest.TestCase):
             self.assertIn("'setup-*.log'", windows_install.poll_script("install"))
         finally:
             windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP = orig
+
+
+class WindowsModuleJeaSafe(unittest.TestCase):
+    def test_no_restricted_proxy_cmdlets(self):
+        """JEA (RestrictedRemoteServer) แทน Select-Object / Measure-Object / ... ด้วย proxy ที่ไม่มี -First ฯลฯ
+        -> ใน CentralMonitor.psm1 ต้องเรียกด้วยชื่อเต็ม Microsoft.PowerShell.Utility\\... (เคยล้ม: Get-CMProcesses)"""
+        path = os.path.join(ROOT, "agent", "windows", "CentralMonitor.psm1")
+        with open(path, encoding="ascii", newline="") as f:   # ASCII ล้วน (PowerShell 5.1)
+            src = f.read()
+        code = "\n".join(line.split("#", 1)[0] for line in src.splitlines())
+        for cmd in ("Select-Object", "Measure-Object", "Get-Command", "Get-Help", "Out-Default", "Get-FormatData"):
+            bad = [m.start() for m in re.finditer(r"(?<![\\\w-])" + cmd + r"\b", code)]
+            self.assertEqual(bad, [], f"{cmd} without module name in CentralMonitor.psm1")
+        self.assertIn("\r\n", src)                                    # CRLF

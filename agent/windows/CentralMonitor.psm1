@@ -15,12 +15,15 @@
 #     (editable by local administrators only)
 #   - the session lowers its own priority to BelowNormal
 #   - every result is ONE compact JSON string
+#   - JEA (RestrictedRemoteServer) replaces Select-Object / Measure-Object / Get-Command / Get-Help /
+#     Out-Default / Get-FormatData with limited proxies (no -First ...): call the real cmdlet by its
+#     module-qualified name, e.g. Microsoft.PowerShell.Utility\Select-Object
 #
 # ASCII only: Windows PowerShell 5.1 reads files without a BOM as ANSI.
 # =====================================================================
 Set-StrictMode -Version 2.0
 
-$script:CMVersion   = '1.1.0'
+$script:CMVersion   = '1.1.1'
 $script:DataDir     = Join-Path $env:ProgramData 'CentralMonitor'
 $script:AllowFile   = Join-Path $script:DataDir 'allowed-paths.txt'
 $script:MaxText     = 2048          # max characters per event message
@@ -520,8 +523,8 @@ function Get-CMProcesses {
         try { $th = $p.Threads.Count } catch { }
         [void]$rows.Add([pscustomobject]@{ pid = $p.Id; name = $p.ProcessName; cpu = [Math]::Round([Math]::Max(0, $cpu), 2); ws_mb = [Math]::Round($ws / 1MB, 1); threads = $th })
     }
-    $byCpu = @($rows | Sort-Object cpu -Descending | Select-Object -First $Top)
-    $byRam = @($rows | Sort-Object ws_mb -Descending | Select-Object -First $Top)
+    $byCpu = @($rows | Sort-Object cpu -Descending | Microsoft.PowerShell.Utility\Select-Object -First $Top)
+    $byRam = @($rows | Sort-Object ws_mb -Descending | Microsoft.PowerShell.Utility\Select-Object -First $Top)
     return (ConvertTo-CMJson ([ordered]@{
         v = $script:CMVersion; host = $env:COMPUTERNAME; ts = (Get-CMUnixTime)
         cores = $cores; count = $rows.Count; interval = [Math]::Round($span, 2)
@@ -568,7 +571,7 @@ function Get-CMInventory {
     $inv.nics = $nics.ToArray()
     try {
         $inv.hotfix = @(Get-HotFix -ErrorAction Stop | Where-Object { $_.InstalledOn } | Sort-Object InstalledOn -Descending |
-            Select-Object -First 5 | ForEach-Object { [ordered]@{ id = $_.HotFixID; date = $_.InstalledOn.ToString('yyyy-MM-dd') } })
+            Microsoft.PowerShell.Utility\Select-Object -First 5 | ForEach-Object { [ordered]@{ id = $_.HotFixID; date = $_.InstalledOn.ToString('yyyy-MM-dd') } })
     } catch { $inv.hotfix = @() }
     $inv.ps = $PSVersionTable.PSVersion.ToString()
     $inv.tz = [System.TimeZoneInfo]::Local.Id
