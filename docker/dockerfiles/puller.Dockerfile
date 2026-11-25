@@ -24,7 +24,6 @@ RUN set -eu; \
 
 # openssh-client: ให้ puller ใช้ `ssh` ไปเครื่องปลายทาง | python3-yaml: อ่าน puller.yaml
 # python3-prometheus-client: เปิด /metrics ของ puller
-# pypsrp (+ requests / cryptography จาก apt): WinRM ไปเครื่อง Windows แบบไม่ลง agent (windows_pull.py)
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
        openssh-client \
@@ -32,12 +31,16 @@ RUN apt-get update \
        python3 \
        python3-yaml \
        python3-prometheus-client \
-       python3-requests \
-       python3-cryptography \
-       python3-pip \
-    && pip3 install --no-cache-dir --break-system-packages "pypsrp>=0.8,<1" \
-    && apt-get purge -y python3-pip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# WinRM ไปเครื่อง Windows (windows_pull.py): pypsrp + dependency เป็นไฟล์ wheel ใน repo (docker/wheels/)
+#   ไม่ใช้ apt / pip / อินเทอร์เน็ต ตอน build (server กลางอาจออกเน็ตไม่ได้) และไม่แก้บรรทัด apt ด้านบน
+#   -> Docker ใช้ layer เดิมที่เคย build ไว้ได้  แตก wheel ลง site-packages ตรง ๆ (image ไม่มี pip)
+#   wheel ชุดนี้สำหรับ Ubuntu 24.04 = Python 3.12 บน x86_64 (อัปเดต: ดู docker/wheels/README.txt)
+COPY docker/wheels/ /tmp/wheels/
+RUN python3 -c "import glob, site, zipfile; d = site.getsitepackages()[0]; [zipfile.ZipFile(w).extractall(d) for w in sorted(glob.glob('/tmp/wheels/*.whl'))]" \
+    && python3 -c "import pypsrp, spnego, cryptography, requests; print('pypsrp OK')" \
+    && rm -rf /tmp/wheels
 
 # โฟลเดอร์ที่ถูก mount ทับตอนรัน (docker-compose.yml): /data <- ./data, /app/config <- ./config
 RUN mkdir -p /root/.ssh /data/buffer /data/state /app/config

@@ -5,7 +5,7 @@
 - puller `windows_pull.py`: metric ชื่อแบบ node_exporter (หน้าแรก / sensor / bottleneck / กฎ / Teams / Daily Summary ใช้ได้ทันที),
   Event log + ไฟล์ log (Warning ขึ้นไป) -> OpenSearch, service / process / event -> หน้ารายละเอียดเครื่อง, Load INFO log / Process สด / ตรวจ log
 - รหัสผ่านเก็บแยกแบบเข้ารหัส `data/state/secrets/winrm/` (ไม่อยู่ใน puller.yaml) · กฎแจ้งเตือนเลือก OS windows ได้ · หน้าแรกแสดง OS Windows
-- **ต้อง `cm-update --rebuild`** (puller ใช้ pypsrp, central-api มีชุดติดตั้ง) · รายละเอียด: docs/WINDOWS-TH.md
+- **ต้อง `cm-update --rebuild`** (puller ใช้ pypsrp จาก docker/wheels ไม่ต้องออกเน็ตตอน build, central-api มีชุดติดตั้ง) · รายละเอียด: docs/WINDOWS-TH.md
 
 ---
 
