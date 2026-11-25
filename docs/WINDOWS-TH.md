@@ -68,6 +68,7 @@ puller (windows_pull.py) ── WinRM HTTPS 5986 ──> JEA CentralMonitor (Win
 | ทดสอบ: เชื่อมต่อ ...:5986 ไม่ได้ | ยังไม่ได้รัน setup / firewall ระหว่างวงบล็อก 5986 (ทดสอบ: `nc -vz <ip> 5986` บน central) |
 | ใบรับรองไม่ตรง | ติดตั้งใหม่แล้วใบรับรองเปลี่ยน -> Scan certificate แล้วเทียบกับที่ setup แสดง |
 | รหัสผ่าน / user ไม่ถูกต้อง | ใส่รหัสใหม่ หรือ `setup-cm-monitor.bat resetpw` |
+| `... CentralMonitor.psm1 is not digitally signed` | zip ที่ดาวน์โหลดผ่าน browser ติดป้าย "มาจากอินเทอร์เน็ต" -> รัน `setup-cm-monitor.bat` (ตั้งแต่ bd3b9ad+1 ลบป้ายให้เอง) · ถ้า GPO บังคับ AllSigned ต้อง sign module ก่อน |
 | ไม่พบ endpoint CentralMonitor | รัน setup-cm-monitor.bat (ต้องการ PowerShell 5.1 = Server 2016 ขึ้นไป) |
 | log ไฟล์ไม่เข้า / ตรวจ log บอกไม่พบไฟล์ | โฟลเดอร์ไม่อยู่ใน LogPaths -> แก้ config แล้วรัน setup ซ้ำ |
 | puller log: `pypsrp not installed` | `cm-update --rebuild` (image ของ puller ต้อง build ใหม่) |

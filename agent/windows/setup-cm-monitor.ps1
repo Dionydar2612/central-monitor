@@ -167,6 +167,10 @@ try {
         throw "PowerShell $psv found - 5.1 is required (JEA). Install WMF 5.1 first (needs a reboot) - nothing was changed."
     }
     Ok "PowerShell $psv"
+    # A GPO forcing AllSigned blocks the unsigned module inside JEA (the .bat Bypass only covers setup itself)
+    $gpoPolicy = [string](Get-ExecutionPolicy -Scope MachinePolicy)
+    if ($gpoPolicy -eq 'AllSigned') { throw 'Group Policy forces ExecutionPolicy AllSigned on this machine: the CentralMonitor module must be code-signed first. Nothing was changed.' }
+    Info ("ExecutionPolicy: machine=" + (Get-ExecutionPolicy -Scope LocalMachine) + " gpo=" + $gpoPolicy + " (the endpoint uses RemoteSigned)")
     $cfg = Read-Config
     $ip = $null
     if (-not [System.Net.IPAddress]::TryParse($cfg.CentralIP, [ref]$ip)) { throw "CentralIP in cm-monitor-config.txt is not an IP address: '$($cfg.CentralIP)'" }
@@ -194,6 +198,9 @@ try {
     if (-not (Test-Path -LiteralPath $src)) { throw "CentralMonitor.psm1 not found next to the .bat" }
     New-Item -ItemType Directory -Path (Join-Path $ModDir 'RoleCapabilities') -Force | Out-Null
     Copy-Item -LiteralPath $src -Destination (Join-Path $ModDir 'CentralMonitor.psm1') -Force
+    # A zip downloaded with a browser carries Mark of the Web (Zone.Identifier); RemoteSigned then refuses
+    # to load the module in the session ("... is not digitally signed"). Remove that mark from our copied files.
+    Get-ChildItem -LiteralPath $ModDir -Recurse -File | Unblock-File
     foreach ($f in @('CentralMonitor.psd1', 'RoleCapabilities\CentralMonitor.psrc')) { Remove-Item -LiteralPath (Join-Path $ModDir $f) -Force -ErrorAction SilentlyContinue }
     $funcs = @('Get-CMVersion', 'Get-CMMetrics', 'Get-CMServices', 'Get-CMEvents', 'Get-CMLogTail', 'Get-CMInventory', 'Get-CMProcesses')
     New-ModuleManifest -Path (Join-Path $ModDir 'CentralMonitor.psd1') -RootModule 'CentralMonitor.psm1' -ModuleVersion $Version `
@@ -336,7 +343,7 @@ try {
     Step '7/8 JEA endpoint CentralMonitor'
     $pssc = Join-Path $DataDir 'CentralMonitor.pssc'
     Remove-Item -LiteralPath $pssc -Force -ErrorAction SilentlyContinue
-    New-PSSessionConfigurationFile -Path $pssc -SessionType RestrictedRemoteServer -LanguageMode NoLanguage `
+    New-PSSessionConfigurationFile -Path $pssc -SessionType RestrictedRemoteServer -LanguageMode NoLanguage -ExecutionPolicy RemoteSigned `
         -RoleDefinitions @{ ($env:COMPUTERNAME + '\' + $UserName) = @{ RoleCapabilities = 'CentralMonitor' } } `
         -Description 'Central Monitor read-only endpoint'
     if (-not (Test-PSSessionConfigurationFile -Path $pssc)) { throw 'the generated .pssc file is not valid' }

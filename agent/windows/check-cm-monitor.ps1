@@ -41,6 +41,16 @@ try {
     }
 } catch { Bad "cannot read WinRM settings: $($_.Exception.Message)" }
 
+Head 'ExecutionPolicy / module file'
+foreach ($sc in @('MachinePolicy', 'UserPolicy', 'LocalMachine')) { Info ("ExecutionPolicy $sc = " + (Get-ExecutionPolicy -Scope $sc)) }
+if ([string](Get-ExecutionPolicy -Scope MachinePolicy) -eq 'AllSigned') { Bad 'Group Policy forces AllSigned - the module must be code-signed' }
+$psm = Join-Path $ModDir 'CentralMonitor.psm1'
+if (Test-Path $psm) {
+    $zone = Get-Item -LiteralPath $psm -Stream Zone.Identifier -ErrorAction SilentlyContinue
+    if ($null -ne $zone) { Bad 'CentralMonitor.psm1 is marked as downloaded from the internet (blocked) - run setup-cm-monitor.bat again' }
+    else { Ok 'module file not blocked' }
+}
+
 Head 'JEA endpoint'
 $ep = Get-PSSessionConfiguration -Name $EpName -ErrorAction SilentlyContinue
 if ($null -eq $ep) { Bad 'endpoint CentralMonitor not registered' }
