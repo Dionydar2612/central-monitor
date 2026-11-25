@@ -23,3 +23,9 @@ config/puller.yaml
 
 # Python cache
 __pycache__/
+
+# win-poc.sh output (summary / raw) and setup logs next to the .bat
+win-poc-*.json
+win-poc-*.jsonl
+win-poc-*.json.tmp
+agent/windows/logs/

@@ -1,0 +1,19 @@
+# =====================================================================
+# Central Monitor - agentless Windows monitoring: settings for setup-cm-monitor.bat
+# Edit, save, then double-click setup-cm-monitor.bat (run it again after any change).
+# =====================================================================
+
+# IP of the central server (the only address allowed through the firewall)
+CentralIP=172.27.2.22
+
+# WinRM HTTPS port (if this machine already has an HTTPS listener, that one is used)
+Port=5986
+
+# Log files central may read, separated by ;   (empty = Event Log only)
+#   D:\THMux\logs\          = every file directly in that folder
+#   D:\THMux\logs\*.log     = matching files only (wildcards only in the file name)
+LogPaths=
+
+# yes = the cm-monitor user cannot log on at the console or by Remote Desktop
+#       (WinRM still works). no = do not change logon rights.
+DenyLogon=yes

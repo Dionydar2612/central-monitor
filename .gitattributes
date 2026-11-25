@@ -1,0 +1,2 @@
+agent/windows/** -text
+*.sh text eol=lf
