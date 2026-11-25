@@ -14,12 +14,16 @@ host_details.py - รายละเอียดเครื่อง 1 เค�
     system(web)        ชื่อเครื่อง / OS / build / boot / uptime / timezone / เวลาเพี้ยน / IP / agent
 """
 
+import json
+import os
 import re
 import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 from clients import prom_value, prom_vector
 from metrics_service import _finite, _labels, get_web_prometheus_config
+from system_state import SYSTEM_DIR
 
 _LINUX_FS = ('fstype!~"tmpfs|devtmpfs|overlay|squashfs|ramfs|nsfs|autofs|efivarfs|fuse.lxcfs",'
              'mountpoint!~"/(run|snap|var/lib/docker|var/lib/kubelet|var/lib/containerd)(/.*)?"')
@@ -296,13 +300,87 @@ def _linux_hardware(l):
     }
 
 
-def hardware(web):
+def hardware(web, target=None):
     labels = _context(web)
     if labels is None:
         return None
     data = _linux_hardware(labels)
     data["web"] = web
+    if _is_winrm(target):
+        _win_hardware(data, _win_inventory(web))
     return data
+
+
+# ---------------------------------------------------------------------------
+# Windows (WinRM): ข้อมูลเครื่องจาก inventory ใน snapshot ของ puller (data/state/system/<เครื่อง>.json อัปเดตทุก 1 ชม.)
+# ---------------------------------------------------------------------------
+
+def _is_winrm(target):
+    return bool(target) and str(target.get("type") or "ssh") == "winrm"
+
+
+def _win_inventory(web):
+    try:
+        with open(os.path.join(SYSTEM_DIR, f"{web}.json"), encoding="utf-8") as f:
+            inv = (json.load(f) or {}).get("inventory")
+        return inv if isinstance(inv, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _iso_unix(v):
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() if v else None
+    except ValueError:
+        return None
+
+
+def _win_nics(inv):
+    return [n for n in inv.get("nics") or [] if isinstance(n, dict)]
+
+
+def _win_hardware(data, inv):
+    sy, osi = inv.get("system") or {}, inv.get("os") or {}
+    data["os"] = "windows"
+    data["system"] = {"manufacturer": sy.get("manufacturer") or None, "model": sy.get("model") or None}
+    cpu = data.setdefault("cpu", {})
+    if not cpu.get("models") and inv.get("cpu"):
+        cpu["models"] = [{"name": n} for n in inv["cpu"] if n]
+    if sy.get("logical_cpu"):
+        cpu["logical_processors"] = sy["logical_cpu"]
+    if not (data.get("memory") or {}).get("total_bytes") and sy.get("ram_mb"):
+        data["memory"] = {"total_bytes": sy["ram_mb"] * MB}
+    nics = _win_nics(inv)
+    if nics:
+        data["network_adapters"] = [{"nic": n.get("name"), "status": str(n.get("status") or "").lower() or None,
+                                     "speed_mbps": round(n["speed"] / 1e6) if n.get("speed") and n["speed"] > 0 else None}
+                                    for n in nics]
+    data["unsupported"] = []
+    data["inventory_time"] = inv.get("ts")
+    data["os_name"] = osi.get("caption")
+
+
+def _win_system(data, inv):
+    osi, sy = inv.get("os") or {}, inv.get("system") or {}
+    data["os"] = "windows"
+    if osi.get("caption"):
+        data["os_name"] = osi["caption"] + (f" ({osi['edition']})" if osi.get("edition") and osi["edition"] not in osi["caption"] else "")
+    data["os_version"] = osi.get("release") or osi.get("version") or data.get("os_version")
+    data["build"] = osi.get("build") or data.get("build")
+    data["install_time"] = _iso_unix(osi.get("install"))
+    if sy.get("domain"):
+        data["domain"] = sy["domain"]
+    data["timezone"] = inv.get("tz") or data.get("timezone")
+    ips = [{"nic": n.get("name"), "address": ip, "family": "IPv6" if ":" in ip else "IPv4"}
+           for n in _win_nics(inv) for ip in n.get("ips") or [] if ip and not ip.startswith(("127.", "::1", "fe80:"))]
+    if ips:
+        data["ip_addresses"] = ips
+    hf = [h for h in inv.get("hotfix") or [] if isinstance(h, dict) and h.get("id")]
+    data["hotfixes"] = hf
+    if hf:
+        data["updates_last_install"] = _iso_unix(hf[0].get("date"))
+    if inv.get("ps"):
+        data["agent"]["powershell"] = inv["ps"]
 
 
 # ---------------------------------------------------------------------------
@@ -346,11 +424,11 @@ def system(web, target=None):
     if target:
         data.update({"host": target.get("host"), "group": target.get("group") or "",
                      "type": target.get("type") or "ssh"})
-        if str(target.get("type") or "ssh") == "winrm":      # Windows ไม่ลง agent (WinRM -> JEA)
-            data["os"] = "windows"
-            data["agent"] = {"collector": "WinRM (agentless, JEA read-only) " + (data["agent"]["collector"].replace("node_exporter winrm-", "module ")
-                                                                               if "winrm-" in data["agent"]["collector"] else "")}
+        if _is_winrm(target):                                   # Windows ไม่ลง agent (WinRM -> JEA)
+            col = data["agent"]["collector"]
+            data["agent"] = {"collector": "WinRM (JEA read-only)" + (" · module " + col.split("winrm-", 1)[1] if "winrm-" in col else "")}
             data["clock_source"] = None
+            _win_system(data, _win_inventory(web))
         if not data["ip_addresses"] and target.get("host"):
             data["ip_addresses"] = [{"nic": None, "address": target.get("host"), "family": "configured"}]
     return data

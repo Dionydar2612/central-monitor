@@ -39,6 +39,29 @@ class Backend(unittest.TestCase):
         self.c.post("/api/logout")
         return self.c.post("/api/login", json={"username": u, "password": p}).status_code
 
+    def test_host_details_windows_inventory(self):
+        """แท็บ Hardware / System ของเครื่อง Windows: เติมข้อมูลจาก inventory ใน snapshot (ไม่มีค่า = ไม่ใส่)"""
+        import host_details
+        inv = {"ts": 1, "tz": "SE Asia Standard Time", "ps": "5.1.20348", "cpu": ["Intel Xeon"],
+               "os": {"caption": "Windows Server 2022 Standard", "edition": "ServerStandard", "release": "21H2",
+                      "build": "20348.2700", "install": "2024-01-02T03:04:05Z"},
+               "system": {"manufacturer": "VMware, Inc.", "model": "VMware7,1", "domain": "corp.local", "ram_mb": 8192, "logical_cpu": 4},
+               "nics": [{"name": "Ethernet0", "status": "Up", "speed": 10000000000, "ips": ["10.0.0.9", "fe80::1", "127.0.0.1"]}],
+               "hotfix": [{"id": "KB5041160", "date": "2026-11-12"}]}
+        hw = {"cpu": {"models": []}, "memory": {"total_bytes": None}, "unsupported": [{"item": "SMART"}]}
+        host_details._win_hardware(hw, inv)
+        self.assertEqual((hw["system"]["model"], hw["cpu"]["models"][0]["name"], hw["memory"]["total_bytes"]),
+                         ("VMware7,1", "Intel Xeon", 8192 * 1048576))
+        self.assertEqual(hw["network_adapters"], [{"nic": "Ethernet0", "status": "up", "speed_mbps": 10000}])
+        sy = {"agent": {"collector": "x"}, "ip_addresses": []}
+        host_details._win_system(sy, inv)
+        self.assertEqual(sy["os_name"], "Windows Server 2022 Standard (ServerStandard)")
+        self.assertEqual([x["address"] for x in sy["ip_addresses"]], ["10.0.0.9"])
+        self.assertEqual((sy["hotfixes"][0]["id"], sy["agent"]["powershell"], sy["domain"]), ("KB5041160", "5.1.20348", "corp.local"))
+        sy2 = {"agent": {"collector": "x"}, "ip_addresses": [], "build": "6.8"}
+        host_details._win_system(sy2, {})
+        self.assertEqual((sy2["build"], sy2["hotfixes"]), ("6.8", []))
+
     def test_windows_target(self):
         """เครื่อง Windows (type: winrm) จากหน้า Settings: รหัสเก็บแยก (เข้ารหัส) / web-nodes.json / ชุดติดตั้ง"""
         import zipfile

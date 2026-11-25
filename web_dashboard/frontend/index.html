@@ -54,8 +54,19 @@
 <div class="mm" id="meta" hidden></div>
 </section>
 
-<!-- รายละเอียดเครื่องที่เลือก: ซ่อน (และไม่โหลด) จนกว่าจะคลิกเครื่องใน WEB status (machine.js จัดหน้า) -->
+<!-- รายละเอียดเครื่องที่เลือก: ซ่อน (และไม่โหลด) จนกว่าจะคลิกเครื่องใน WEB status
+     แท็บ (#dTabs, machine.js) ใช้กับทุกเครื่อง: Overview / Performance / Bottleneck / Processes / Hardware / System / Alerts & Events
+     แต่ละแท็บ = <div class="dpane" data-pane="..."> แท็บที่ไม่ได้เปิดจะไม่โหลดข้อมูล -->
 <div id="detail" hidden>
+<div class="dtabs" id="dTabs" role="tablist" aria-label="Machine details">
+<button type="button" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+<button type="button" role="tab" data-tab="performance" aria-selected="false">Performance</button>
+<button type="button" role="tab" data-tab="bottleneck" aria-selected="false">Bottleneck</button>
+<button type="button" role="tab" data-tab="processes" aria-selected="false">Processes</button>
+<button type="button" role="tab" data-tab="hardware" aria-selected="false">Hardware</button>
+<button type="button" role="tab" data-tab="system" aria-selected="false">System</button>
+<button type="button" role="tab" data-tab="alerts" aria-selected="false">Alerts &amp; Events</button>
+</div>
 <div class="dpane" data-pane="overview">
 
 <!-- KPI 4 ใบ: CPU average 5m / Memory Usage % / Disk Usage % (Per Mount Point) / Disk I/O utilization (%)
@@ -76,6 +87,8 @@
 </section>
 </div>
 </div>
+<div class="dpane" data-pane="performance" hidden><div id="pnPerf" class="pn"></div></div>
+<div class="dpane" data-pane="bottleneck" hidden><div id="pnBn" class="pn"></div></div>
 <!-- รายการ Service (#sv: จาก snapshot ของ puller) ย้ายไปอยู่ข้างกราฟใน #ovMain (machine.js) -->
 <div class="dpane" data-pane="services" hidden>
 <div class="grid one" id="svHome">
@@ -103,11 +116,13 @@
 </div>
 
 </div>
+<div class="dpane" data-pane="hardware" hidden><div id="pnHw" class="pn"></div></div>
 <div class="dpane" data-pane="system" hidden>
 <div id="pnSys" class="pn"></div>
 <!-- System events จาก journalctl (#ev) ซ่อนไว้เมื่อไม่มีเหตุการณ์ -->
 <section class="card svc" id="evCard" hidden><div class="top"><h2>System events</h2><span class="cnt" id="evCnt"></span></div><div class="evl scroll" id="ev"></div></section>
 </div>
+<div class="dpane" data-pane="alerts" hidden><div id="pnAl" class="pn"></div></div>
 <!-- ภาพรวม sensor ของเครื่องแบบ PRTG (dashboard.js renderDevice): ล่างสุดของรายละเอียดเครื่อง ก่อนตาราง Logs ·
      กล่องข้อมูล + เกจ + ตาราง sensor (คลิก = หน้า sensor) -->
 <div id="devPanel"></div>

@@ -784,7 +784,7 @@ def _known_target(web):
 
 @app.get("/api/host/<web>/<kind>")
 def host_detail(web, kind):
-    """kind = performance | hardware | system | software | bottleneck   ค่าที่ไม่มี = null + รายการ unsupported"""
+    """kind = performance | hardware | system | bottleneck   ค่าที่ไม่มี = null + รายการ unsupported"""
     target = _known_target(web)
     if target is None:
         return jsonify({"error": "not found"}), 404
@@ -793,9 +793,8 @@ def host_detail(web, kind):
         return jsonify({"web": web, "bottlenecks": rows,
                         "options": sensors_service.load_sensors().get("options")})
     fns = {"performance": lambda: host_details.performance(web),
-           "hardware": lambda: host_details.hardware(web),
-           "system": lambda: host_details.system(web, target),
-           "software": lambda: host_details.software(web)}
+           "hardware": lambda: host_details.hardware(web, target),
+           "system": lambda: host_details.system(web, target)}
     if kind not in fns:
         return jsonify({"error": "unknown kind"}), 404
     try:

@@ -1,3 +1,10 @@
+# เพิ่มเติม (25 พ.ย. 2026): รายละเอียดเครื่องแบบแท็บ กลับมาใช้กับทั้ง Linux และ Windows
+- แท็บ Overview / Performance / Bottleneck / Processes / Hardware / System / Alerts & Events ใช้กับทุกเครื่อง (เดิมเหลือหน้าเดียวแบบ Linux)
+- Windows (WinRM): Hardware / System เติมผู้ผลิต / รุ่น / CPU / RAM / การ์ดเครือข่าย / OS / build / วันติดตั้ง / domain / IP / Windows updates จาก inventory
+- แท็บ Software เดิม (โปรแกรมที่ติดตั้ง / พอร์ต) ยังไม่กลับมา เพราะตัวเก็บแบบ WinRM ยังไม่อ่านรายการโปรแกรม
+
+---
+
 # เพิ่มเติม (25 พ.ย. 2026): ถอนการติดตั้ง Windows จากหน้าเว็บ + ตัวถอนลบครบทุกอย่าง
 - Settings > Edit เครื่อง Windows > การเชื่อมต่อ > **ถอนการติดตั้งออกจากเครื่อง** (admin ใช้ครั้งเดียว) + เลือกลบเครื่องออกจาก central
 - remove-cm-monitor.ps1 เขียนใหม่: ลบ profile ของ cm-monitor ด้วย, หาของเราจากชื่อเมื่อไม่มี manifest, คืนค่า WinRM ถ้า setup เปิดเอง,

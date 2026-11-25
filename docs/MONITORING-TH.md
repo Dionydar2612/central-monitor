@@ -55,7 +55,9 @@ sensor `Time sync (NTP)` ของทุกเครื่อง Linux ใช้
 
 - **WEB status**: ไทล์ Total / Up / Down / Warning / Critical / Paused
   ตาราง: Name, IP, Status, CPU, Memory, Disk, Network (MB/s + ping ms / loss %), Alerts, Last pull
-- **รายละเอียดเครื่อง**: KPI, กราฟ System Load คู่การ์ด Service, CPU / Memory process, System events
+- **รายละเอียดเครื่อง** (แท็บ ใช้กับทั้ง Linux และ Windows): Overview (KPI + กราฟ System Load + Service) · Performance (CPU / Memory / ดิสก์ต่อไดรฟ์ / Network ต่อการ์ด / TCP / Ping)
+  · Bottleneck · Processes · Hardware · System (OS / build / uptime / เวลา / IP + System events; Windows มี Windows updates ล่าสุด) · Alerts & Events (sensor + ประวัติ 7 วัน)
+  ค่าที่เครื่องไม่ส่งมาจะไม่แสดง · Windows ใช้ข้อมูลเครื่องจาก inventory ที่ puller อ่านผ่าน WinRM ทุก 1 ชม.
 - API: `GET /api/host/<เครื่อง>/{performance|hardware|system|bottleneck}`, `GET/PUT /api/alert-settings` (admin)
 
 ## 5. ข้อจำกัด
