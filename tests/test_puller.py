@@ -1223,3 +1223,37 @@ class WindowsModuleJeaSafe(unittest.TestCase):
             bad = [m.start() for m in re.finditer(r"(?<![\\\w-])" + cmd + r"\b", code)]
             self.assertEqual(bad, [], f"{cmd} without module name in CentralMonitor.psm1")
         self.assertIn("\r\n", src)                                    # CRLF
+
+
+class WindowsShellQuota(unittest.TestCase):
+    def test_session_options_and_cleanup(self):
+        """ไม่ทิ้ง shell ค้างบนเครื่อง: idle timeout ฝั่ง client + no_profile + ปิดทุก session ตอน central ดับ"""
+        import windows_pull
+        import winrm_client
+        seen = {}
+
+        class Pool:
+            def __init__(self, *a, **k): seen.update(k)
+            def open(self): pass
+            def close(self): seen["closed"] = seen.get("closed", 0) + 1
+
+        orig = (winrm_client.server_thumbprint, getattr(winrm_client, "RunspacePool", None), getattr(winrm_client, "WSMan", None),
+                winrm_client.HAVE_PYPSRP)
+        try:
+            winrm_client.server_thumbprint = lambda h, p: "AA" * 20
+            winrm_client.RunspacePool, winrm_client.WSMan, winrm_client.HAVE_PYPSRP = Pool, (lambda *a, **k: None), True
+            s = winrm_client.Session("h", 5986, "u", "p", "AA" * 20)
+            s.open()
+            self.assertEqual(seen["idle_timeout"], winrm_client.SHELL_IDLE_TIMEOUT)
+            self.assertTrue(seen["no_profile"])
+            w = windows_pull.Worker("quota-t")
+            w.session = s
+            windows_pull._workers["quota-t"] = w
+            windows_pull.close_all()
+            self.assertEqual(seen["closed"], 1)
+            self.assertIsNone(w.session)
+        finally:
+            windows_pull._workers.pop("quota-t", None)
+            (winrm_client.server_thumbprint, winrm_client.RunspacePool, winrm_client.WSMan, winrm_client.HAVE_PYPSRP) = orig
+        msg = winrm_client._friendly(RuntimeError("WSManFaultError: This user has exceeded the maximum number of concurrent shells allowed for this plugin."))
+        self.assertIn("ค้าง", msg)

@@ -8,7 +8,7 @@
 #                              optional: denied local / RDP logon)
 #   - module      %ProgramFiles%\WindowsPowerShell\Modules\CentralMonitor  (read-only Get-CM* functions)
 #   - JEA endpoint "CentralMonitor" (NoLanguage, only the Get-CM* functions are visible)
-#                 + limits: 150 MB RAM per session, 2 sessions, idle timeout 5 min
+#                 + limits: 150 MB RAM per session, 5 sessions, idle timeout 5 min
 #   - WinRM HTTPS listener on 5986 with a self-signed certificate (only if no HTTPS listener exists)
 #   - Windows Firewall rule: TCP 5986 from the central IP only
 #   - allowed-paths.txt (log files central may read) + read permission on those folders
@@ -412,7 +412,7 @@ try {
     $m.created['endpoint'] = $EpName
     Save-Manifest $m
     $quota = 'WSMan:\localhost\Plugin\' + $EpName + '\Quotas\'
-    foreach ($q in @(@('MaxMemoryPerShellMB', 150), @('MaxShellsPerUser', 2), @('MaxShells', 2), @('MaxConcurrentUsers', 1), @('IdleTimeoutms', 300000))) {
+    foreach ($q in @(@('MaxMemoryPerShellMB', 150), @('MaxShellsPerUser', 5), @('MaxShells', 5), @('MaxConcurrentUsers', 1), @('IdleTimeoutms', 300000))) {
         try { Set-Item -Path ($quota + $q[0]) -Value $q[1] -Force -WarningAction SilentlyContinue }
         catch { Warn "could not set $($q[0]) = $($q[1]): $($_.Exception.Message)" }
     }
@@ -421,7 +421,7 @@ try {
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Service WinRM).Status -ne 'Running' -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
     Start-Sleep -Seconds 2
-    Ok 'endpoint registered: 150 MB per session, max 2 sessions, idle timeout 5 min'
+    Ok 'endpoint registered: 150 MB per session, max 5 sessions, idle timeout 5 min'
 
     # ----------------------------------------------------------- self test
     Step '8/8 Self test'

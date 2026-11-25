@@ -35,6 +35,9 @@ puller.py - จุดเริ่มต้นของ central-puller (ระบ
     puller.yaml --> prometheus_targets --> data/prometheus/web-nodes.json --> Prometheus
 """
 
+import signal
+import sys
+
 from prometheus_client import start_http_server
 
 from config import METRICS_PORT
@@ -45,8 +48,18 @@ from web_checks import start as start_web_checks
 from windows_pull import start as start_windows_pull
 
 
+def _shutdown(signum, frame):
+    """docker stop ส่ง SIGTERM: ปิด session WinRM ก่อนออก (ไม่ทิ้ง shell ค้างบนเครื่อง Windows)"""
+    try:
+        from windows_pull import close_all
+        close_all()
+    finally:
+        sys.exit(0)
+
+
 def main():
     print("[START] central-puller")
+    signal.signal(signal.SIGTERM, _shutdown)
 
     # เปิด /metrics ก่อนเริ่มดึง เพื่อให้ healthcheck ผ่านแม้รอบแรกยังไม่จบ
     start_http_server(METRICS_PORT)

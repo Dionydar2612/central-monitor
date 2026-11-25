@@ -11,7 +11,7 @@ winrm_client.py - ช่องทาง WinRM (HTTPS) ไปเครื่อ�
     - ไม่มี add_script: เรียกได้แค่ cmdlet ตามชื่อ + พารามิเตอร์ (JEA ปฏิเสธอย่างอื่นอยู่แล้ว)
 ไม่รบกวนเครื่องปลายทาง
     - 1 session ค้างไว้ต่อเครื่อง (ไม่เปิด PowerShell ใหม่ทุกรอบ = ไม่มี CPU กระตุก) เปิดใหม่ทุก 6 ชม.
-    - timeout ต่อคำสั่ง · เครื่องฝั่งนั้นจำกัด RAM 150 MB / 2 session / idle 5 นาที (setup-cm-monitor)
+    - timeout ต่อคำสั่ง · เครื่องฝั่งนั้นจำกัด RAM 150 MB / 5 session / idle 5 นาที (setup-cm-monitor) · ฝั่งนี้ตั้ง idle 3 นาที + no_profile
 """
 
 import hashlib
@@ -22,6 +22,9 @@ import time
 
 ENDPOINT = "CentralMonitor"
 SESSION_MAX_AGE = 6 * 3600
+# session ที่ central ทิ้งไว้โดยไม่ได้ปิด (central restart / เน็ตหลุด) ให้ Windows ปิดเองเมื่อไม่มีคำสั่ง 3 นาที
+# (รอบปกติเรียกทุก 30 วิ จึงไม่หมดอายุระหว่างใช้งาน) -> ไม่ค้างจนเต็มโควตา MaxShellsPerUser
+SHELL_IDLE_TIMEOUT = 180
 
 try:
     from pypsrp.powershell import PowerShell, RunspacePool
@@ -92,7 +95,8 @@ class Session:
             username=self.user, password=self.password, cert_validation=False,
             connection_timeout=10, operation_timeout=self.timeout, read_timeout=self.timeout + 10,
         )
-        pool = RunspacePool(wsman, configuration_name=ENDPOINT)
+        # no_profile: ไม่โหลด / สร้าง profile ของ cm-monitor (เบากว่า และไม่ทิ้ง C:\\Users\\cm-monitor ไว้บนเครื่อง)
+        pool = RunspacePool(wsman, configuration_name=ENDPOINT, idle_timeout=SHELL_IDLE_TIMEOUT, no_profile=True)
         try:
             pool.open()
         except Exception as e:  # noqa: BLE001
@@ -144,6 +148,9 @@ class Session:
 def _friendly(e):
     s = f"{e.__class__.__name__}: {e}"
     low = s.lower()
+    if "concurrent shells" in low or "maximum number of" in low and "shell" in low:
+        return ("มี session ของ cm-monitor ค้างบนเครื่องเกินโควตา (เช่นหลัง central restart) - จะหมดอายุเองภายในไม่กี่นาที"
+                " (หรือรัน setup-cm-monitor.bat ซ้ำเพื่อ restart WinRM)")
     if "401" in s or "unauthorized" in low or "logon failure" in low or "access is denied" in low:
         return "รหัสผ่าน / user ไม่ถูกต้อง หรือ cm-monitor ไม่มีสิทธิ์เข้า endpoint CentralMonitor (รัน check-cm-monitor.bat)"
     if "configurationname" in low or "endpoint" in low and "not" in low or "microsoft.powershell" in low:

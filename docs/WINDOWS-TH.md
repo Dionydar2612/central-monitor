@@ -62,7 +62,7 @@ Settings > **+ Add target** > ชนิดเครื่อง *Windows (WinRM 
 
 ## 3. ไม่รบกวนโปรแกรมอื่น
 
-- บนเครื่องมีแค่ process `wsmprovhost.exe` 1 ตัวของ session (priority BelowNormal) · จำกัด RAM 150 MB, 2 session, ปิดเองเมื่อว่าง 5 นาที · central เปิดใหม่ทุก 6 ชม.
+- บนเครื่องมีแค่ process `wsmprovhost.exe` 1 ตัวของ session (priority BelowNormal) · จำกัด RAM 150 MB ต่อ session, สูงสุด 5 session, session ที่ไม่มีคำสั่ง 3 นาทีปิดเอง (ไม่ค้างหลัง central restart) · central ใช้ 1 session เปิดใหม่ทุก 6 ชม. และปิดทุก session ก่อน central ดับ · ไม่โหลด profile ของ cm-monitor
 - รอบถี่ (ทุก 30 วิ) ใช้ .NET PerformanceCounter ที่สร้างครั้งเดียว ไม่ผ่าน WMI · WMI ใช้แค่ inventory ชั่วโมงละครั้ง
 - อ่านไฟล์ log แบบ FileShare ReadWrite + Delete (โปรแกรมเจ้าของหมุน / ลบไฟล์ได้ตลอด) ครั้งละไม่เกิน 1 MB แล้วปิดทันที
 - CPU ของเครื่อง ≥ 90% → รอบนั้นเก็บแค่ metric (ข้าม event / log / process) · ติดต่อไม่ได้ → รอ 30 / 60 / 120 / 300 วิ ก่อนลองใหม่

@@ -121,6 +121,16 @@ foreach ($p in @(Get-Process -Name wsmprovhost -IncludeUserName -ErrorAction Sil
 }
 if ($found -eq 0) { Info 'no session open right now (central not connected, or idle-closed)' }
 
+Head 'Open WinRM sessions (shells) of cm-monitor'
+try {
+    $sh = @(Get-WSManInstance -ResourceURI shell -Enumerate -ErrorAction Stop | Where-Object { [string]$_.Owner -like "*$UserName" })
+    $lim = 5
+    try { $lim = [int](Get-Item ("WSMan:\localhost\Plugin\$EpName\Quotas\MaxShellsPerUser")).Value } catch { }
+    if ($sh.Count -ge $lim) { Bad "open: $($sh.Count) of $lim allowed - quota full (old sessions expire by themselves, or run setup-cm-monitor.bat again)" }
+    else { Ok "open: $($sh.Count) of $lim allowed" }
+    foreach ($x in $sh) { Info ("  shell " + $x.ShellId + "  running " + $x.ShellRunTime + "  idle " + $x.ShellInactivity) }
+} catch { Info "cannot list WinRM shells: $($_.Exception.Message)" }
+
 Head 'Recent logons of cm-monitor (Security log, last 24 h)'
 try {
     $xp = "*[System[(EventID=4624 or EventID=4625) and TimeCreated[timediff(@SystemTime) <= 86400000]] and EventData[Data[@Name='TargetUserName']='$UserName']]"

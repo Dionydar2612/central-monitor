@@ -719,6 +719,26 @@ def status(name):
             "warnings": dict(w.task_errors)}
 
 
+def close_all():
+    """central กำลังปิด (docker stop / cm-update): ปิด session ทุกเครื่อง ไม่ทิ้ง shell ค้างบน Windows"""
+    with _lock:
+        workers = list(_workers.values())
+    for w in workers:
+        w.stop_evt.set()
+        try:
+            if w.call_lock.acquire(timeout=5):
+                try:
+                    w.close()
+                finally:
+                    w.call_lock.release()
+            else:
+                w.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if workers:
+        print(f"[WINRM] closed {len(workers)} session(s)")
+
+
 def get_worker(name):
     return _workers.get(name)
 
