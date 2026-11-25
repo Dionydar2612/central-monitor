@@ -1369,7 +1369,8 @@ def deploy_key(name, payload):
 WINDOWS_SETUP_DIR = os.environ.get("CENTRAL_WINDOWS_SETUP_DIR",
                                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_windows"))
 WINDOWS_SETUP_FILES = ("setup-cm-monitor.bat", "setup-cm-monitor.ps1", "check-cm-monitor.bat", "check-cm-monitor.ps1",
-                       "remove-cm-monitor.bat", "remove-cm-monitor.ps1", "CentralMonitor.psm1", "README-TH.txt")
+                       "remove-cm-monitor.bat", "remove-cm-monitor.ps1", "CentralMonitor.psm1", "README-TH.txt",
+                       "reset-password-cm-monitor.bat")
 
 
 def windows_log_folders(logs):
