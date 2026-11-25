@@ -28,7 +28,7 @@ $ErrorActionPreference = 'Stop'
 $Here      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EpName    = 'CentralMonitor'
 $UserName  = 'cm-monitor'
-$UserDesc  = 'Central Monitor read-only (JEA). Created by setup-cm-monitor.'
+$UserDesc  = 'Central Monitor read-only (JEA)'   # New-LocalUser: Description <= 48 chars
 $DataDir   = Join-Path $env:ProgramData 'CentralMonitor'
 $ModDir    = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonitor'
 $RuleName  = 'CentralMonitor-WinRM-HTTPS'
@@ -307,7 +307,7 @@ try {
         $m.created['cert_thumbprint'] = $thumb
         Save-Manifest $m
         New-WSManInstance -ResourceURI 'winrm/config/Listener' -SelectorSet @{ Address = '*'; Transport = 'HTTPS' } `
-            -ValueSet @{ CertificateThumbprint = $thumb; Port = [string]$port } | Out-Null
+            -ValueSet @{ Hostname = $env:COMPUTERNAME; CertificateThumbprint = $thumb; Port = [string]$port } | Out-Null
         $m.created['listener_https'] = $true
         $m.created['listener_port'] = $port
         Save-Manifest $m

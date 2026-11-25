@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 
 $EpName   = 'CentralMonitor'
 $UserName = 'cm-monitor'
-$UserDesc = 'Central Monitor read-only (JEA). Created by setup-cm-monitor.'
+$UserDesc = 'Central Monitor read-only (JEA)'
 $DataDir  = Join-Path $env:ProgramData 'CentralMonitor'
 $ModDir   = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonitor'
 $RuleName = 'CentralMonitor-WinRM-HTTPS'
