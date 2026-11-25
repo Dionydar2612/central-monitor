@@ -1257,3 +1257,23 @@ class WindowsShellQuota(unittest.TestCase):
             (winrm_client.server_thumbprint, winrm_client.RunspacePool, winrm_client.WSMan, winrm_client.HAVE_PYPSRP) = orig
         msg = winrm_client._friendly(RuntimeError("WSManFaultError: This user has exceeded the maximum number of concurrent shells allowed for this plugin."))
         self.assertIn("ค้าง", msg)
+
+
+class WindowsMemoryTotal(unittest.TestCase):
+    def test_mem_total_fallback_from_inventory(self):
+        """mem_total_mb = -1 (WMI ถูกปฏิเสธใน module เก่า) -> ใช้ ram_mb จาก inventory -> Memory Usage มีค่า"""
+        import windows_pull
+        nm = windows_pull.NodeMetrics()
+        m = {"mem_total_mb": -1, "values": [{"k": "mem_avail_mb", "i": "", "v": 1024}], "drives": [], "self": {}}
+        nm.update(m, now=100.0)
+        self.assertNotIn(("node_memory_MemTotal_bytes", ()), nm.gauges)
+        nm.info = {"system": {"ram_mb": 4096}}
+        nm.update(m, now=130.0)
+        self.assertEqual(nm.gauges[("node_memory_MemTotal_bytes", ())], 4096 * 1048576)
+
+    def test_module_avoids_wmi_for_ram_and_inventory(self):
+        src = open(os.path.join(ROOT, "agent", "windows", "CentralMonitor.psm1"), encoding="ascii").read()
+        self.assertIn("Microsoft.VisualBasic.Devices.ComputerInfo", src)
+        self.assertNotIn("Win32_OperatingSystem", src)
+        self.assertNotIn("Win32_Processor", src)
+        self.assertEqual(src.count("Get-CimInstance"), 1)          # เหลือเป็นทางสำรองของ RAM เท่านั้น

@@ -34,7 +34,7 @@ $ModDir    = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonit
 $RuleName  = 'CentralMonitor-WinRM-HTTPS'
 $ManiPath  = Join-Path $DataDir 'manifest.json'
 $CredPath  = Join-Path $DataDir 'cm-monitor-credential.txt'
-$Version   = '1.1.1'
+$Version   = '1.1.2'
 $SID_PERF  = 'S-1-5-32-558'   # Performance Monitor Users
 $SID_EVT   = 'S-1-5-32-573'   # Event Log Readers
 $SID_ADM   = 'S-1-5-32-544'   # Administrators
@@ -157,7 +157,7 @@ $thumb = ''
 $port = 0
 $errMsg = ''
 try {
-    Say '=== Central Monitor - Windows agentless setup (v1.1.1) ===' 'Cyan'
+    Say '=== Central Monitor - Windows agentless setup (v1.1.2) ===' 'Cyan'
     Info "log: $LogFile"
 
     # ----------------------------------------------------------- checks

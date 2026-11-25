@@ -7,6 +7,8 @@
 #
 # Rules this module follows (do not break them when editing):
 #   - never writes anything to disk, never starts a process, never changes settings
+#   - no WMI/CIM except the hotfix list (a non-admin JEA session is often refused by WMI):
+#     RAM from .NET ComputerInfo (GlobalMemoryStatusEx), OS / hardware from the registry
 #   - fast functions (metrics / services) do not use WMI/CIM
 #     (.NET PerformanceCounter created once per session + Service Control Manager)
 #   - log files are opened with FileShare ReadWrite + Delete (the owner can
@@ -23,13 +25,14 @@
 # =====================================================================
 Set-StrictMode -Version 2.0
 
-$script:CMVersion   = '1.1.1'
+$script:CMVersion   = '1.1.2'
 $script:DataDir     = Join-Path $env:ProgramData 'CentralMonitor'
 $script:AllowFile   = Join-Path $script:DataDir 'allowed-paths.txt'
 $script:MaxText     = 2048          # max characters per event message
 $script:Counters    = $null         # list of counter entries (created once, refreshed every 10 min)
 $script:CountersAt  = [datetime]::MinValue
 $script:TotalRamMB  = 0
+$script:RamTriedAt  = [datetime]::MinValue
 $script:Self        = $null
 $script:StartedAt   = [datetime]::UtcNow
 $script:ProcPrev    = $null         # previous process CPU sample (Get-CMProcesses)
@@ -39,6 +42,33 @@ function Initialize-CMSession {
     if ($null -ne $script:Self) { return }
     $script:Self = [System.Diagnostics.Process]::GetCurrentProcess()
     try { $script:Self.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch { }
+}
+
+function Get-CMRegValue([string]$Key, [string]$Name) {
+    # HKLM read with .NET (no registry provider needed inside the JEA session)
+    try {
+        $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($Key)
+        if ($null -eq $k) { return $null }
+        try { return $k.GetValue($Name) } finally { $k.Close() }
+    } catch { return $null }
+}
+
+function Get-CMTotalRamMB {
+    # .NET ComputerInfo = GlobalMemoryStatusEx (no WMI). CIM only as a fallback. Retried every 10 min if both fail.
+    if ($script:TotalRamMB -gt 0) { return $script:TotalRamMB }
+    if (([datetime]::UtcNow - $script:RamTriedAt).TotalMinutes -lt 10) { return $script:TotalRamMB }
+    $script:RamTriedAt = [datetime]::UtcNow
+    try {
+        [void][System.Reflection.Assembly]::Load('Microsoft.VisualBasic, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a')
+        $ci = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
+        $script:TotalRamMB = [Math]::Round([double]$ci.TotalPhysicalMemory / 1MB, 0)
+    } catch {
+        try {
+            $cs = Get-CimInstance -ClassName Win32_ComputerSystem -Property TotalPhysicalMemory -ErrorAction Stop
+            $script:TotalRamMB = [Math]::Round($cs.TotalPhysicalMemory / 1MB, 0)
+        } catch { $script:TotalRamMB = -1 }
+    }
+    return $script:TotalRamMB
 }
 
 function ConvertTo-CMJson($Object) {
@@ -243,13 +273,7 @@ function Get-CMVersion {
 function Get-CMMetrics {
     [CmdletBinding()] param()
     Initialize-CMSession
-    if ($script:TotalRamMB -le 0) {
-        # one CIM call per session (not per cycle)
-        try {
-            $cs = Get-CimInstance -ClassName Win32_ComputerSystem -Property TotalPhysicalMemory -ErrorAction Stop
-            $script:TotalRamMB = [Math]::Round($cs.TotalPhysicalMemory / 1MB, 0)
-        } catch { $script:TotalRamMB = -1 }
-    }
+    [void](Get-CMTotalRamMB)
 
     $values = New-Object System.Collections.ArrayList
     foreach ($e in (Get-CMCounterSet)) {
@@ -536,30 +560,43 @@ function Get-CMInventory {
     [CmdletBinding()] param()
     Initialize-CMSession
     $inv = [ordered]@{ v = $script:CMVersion; host = $env:COMPUTERNAME; ts = (Get-CMUnixTime) }
+    # registry + .NET (no WMI)
+    $cv = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion'
     try {
-        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $build = [string](Get-CMRegValue $cv 'CurrentBuild')
+        $ubr = Get-CMRegValue $cv 'UBR'
+        $ver = [Environment]::OSVersion.Version
+        $boot = $null
+        try {
+            $up = New-Object System.Diagnostics.PerformanceCounter('System', 'System Up Time', '', $true)
+            [void]$up.NextValue(); $sec = $up.NextValue(); $up.Dispose()
+            $boot = [datetime]::UtcNow.AddSeconds(-$sec).ToString('yyyy-MM-ddTHH:mm:ssZ')
+        } catch { }
+        $inst = Get-CMRegValue $cv 'InstallDate'
         $inv.os = [ordered]@{
-            caption   = [string]$os.Caption
-            version   = [string]$os.Version
-            build     = [string]$os.BuildNumber
-            boot_time = $os.LastBootUpTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            install   = $os.InstallDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            caption   = [string](Get-CMRegValue $cv 'ProductName')
+            edition   = [string](Get-CMRegValue $cv 'EditionID')
+            release   = [string](Get-CMRegValue $cv 'DisplayVersion')
+            version   = ('{0}.{1}.{2}' -f $ver.Major, $ver.Minor, $build)
+            build     = $(if ($null -ne $ubr) { $build + '.' + $ubr } else { $build })
+            boot_time = $boot
+            install   = $(if ($inst) { ([datetime]'1970-01-01').AddSeconds([double]$inst).ToString('yyyy-MM-ddTHH:mm:ssZ') } else { $null })
         }
     } catch { $inv.os = $null }
     try {
-        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $bios = 'HARDWARE\DESCRIPTION\System\BIOS'
+        $dom = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().DomainName
         $inv.system = [ordered]@{
-            manufacturer = [string]$cs.Manufacturer
-            model        = [string]$cs.Model
-            domain       = [string]$cs.Domain
-            in_domain    = [bool]$cs.PartOfDomain
-            ram_mb       = [Math]::Round($cs.TotalPhysicalMemory / 1MB, 0)
-            logical_cpu  = [int]$cs.NumberOfLogicalProcessors
+            manufacturer = [string](Get-CMRegValue $bios 'SystemManufacturer')
+            model        = [string](Get-CMRegValue $bios 'SystemProductName')
+            domain       = [string]$dom
+            in_domain    = -not [string]::IsNullOrEmpty($dom)
+            ram_mb       = (Get-CMTotalRamMB)
+            logical_cpu  = [Environment]::ProcessorCount
         }
     } catch { $inv.system = $null }
-    try {
-        $inv.cpu = @(Get-CimInstance -ClassName Win32_Processor -Property Name -ErrorAction Stop | ForEach-Object { ([string]$_.Name).Trim() })
-    } catch { $inv.cpu = @() }
+    $cpuName = Get-CMRegValue 'HARDWARE\DESCRIPTION\System\CentralProcessor\0' 'ProcessorNameString'
+    $inv.cpu = @($(if ($cpuName) { ([string]$cpuName).Trim() }))
     $nics = New-Object System.Collections.ArrayList
     try {
         foreach ($ni in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {

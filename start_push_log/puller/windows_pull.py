@@ -197,6 +197,8 @@ class NodeMetrics:
 
             # --- memory ---
             total = m.get("mem_total_mb")
+            if not total or total <= 0:           # module เก่า / อ่านไม่ได้ -> ใช้ค่าจาก inventory
+                total = (self.info.get("system") or {}).get("ram_mb") if isinstance(self.info, dict) else None
             if total and total > 0:
                 self._g(g, "node_memory_MemTotal_bytes", {}, total * MIB)
             if v("mem_avail_mb") is not None:
