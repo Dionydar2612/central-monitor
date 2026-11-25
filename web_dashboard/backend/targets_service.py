@@ -1480,6 +1480,32 @@ def winrm_install_request(name, payload):
     if t is None:
         return None
     payload = payload if isinstance(payload, dict) else {}
+    user, pw, port, errors = _admin_fields(payload)
+    central = _text(payload, "central") or "auto"
+    if central != "auto":
+        try:
+            ipaddress.ip_address(central)
+        except ValueError:
+            errors["central"] = "IP ของ central ไม่ถูกต้อง (เว้นว่าง = ตรวจหาให้เอง)"
+    if errors:
+        raise ValidationError(errors)
+    files = _setup_files("setup-cm-monitor.ps1", "CentralMonitor.psm1")
+    new_pw = new_winrm_password()
+    cm_secrets.set_pending(name, new_pw)          # ใช้จริงเมื่อติดตั้งสำเร็จ (winrm_install_apply)
+    config = windows_config_text(central, windows_log_folders(t.get("logs")), int(t["winrm"].get("port") or 5986), new_pw)
+    return {"action": "install", "name": name, "host": t["host"], "port": port, "user": user, "password": pw,
+            "files_b64": files, "config": config}
+
+
+def _setup_files(*names):
+    files = {}
+    for fn in names:
+        with open(os.path.join(WINDOWS_SETUP_DIR, fn), "rb") as f:
+            files[fn] = base64.b64encode(f.read()).decode("ascii")
+    return files
+
+
+def _admin_fields(payload):
     errors = {}
     user = _text(payload, "admin_user")
     if not WINUSER_RE.match(user):
@@ -1493,29 +1519,39 @@ def winrm_install_request(name, payload):
         port = 0
     if port not in (5985, 5986):
         errors["admin_port"] = "5985 (HTTP เข้ารหัสด้วย NTLM/Kerberos) หรือ 5986 (HTTPS)"
-    central = _text(payload, "central") or "auto"
-    if central != "auto":
-        try:
-            ipaddress.ip_address(central)
-        except ValueError:
-            errors["central"] = "IP ของ central ไม่ถูกต้อง (เว้นว่าง = ตรวจหาให้เอง)"
+    return user, pw, port, errors
+
+
+def winrm_uninstall_request(name, payload, user_name=None):
+    """ถอนการติดตั้งจากหน้าเว็บ: Pause เครื่องก่อน (puller ปิด session ของ cm-monitor) แล้วให้ puller รัน
+    remove-cm-monitor.ps1 บนเครื่องด้วยบัญชี admin (ใช้ครั้งเดียว)  ไม่มีเครื่อง -> None"""
+    t = _winrm_target(name)
+    if t is None:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    user, pw, port, errors = _admin_fields(payload)
     if errors:
         raise ValidationError(errors)
-    files = {}
-    for fn in ("setup-cm-monitor.ps1", "CentralMonitor.psm1"):
-        with open(os.path.join(WINDOWS_SETUP_DIR, fn), "rb") as f:
-            files[fn] = base64.b64encode(f.read()).decode("ascii")
-    new_pw = new_winrm_password()
-    cm_secrets.set_pending(name, new_pw)          # ใช้จริงเมื่อติดตั้งสำเร็จ (winrm_install_apply)
-    config = windows_config_text(central, windows_log_folders(t.get("logs")), int(t["winrm"].get("port") or 5986), new_pw)
-    return {"name": name, "host": t["host"], "port": port, "user": user, "password": pw,
-            "files_b64": files, "config": config}
+    files = _setup_files("remove-cm-monitor.ps1")
+    if not t.get("paused"):
+        set_paused(name, True, reason="กำลังถอนการติดตั้ง Central Monitor ออกจากเครื่อง", user=user_name)
+    return {"action": "uninstall", "name": name, "host": t["host"], "port": port, "user": user, "password": pw,
+            "files_b64": files, "config": None, "delete_after": bool(payload.get("delete_target", True))}
 
 
 def winrm_install_apply(name, status):
-    """ผลจาก puller: สำเร็จ -> ใช้รหัสใหม่ + ตั้ง thumbprint / port ใน puller.yaml + ดึงทันที  (เรียกซ้ำได้)"""
+    """ผลจาก puller: ติดตั้งสำเร็จ -> ใช้รหัสใหม่ + ตั้ง thumbprint / port ใน puller.yaml + ดึงทันที
+    ถอนสำเร็จ -> ลบเครื่องออกจาก central (ถ้าเลือก) หรือคงไว้แบบ Pause + ลบรหัส  (เรียกซ้ำได้)"""
     if status.get("state") != "done" or not status.get("ok"):
         return status
+    if status.get("kind") == "uninstall":
+        if status.get("delete_after"):
+            deleted = delete_target(name)
+            return {**status, "applied": True, "deleted": deleted or _winrm_target(name) is None}
+        cm_secrets.delete(name)
+        if _winrm_target(name) is not None:
+            set_paused(name, True, reason="ถอนการติดตั้งออกจากเครื่องแล้ว")
+        return {**status, "applied": True, "deleted": False}
     promoted = cm_secrets.promote_pending(name)
     thumb = norm_thumbprint(status.get("thumbprint"))
     if THUMB_RE.match(thumb):

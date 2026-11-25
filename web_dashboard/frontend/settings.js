@@ -179,7 +179,10 @@ function groupPicker(id) {
 }
 
 async function removeTarget(t) {
-    if (!confirm(`ลบเครื่อง "${t.name}" ออกจาก puller.yaml ?\n(ข้อมูล log ที่เก็บไว้แล้วไม่ถูกลบ)`)) return;
+    const win = t.type === "winrm" ? `\n\nเครื่อง Windows: ปุ่มนี้ลบออกจาก central อย่างเดียว ไม่ได้ถอนออกจากเครื่อง` +
+        `\nถ้าต้องการถอน user cm-monitor และทุกอย่างบนเครื่อง ให้กด Cancel แล้วไปที่ Edit > การเชื่อมต่อ > "ถอนการติดตั้งออกจากเครื่อง"` +
+        `\n(หรือรัน remove-cm-monitor.bat บนเครื่อง)` : "";
+    if (!confirm(`ลบเครื่อง "${t.name}" ออกจาก puller.yaml ?\n(ข้อมูล log ที่เก็บไว้แล้วไม่ถูกลบ)${win}`)) return;
     try { await api("DELETE", "/api/targets/" + encodeURIComponent(t.name)); say("listMsg", `ลบ ${t.name} แล้ว`, "ok"); await loadTargets(); }
     catch (e) { say("listMsg", "ลบไม่สำเร็จ: " + e.message, "bad"); }
 }
@@ -361,6 +364,7 @@ function openForm(t) {
     $("w_thumb_hint").textContent = w.thumbprint ? "central ไม่ส่งรหัสผ่านถ้าใบรับรองไม่ตรง (กันเครื่องปลอม)"
         : t && t.pinned_thumbprint ? `จำใบรับรองไว้แล้ว: ${t.pinned_thumbprint}` : "เว้นว่าง = จำใบรับรองตอนเชื่อมต่อสำเร็จครั้งแรก";
     $("wi_pass").value = ""; say("wi_msg", ""); $("wi_log").hidden = true; $("wi_log").textContent = "";
+    $("wu_box").hidden = !t; $("wu_del").checked = true;
     $("w_adv").open = !!(t && w.thumbprint && !t.pinned_thumbprint && !t.has_password);
     if (!$("w_central").value) $("w_central").value = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : "";
     say("w_msg", "");
@@ -507,10 +511,28 @@ async function downloadSetup() {
     say("w_msg", "ดาวน์โหลดแล้ว: คัดลอกไปเครื่อง Windows → แตก zip → ดับเบิลคลิก setup-cm-monitor.bat (ไม่ต้องกรอกอะไรกลับมา) · ลบ zip หลังติดตั้ง", "ok");
 }
 
+/* ติดตั้ง / ถอน ทำเบื้องหลังที่ puller: ถามสถานะทุก 3 วินาที คืนผลสุดท้าย */
+async function pollJob(name) {
+    const started = Date.now();
+    for (;;) {
+        await new Promise(r => setTimeout(r, 3000));
+        let d;
+        try { d = await api("GET", `/api/targets/${encodeURIComponent(name)}/winrm-install`); }
+        catch (e) { if (e.message === "auth") return null; d = { state: "running", step: "รอคำตอบ..." }; }
+        if (d.state === "running") { say("wi_msg", `⏳ ${d.step || "กำลังทำงาน"} (${Math.round((Date.now() - started) / 1000)} วิ)`, ""); continue; }
+        if (d.log) { $("wi_log").textContent = d.log; $("wi_log").hidden = false; }
+        return d;
+    }
+}
+
+function adminBody() {
+    return { admin_user: $("wi_user").value.trim(), admin_password: $("wi_pass").value,
+             admin_port: $("wi_port").value, central: $("wi_central").value.trim() };
+}
+
 async function installWin() {
     const b = $("wi_go");
-    const body = { admin_user: $("wi_user").value.trim(), admin_password: $("wi_pass").value,
-                   admin_port: $("wi_port").value, central: $("wi_central").value.trim() };
+    const body = adminBody();
     if (!body.admin_password) { say("wi_msg", "ใส่รหัสผ่านของ admin ก่อน", "bad"); $("wi_pass").focus(); return; }
     b.disabled = true;
     try {
@@ -523,31 +545,58 @@ async function installWin() {
             say("wi_msg", "เริ่มไม่ได้: " + (showErrors(e.fields) || e.message), "bad");
             return;
         } finally { $("wi_pass").value = ""; }       /* รหัส admin ไม่ค้างในหน้า */
-        const started = Date.now();
-        for (;;) {
-            await new Promise(r => setTimeout(r, 3000));
-            let d;
-            try { d = await api("GET", `/api/targets/${encodeURIComponent(name)}/winrm-install`); }
-            catch (e) { if (e.message === "auth") return; d = { state: "running", step: "รอคำตอบ..." }; }
-            const sec = Math.round((Date.now() - started) / 1000);
-            if (d.state === "running") { say("wi_msg", `⏳ ${d.step || "กำลังติดตั้ง"} (${sec} วิ)`, ""); continue; }
-            if (d.log) { $("wi_log").textContent = d.log; $("wi_log").hidden = false; }
-            if (d.state === "done" && d.ok) {
-                say("wi_msg", `✓ ติดตั้งเสร็จบน ${d.computer || name}${d.warnings ? ` (คำเตือน ${d.warnings} ข้อ ดู log ด้านล่าง)` : ""} · central เริ่มเก็บข้อมูลภายใน ~1 นาที`, "ok");
-                try {
-                    const r = await api("GET", "/api/targets"); S.targets = r.targets; renderTable();
-                    const nt = S.targets.find(x => x.name === name);
-                    if (nt) {
-                        $("w_thumb").value = nt.winrm.thumbprint || ""; $("w_port").value = nt.winrm.port || 5986;
-                        $("w_pass").placeholder = "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)";
-                    }
-                } catch (e) { /* ignore */ }
-            } else {
-                say("wi_msg", "✗ " + (d.error || "ติดตั้งไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
-            }
-            break;
+        const d = await pollJob(name);
+        if (!d) return;
+        if (d.state === "done" && d.ok) {
+            say("wi_msg", `✓ ติดตั้งเสร็จบน ${d.computer || name}${d.warnings ? ` (คำเตือน ${d.warnings} ข้อ ดู log ด้านล่าง)` : ""} · central เริ่มเก็บข้อมูลภายใน ~1 นาที`, "ok");
+            try {
+                const r = await api("GET", "/api/targets"); S.targets = r.targets; renderTable();
+                const nt = S.targets.find(x => x.name === name);
+                if (nt) {
+                    $("w_thumb").value = nt.winrm.thumbprint || ""; $("w_port").value = nt.winrm.port || 5986;
+                    $("w_pass").placeholder = "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)";
+                    $("wu_box").hidden = false;
+                }
+            } catch (e) { /* ignore */ }
+        } else {
+            say("wi_msg", "✗ " + (d.error || "ติดตั้งไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
         }
     } finally { b.disabled = false; }
+}
+
+async function uninstallWin() {
+    const name = S.editing;
+    if (!name) return;
+    const body = { ...adminBody(), delete_target: $("wu_del").checked };
+    if (!body.admin_password) { say("wi_msg", "ใส่ Admin user / password ด้านบนก่อน (ใช้ถอนครั้งเดียว ไม่บันทึก)", "bad"); $("wi_pass").focus(); return; }
+    if (!confirm(`ถอน Central Monitor ออกจากเครื่อง ${name}?\n\nลบ: user cm-monitor + profile, JEA endpoint, module + ใบรับรอง, WinRM HTTPS listener ที่ setup สร้าง,` +
+                 ` firewall rule, สิทธิ์ต่าง ๆ ที่ให้ cm-monitor และโฟลเดอร์ใน ProgramData` +
+                 (body.delete_target ? `\nแล้วลบ ${name} ออกจาก central (ข้อมูลย้อนหลังใน OpenSearch / Prometheus ยังอยู่จนหมดอายุ)` : `\nเครื่องใน central จะถูก Pause ไว้`))) return;
+    const b = $("wu_go"); b.disabled = true; $("wi_go").disabled = true;
+    try {
+        say("wi_msg", "กำลังเริ่มถอน...", "");
+        try { await api("POST", `/api/targets/${encodeURIComponent(name)}/winrm-uninstall`, body); }
+        catch (e) {
+            if (e.message === "auth") return;
+            say("wi_msg", "เริ่มไม่ได้: " + (showErrors(e.fields) || e.message), "bad");
+            return;
+        } finally { $("wi_pass").value = ""; }
+        const d = await pollJob(name);
+        if (!d) return;
+        if (d.state === "done" && d.ok) {
+            const left = (d.leftovers || []).length ? ` · ยังเหลือ: ${d.leftovers.join(", ")}` : " · ไม่มีอะไรค้าง";
+            if (d.deleted) {
+                closeForm(); await loadTargets();
+                say("listMsg", `ถอน Central Monitor ออกจาก ${d.computer || name} แล้ว${left} · ลบ ${name} ออกจาก central แล้ว`, (d.leftovers || []).length ? "bad" : "ok");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            } else {
+                say("wi_msg", `✓ ถอนออกจาก ${d.computer || name} แล้ว${left} · เครื่องใน central ถูก Pause ไว้`, (d.leftovers || []).length ? "bad" : "ok");
+                loadTargets();
+            }
+        } else {
+            say("wi_msg", "✗ " + (d.error || "ถอนไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
+        }
+    } finally { b.disabled = false; $("wi_go").disabled = false; }
 }
 
 /* ---------- host key ---------- */
@@ -997,6 +1046,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("w_test").onclick = testWinrm;
     $("w_download").onclick = downloadSetup;
     $("wi_go").onclick = installWin;
+    $("wu_go").onclick = uninstallWin;
     $("copyCmd").onclick = copySetup;
     $("deployBtn").onclick = deployNow;
     $("f_user").addEventListener("input", renderSetup);

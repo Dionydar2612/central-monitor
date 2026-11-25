@@ -1167,3 +1167,45 @@ class WindowsEasyInstall(unittest.TestCase):
             self.assertTrue(any("Remove-Item" in x for x in scripts[-2:]))
         finally:
             windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP = orig
+
+
+class WindowsUninstallJob(unittest.TestCase):
+    def test_uninstall_runs_remove_script(self):
+        import base64
+        import windows_install
+        import winrm_client
+        scripts = []
+
+        class P:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def run(pool, script):
+            scripts.append(script)
+            if "Win32_Process" in script:
+                return "STARTED 99 10.0.0.1"
+            if "remove-result.json" in script:
+                return 'DONE\n{"ok":true,"exit":0,"error":"","warnings":0,"leftovers":[],"computer":"ABC86"}\n@@LOG\nRESULT: REMOVED COMPLETELY'
+            return "CLEAN"
+
+        orig = (windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP)
+        try:
+            windows_install._pool = lambda *a: P()
+            windows_install._run = run
+            windows_install.time.sleep = lambda s: None
+            winrm_client.HAVE_PYPSRP = True
+            windows_install.start({"action": "uninstall", "name": "w2", "host": "h", "port": 5985, "user": "a", "password": "p",
+                                   "config": None, "delete_after": True,
+                                   "files_b64": {"remove-cm-monitor.ps1": base64.b64encode(b"# remove").decode()}})
+            for _ in range(500):
+                st = windows_install.status("w2")
+                if st.get("state") != "running":
+                    break
+            self.assertEqual(st["state"], "done", st)
+            self.assertEqual((st["kind"], st["delete_after"], st["leftovers"]), ("uninstall", True, []))
+            self.assertIn("remove-cm-monitor.ps1", scripts[0])
+            self.assertNotIn("cm-monitor-config.txt", scripts[0])
+            self.assertIn("'remove-*.log'", windows_install.poll_script("uninstall"))
+            self.assertIn("'setup-*.log'", windows_install.poll_script("install"))
+        finally:
+            windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP = orig

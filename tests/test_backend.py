@@ -136,6 +136,25 @@ class Backend(unittest.TestCase):
         self.assertIn("thumbprint: " + "CD" * 20, open(os.path.join(self.tmp, "puller.yaml")).read())
         self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["applied"])   # ถามซ้ำได้
         self.assertEqual(cm_secrets.get_password("win-01"), new_pw)
+        # ถอนจากหน้าเว็บ (คงเครื่องไว้): Pause ก่อน -> ตัวถอนรันบนเครื่อง -> สำเร็จ = ลบรหัส คงเครื่องแบบ Pause
+        sent.clear()
+        r = c.post("/api/targets/win-01/winrm-uninstall", json={"admin_user": "Administrator", "admin_password": "Adm!n-pw",
+                                                                "delete_target": False})
+        self.assertEqual(r.status_code, 202, r.json)
+        self.assertEqual(sent["action"], "uninstall")
+        self.assertIsNone(sent["config"])
+        self.assertEqual(list(sent["files_b64"]), ["remove-cm-monitor.ps1"])
+        self.assertFalse(sent["delete_after"])
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-01"][0]
+        self.assertTrue(t["paused"])                                   # puller ปิด session ของ cm-monitor
+        self.api.puller_get = lambda path, params, timeout=30: (200, {"state": "done", "ok": True, "kind": "uninstall",
+                                                                       "delete_after": False, "leftovers": []})
+        d = c.get("/api/targets/win-01/winrm-install").json
+        self.assertFalse(d["deleted"])
+        self.assertFalse(cm_secrets.has_password("win-01"))
+        self.assertTrue([x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-01"][0]["paused"])
+        c.put("/api/targets/win-01/pause", json={"paused": False})
+        cm_secrets.set_password("win-01", "S3cret-pw#1")
         # operator แก้ได้แค่การแจ้งเตือน / log (รหัส / การเชื่อมต่อคงเดิม)
         self.assertEqual(c.post("/api/users", json={"username": "op-w", "password": "password1", "role": "operator"}).status_code, 201)
         self.assertEqual(self.login("op-w", "password1"), 200)
@@ -146,8 +165,17 @@ class Backend(unittest.TestCase):
         self.assertEqual(t["alert"], {"minutes": 5})
         self.assertEqual(c.get("/api/targets/windows-setup.zip?central=172.27.2.22").status_code, 403)
         self.assertEqual(c.post("/api/targets/win-01/winrm-install", json={}).status_code, 403)
+        self.assertEqual(c.post("/api/targets/win-01/winrm-uninstall", json={}).status_code, 403)
         self.assertEqual(self.login("admin", "rootpass"), 200)
-        self.assertEqual(c.delete("/api/targets/win-01").status_code, 200)
+        # ถอน + ลบเครื่องออกจาก central
+        r = c.post("/api/targets/win-01/winrm-uninstall", json={"admin_user": "Administrator", "admin_password": "Adm!n-pw"})
+        self.assertEqual(r.status_code, 202, r.json)
+        self.assertTrue(sent["delete_after"])
+        self.api.puller_get = lambda path, params, timeout=30: (200, {"state": "done", "ok": True, "kind": "uninstall",
+                                                                       "delete_after": True, "leftovers": []})
+        self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["deleted"])
+        self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["deleted"])     # ถามซ้ำได้
+        self.assertNotIn("win-01", [x["name"] for x in c.get("/api/targets").json["targets"]])
         self.assertFalse(os.path.exists(sec))                          # ลบเครื่อง = ลบรหัส
 
     def test_roles_and_audit(self):

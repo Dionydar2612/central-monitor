@@ -1,3 +1,11 @@
+# เพิ่มเติม (25 พ.ย. 2026): ถอนการติดตั้ง Windows จากหน้าเว็บ + ตัวถอนลบครบทุกอย่าง
+- Settings > Edit เครื่อง Windows > การเชื่อมต่อ > **ถอนการติดตั้งออกจากเครื่อง** (admin ใช้ครั้งเดียว) + เลือกลบเครื่องออกจาก central
+- remove-cm-monitor.ps1 เขียนใหม่: ลบ profile ของ cm-monitor ด้วย, หาของเราจากชื่อเมื่อไม่มี manifest, คืนค่า WinRM ถ้า setup เปิดเอง,
+  log ใน logs\remove-*.log, ตรวจซ้ำตอนจบว่าไม่มีอะไรค้าง, remove-result.json ให้หน้าเว็บ
+- ปุ่ม Delete ของเครื่อง Windows เตือนว่าไม่ได้ถอนออกจากเครื่อง
+
+---
+
 # เพิ่มเติม (25 พ.ย. 2026): sensor Time sync (NTP) ของเครื่อง Linux
 - ไม่ sync NTP = Error · นาฬิกาคลาดจาก central เกิน 500 / 2000 ms = Warning / Error (ปรับได้ที่ Settings > Alerts และฟอร์มเครื่อง)
 - ใช้ค่าจาก node_exporter (timex) ที่มีอยู่แล้ว ไม่ต้องติดตั้งหรือเปิดพอร์ตเพิ่ม · แจ้งเตือนผ่าน Alert / การ์ด Teams เดิม

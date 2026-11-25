@@ -33,6 +33,21 @@ Settings > **+ Add target** > ชนิดเครื่อง *Windows (WinRM 
 เปลี่ยนรหัส: ติดตั้งซ้ำด้วยวิธี 1 (ออกรหัสใหม่ให้) หรือ `reset-password-cm-monitor.bat` แล้วใส่รหัสใน *ตั้งค่าเอง (ขั้นสูง)*
 ถอน: `remove-cm-monitor.bat` · ตรวจ: `check-cm-monitor.bat` (อ่านอย่างเดียว) · รัน setup เองแบบเดิม (ไม่ใช้ zip จากหน้าเว็บ): กรอกรหัส + Thumbprint ที่ setup แสดงใน *ตั้งค่าเอง (ขั้นสูง)*
 
+### ถอนการติดตั้ง (ลบทุกอย่างที่เพิ่มบนเครื่อง)
+
+- **จากหน้าเว็บ** (ติดตั้งด้วยวิธีไหนก็ได้): Settings > Edit เครื่อง > การเชื่อมต่อ > กรอก Admin user / password ด้านบน >
+  **ถอนการติดตั้งออกจากเครื่อง** (ติ๊ก "ลบเครื่องนี้ออกจาก central ด้วย" ได้ · ไม่ติ๊ก = คงไว้แบบ Pause)
+  central Pause เครื่องก่อน (ปิด session ของ cm-monitor) แล้วรัน `remove-cm-monitor.ps1` บนเครื่องผ่าน WinRM แบบเดียวกับตอนติดตั้ง
+- **บนเครื่อง**: ดับเบิลคลิก `remove-cm-monitor.bat` (มีใน zip) แล้วลบเครื่องในหน้า Settings
+- ปุ่ม Delete ในรายการเครื่อง = ลบออกจาก central อย่างเดียว **ไม่ได้ถอนออกจากเครื่อง**
+
+ตัวถอนลบ: user `cm-monitor` + profile (`C:\Users\cm-monitor`), JEA endpoint + ค่าจำกัด, module ใน Program Files,
+ใบรับรองที่ใช้เซ็น module (My / Root / TrustedPublisher), WinRM HTTPS listener + ใบรับรองที่ setup สร้าง, firewall rule,
+สิทธิ์อ่านโฟลเดอร์ log, สิทธิ์อ่านรายการ service, สิทธิ์ห้าม logon, `C:\ProgramData\CentralMonitor` และ `CentralMonitor-setup`
+แล้ว **ตรวจซ้ำทุกข้อ** แสดง "ไม่มีอะไรค้าง" หรือรายการที่ยังเหลือ · ถ้า setup เป็นคนเปิด service WinRM: ถอนบนเครื่องคืนค่าเดิมให้
+(ถอนจากหน้าเว็บคงไว้เพราะใช้ WinRM อยู่) · ไม่แตะ WinRM 5985, user / ใบรับรอง / listener อื่นของเครื่อง
+หาไม่เจอ manifest ก็ยังลบได้ (หาจากชื่อของเราเอง) · ข้อมูลที่เก็บไว้แล้วใน OpenSearch / Prometheus หมดอายุตามปกติ
+
 ## 2. ความปลอดภัย
 
 | เรื่อง | ทำอย่างไร |

@@ -2,7 +2,8 @@
 windows_install.py - ติดตั้ง Central Monitor บนเครื่อง Windows จากหน้าเว็บ (ไม่ต้องไปที่เครื่อง)
 ==============================================================================================
 
-ปุ่ม "ติดตั้งให้เครื่องนี้" ใน Settings > การเชื่อมต่อ  (central-api -> ondemand.py POST /winrm-install)
+ปุ่ม "ติดตั้งให้เครื่องนี้" / "ถอนการติดตั้ง" ใน Settings > การเชื่อมต่อ  (central-api -> ondemand.py POST /winrm-install)
+body.action = install (setup-cm-monitor.ps1) | uninstall (remove-cm-monitor.ps1 -> remove-result.json)
 
 ขั้นตอน (ทำใน thread แยก หน้าเว็บถามสถานะทุก ~3 วินาที: GET /winrm-install-status?name=)
     1. เชื่อมต่อ WinRM ของเครื่อง (5985 HTTP / 5986 HTTPS) ด้วยบัญชี admin ที่กรอก (NTLM / Kerberos, ข้อความเข้ารหัส)
@@ -59,8 +60,9 @@ def _run(pool, script):
     return "\n".join(str(o) for o in out if o is not None)
 
 
-def build_start_script(files, config_text, port):
-    """สคริปต์ที่รันบนเครื่อง Windows: เขียนไฟล์ (base64 อย่างเดียว ไม่มีข้อความจากผู้ใช้ปนในคำสั่ง) แล้วเริ่ม setup"""
+def build_start_script(files, config_text, port, run_file="setup-cm-monitor.ps1"):
+    """สคริปต์ที่รันบนเครื่อง Windows: เขียนไฟล์ (base64 อย่างเดียว ไม่มีข้อความจากผู้ใช้ปนในคำสั่ง) แล้วเริ่ม run_file
+    config_text = None (ถอนการติดตั้ง) -> ไม่เขียน cm-monitor-config.txt"""
     lines = [
         "$ErrorActionPreference = 'Stop'",
         f"$d = {_ps_str(SETUP_DIR)}",
@@ -76,17 +78,27 @@ def build_start_script(files, config_text, port):
         if not all(ch.isalnum() or ch in "-_." for ch in name):
             raise ValueError(f"bad file name {name!r}")
         lines.append(f"[IO.File]::WriteAllBytes((Join-Path $d '{name}'), [Convert]::FromBase64String('{_b64(data)}'))")
+    if config_text is not None:
+        lines += [
+            f"$cfg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{_b64(config_text)}'))",
+            "if ($cfg -match 'CentralIP=auto') { if (-not $central) { throw 'cannot detect the central IP - type it in the form' }; $cfg = $cfg.Replace('CentralIP=auto', 'CentralIP=' + $central) }",
+            "[IO.File]::WriteAllText((Join-Path $d 'cm-monitor-config.txt'), $cfg, (New-Object Text.UTF8Encoding($true)))",
+        ]
+    if run_file not in files:
+        raise ValueError(f"{run_file} not in files")
     lines += [
-        f"$cfg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{_b64(config_text)}'))",
-        "if ($cfg -match 'CentralIP=auto') { if (-not $central) { throw 'cannot detect the central IP - type it in the form' }; $cfg = $cfg.Replace('CentralIP=auto', 'CentralIP=' + $central) }",
-        "[IO.File]::WriteAllText((Join-Path $d 'cm-monitor-config.txt'), $cfg, (New-Object Text.UTF8Encoding($true)))",
         "Get-ChildItem -LiteralPath $d -File | Unblock-File",
-        "$cmd = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"' + $d + '\\setup-cm-monitor.ps1\" unattended'",
+        f"$cmd = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"' + $d + '\\{run_file}\" unattended'",
         "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; CurrentDirectory = $d }",
         "if ($r.ReturnValue -ne 0) { throw ('cannot start setup (Win32_Process.Create ' + $r.ReturnValue + ')') }",
         "'STARTED ' + $r.ProcessId + ' ' + $central",
     ]
     return "\n".join(lines)
+
+
+def poll_script(kind):
+    prefix = "setup" if kind == "install" else "remove"
+    return POLL_SCRIPT.replace("setup-result.json", f"{prefix}-result.json").replace("'setup-*.log'", f"'{prefix}-*.log'")
 
 
 POLL_SCRIPT = "\n".join([
@@ -109,36 +121,38 @@ def _set(name, **kw):
         job["updated"] = time.time()
 
 
-def _job(name, host, port, user, password, files, config_text):
+def _job(name, host, port, user, password, files, config_text, kind="install"):
     import json
+    run_file = "setup-cm-monitor.ps1" if kind == "install" else "remove-cm-monitor.ps1"
+    what = "setup" if kind == "install" else "ตัวถอน"
     try:
-        _set(name, state="running", step=f"เชื่อมต่อ {host}:{port} ด้วย {user}")
+        _set(name, state="running", kind=kind, step=f"เชื่อมต่อ {host}:{port} ด้วย {user}")
         with _pool(host, port, user, password) as pool:
-            _set(name, step="คัดลอกชุดติดตั้งและเริ่ม setup")
-            out = _run(pool, build_start_script(files, config_text, port))
+            _set(name, step=f"คัดลอกไฟล์และเริ่ม{what}")
+            out = _run(pool, build_start_script(files, config_text, port, run_file))
         if not out.startswith("STARTED"):
-            raise winrm_client.WinRMError(f"setup did not start: {out[:200]}")
+            raise winrm_client.WinRMError(f"{run_file} did not start: {out[:200]}")
         central = out.split()[2] if len(out.split()) > 2 else ""
-        _set(name, step="setup กำลังทำงาน (WinRM จะ restart 1 ครั้ง)", central=central)
+        _set(name, step=f"{what}กำลังทำงาน (WinRM จะ restart 1 ครั้ง)", central=central)
         started = time.time()
         result, log = None, ""
         time.sleep(8)
         while time.time() - started < MAX_WAIT:
             try:
                 with _pool(host, port, user, password) as pool:
-                    text = _run(pool, POLL_SCRIPT)
+                    text = _run(pool, poll_script(kind))
                 if text.startswith("DONE"):
                     body, _, log = text[5:].partition("@@LOG")
                     result = json.loads(body.strip().lstrip("\ufeff"))
                     break
                 last = text[8:].strip()
                 if last:
-                    _set(name, step="setup: " + last[9:120] if len(last) > 9 else last[:120])
+                    _set(name, step=f"{what}: " + last[9:120] if len(last) > 9 else last[:120])
             except Exception as e:  # noqa: BLE001  WinRM กำลัง restart -> ลองใหม่
                 _set(name, step=f"รอ WinRM กลับมา ({str(e)[:80]})")
             time.sleep(5)
         if result is None:
-            raise winrm_client.WinRMError("setup ไม่จบภายใน 5 นาที - ดู log บนเครื่อง: " + SETUP_DIR + "\\logs")
+            raise winrm_client.WinRMError(f"{what}ไม่จบภายใน 5 นาที - ดู log บนเครื่อง: " + SETUP_DIR + "\\logs")
         try:
             with _pool(host, port, user, password) as pool:
                 _run(pool, CLEANUP_SCRIPT)
@@ -147,8 +161,9 @@ def _job(name, host, port, user, password, files, config_text):
         ok = bool(result.get("ok"))
         _set(name, state="done" if ok else "failed", ok=ok, thumbprint=str(result.get("thumbprint") or "").upper(),
              port=result.get("port"), warnings=result.get("warnings") or 0, error=result.get("error") or "",
-             computer=result.get("computer"), log=log.strip()[-6000:], step="เสร็จ" if ok else "setup ล้ม")
-        print(f"[WINRM INSTALL] {name} {'OK' if ok else 'FAILED'} {result.get('error') or ''}")
+             leftovers=result.get("leftovers") or [], computer=result.get("computer"), log=log.strip()[-6000:],
+             step="เสร็จ" if ok else f"{what}ล้ม")
+        print(f"[WINRM {kind.upper()}] {name} {'OK' if ok else 'FAILED'} {result.get('error') or ''}")
     except Exception as e:  # noqa: BLE001
         msg = winrm_client._friendly(e) if not isinstance(e, winrm_client.WinRMError) else str(e)
         low = msg.lower()
@@ -156,7 +171,7 @@ def _job(name, host, port, user, password, files, config_text):
             msg += (" · ใช้บัญชี admin ที่ล็อกอินทาง network ได้ (Administrator ของเครื่อง หรือ domain admin;"
                     " local admin อื่นถูก UAC remote restriction บล็อก) หรือใช้วิธีดาวน์โหลดชุดติดตั้ง")
         _set(name, state="failed", ok=False, error=msg[:600], step="ล้ม")
-        print(f"[WINRM INSTALL] {name} FAILED {msg[:200]}")
+        print(f"[WINRM {kind.upper()}] {name} FAILED {msg[:200]}")
 
 
 def start(body):
@@ -165,14 +180,17 @@ def start(body):
         for k in [k for k, v in _jobs.items() if time.time() - v.get("updated", 0) > JOB_KEEP]:
             _jobs.pop(k, None)
         if _jobs.get(name, {}).get("state") == "running":
-            raise winrm_client.WinRMError("กำลังติดตั้งเครื่องนี้อยู่")
-        _jobs[name] = {"state": "running", "step": "เริ่ม", "updated": time.time()}
+            raise winrm_client.WinRMError("กำลังติดตั้ง / ถอนเครื่องนี้อยู่")
+        kind = "uninstall" if body.get("action") == "uninstall" else "install"
+        _jobs[name] = {"state": "running", "kind": kind, "step": "เริ่ม", "updated": time.time(),
+                       "delete_after": bool(body.get("delete_after"))}
     if not winrm_client.HAVE_PYPSRP:
         _set(name, state="failed", error="puller image ไม่มี pypsrp - รัน cm-update --rebuild")
         return status(name)
     files = {k: base64.b64decode(v) for k, v in dict(body.get("files_b64") or {}).items()}
+    config = body.get("config")
     args = (name, str(body["host"]), int(body.get("port") or 5985), str(body["user"]), str(body["password"]),
-            files, str(body["config"]))
+            files, None if config is None else str(config), kind)
     threading.Thread(target=_job, args=args, daemon=True, name=f"winrm-install-{name}").start()
     return status(name)
 

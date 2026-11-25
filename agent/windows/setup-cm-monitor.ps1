@@ -192,6 +192,7 @@ try {
         Set-Service -Name WinRM -StartupType Automatic
         Start-Service -Name WinRM
         $m.created['winrm_started'] = $true
+        $m.created['winrm_prev_start'] = [string]$startMode
     }
     Ok 'WinRM service running'
 

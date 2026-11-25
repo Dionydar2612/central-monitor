@@ -66,7 +66,8 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     POST /api/targets/winrm-test  ทดสอบเชื่อมต่อ Windows (WinRM -> JEA) ด้วยค่าที่กรอกในฟอร์ม
     GET  /api/targets/windows-setup.zip?central=<IP>[&name=]  ชุดติดตั้งบนเครื่อง Windows (.bat) พร้อมค่าตั้ง (+ รหัสของเครื่อง)
     POST /api/targets/<name>/winrm-install  ติดตั้งให้เครื่อง Windows จากหน้าเว็บ (บัญชี admin ใช้ครั้งเดียว ไม่เก็บ)
-    GET  /api/targets/<name>/winrm-install  สถานะการติดตั้ง (หน้าเว็บถามทุก ~3 วินาที)
+    GET  /api/targets/<name>/winrm-install  สถานะการติดตั้ง / ถอน (หน้าเว็บถามทุก ~3 วินาที)
+    POST /api/targets/<name>/winrm-uninstall  ถอนทุกอย่างออกจากเครื่อง Windows จากหน้าเว็บ (+ ลบเครื่องออกจาก central)
 """
 
 import re
@@ -223,6 +224,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/targets/winrm-test$"), "target.test_winrm", ("host", "port", "user", "name")),
     ("GET", re.compile(r"^/api/targets/windows-setup\.zip$"), "target.windows_setup_download", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-install$"), "target.windows_install", ("admin_user", "admin_port", "central")),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-uninstall$"), "target.windows_uninstall", ("admin_user", "admin_port", "delete_target")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused", "pause_reason")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
     ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
@@ -1380,6 +1382,25 @@ def targets_winrm_install(name):
         return _bad_request(e)
     except OSError as e:
         return jsonify({"error": f"ไม่พบไฟล์ชุดติดตั้งใน image (rebuild): {e}"}), 500
+    if req is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        status, data = puller_post("/winrm-install", req, timeout=30)
+    except (OSError, ValueError) as e:
+        return jsonify({"error": f"ติดต่อ central-puller ไม่ได้: {e}"}), 502
+    return jsonify(data), (202 if status in (200, 202) else 502)
+
+
+@app.post("/api/targets/<name>/winrm-uninstall")
+def targets_winrm_uninstall(name):
+    """ถอนการติดตั้งจากเครื่อง Windows (ทุกอย่างที่ setup สร้าง รวม user cm-monitor และ profile) ทำเบื้องหลังเหมือนติดตั้ง"""
+    body = _json_body() or {}
+    try:
+        req = targets_service.winrm_uninstall_request(name, body, user_name=_who()[0])
+    except ValidationError as e:
+        return _bad_request(e)
+    except OSError as e:
+        return jsonify({"error": f"ไม่พบไฟล์ตัวถอนใน image (rebuild): {e}"}), 500
     if req is None:
         return jsonify({"error": "not found"}), 404
     try:

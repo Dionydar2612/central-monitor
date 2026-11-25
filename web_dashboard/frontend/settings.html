@@ -72,6 +72,12 @@
 </div>
 <div style="margin-top:8px"><button class="st-btn sm primary" id="wi_go" type="button">ติดตั้งให้เครื่องนี้</button> <span id="wi_msg" class="st-msg" role="status"></span></div>
 <pre id="wi_log" class="st-code" hidden style="max-height:220px;overflow:auto;margin-top:8px;font-size:11.5px;white-space:pre-wrap"></pre>
+<div id="wu_box" hidden style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line,#ddd)">
+<div class="st-h3">ถอนการติดตั้งออกจากเครื่องนี้ (ใช้ Admin user / password ด้านบน)</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:6px">ลบทุกอย่างที่ติดตั้งไว้: user <code>cm-monitor</code> + profile, JEA endpoint, module + ใบรับรองที่ใช้เซ็น, WinRM HTTPS listener + ใบรับรอง (ที่ setup สร้าง), firewall rule, สิทธิ์อ่านโฟลเดอร์ log / service, สิทธิ์ห้าม logon และโฟลเดอร์ใน ProgramData แล้วตรวจซ้ำว่าไม่มีอะไรค้าง · ไม่แตะ WinRM 5985 และของอื่นบนเครื่อง</div>
+<label class="st-check"><input type="checkbox" id="wu_del" checked> ลบเครื่องนี้ออกจาก central ด้วยเมื่อถอนเสร็จ (ไม่ติ๊ก = คงไว้แบบ Pause)</label>
+<div style="margin-top:8px"><button class="st-btn sm danger" id="wu_go" type="button">ถอนการติดตั้งออกจากเครื่อง</button></div>
+</div>
 <div class="st-h3" style="margin-top:16px">วิธีที่ 2: ดาวน์โหลดแล้วดับเบิลคลิกบนเครื่อง</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:6px">คัดลอก zip ไปเครื่อง Windows → แตก zip → ดับเบิลคลิก <code>setup-cm-monitor.bat</code> → จบ (รหัสของเครื่องนี้อยู่ใน zip แล้ว ถูกลบออกจากไฟล์หลังใช้ · ลบ zip ทิ้งหลังติดตั้ง) · ถอน: <code>remove-cm-monitor.bat</code> · ตรวจ: <code>check-cm-monitor.bat</code></div>
 <div class="st-grid">
