@@ -26,6 +26,7 @@ ondemand.py - ดึง log ระดับ INFO "สด" จากเครื�
         วัดสด ณ ตอนที่ขอ (CPU ต่อ core 1 วินาที + 10 process ที่ใช้ RAM สูงสุด) แสดงแล้วไม่เก็บ
         หน้าเว็บเรียกทุก ~60 วินาทีขณะเปิดหน้า (central-api cache ไว้ 20 วินาที)
 
+    GET /winrm-cert?host=&port=  ·  POST /winrm-test  ·  เครื่อง type: winrm -> windows_ondemand.py
     GET /log-check?target=web-01
         -> {"logs":[{name, path, ok, problem, files:[{path, size, mtime, readable}]}], "error"}
         ตรวจ log ที่ตั้งไว้ใน puller.yaml ของเครื่องนั้น (ปุ่ม "ตรวจ" ใน Settings > Log)
@@ -43,6 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import journal
+import windows_ondemand
 from config import load_config
 from log_filter import only_info
 from system_info import CPU_CORE_COMMAND, parse_cpu_cores
@@ -310,13 +312,19 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
 
-        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check"):
+        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check", "/winrm-cert"):
             return self._send(404, {"error": "not found"})
 
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
             return self._send(403, {"error": "forbidden"})
 
         params = parse_qs(url.query)
+        if url.path == "/winrm-cert":
+            try:
+                return self._send(200, windows_ondemand.cert(params.get("host", [""])[0].strip(),
+                                                             params.get("port", ["5986"])[0] or 5986))
+            except Exception as e:
+                return self._send(502, {"error": str(e)})
         if url.path == "/rule-preview":          # ทดลองกฎแจ้งเตือนที่สร้างเอง (Settings > Custom alert rules)
             try:
                 import sensor_monitor
@@ -333,6 +341,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "unknown target"})
         if str(target.get("type") or "ssh") == "agent":
             return self._send(400, {"error": f"{name} เป็นเครื่องแบบ agent (เลิกรองรับแล้ว) ไม่มี SSH"})
+        if str(target.get("type") or "ssh") == "winrm":
+            return self._windows(url.path, target, params)
 
         if url.path == "/log-check":
             try:
@@ -362,6 +372,36 @@ class _Handler(BaseHTTPRequestHandler):
         )
         print(f"[ONDEMAND] info-logs target={name} entries={len(result['entries'])} errors={len(result['errors'])}")
         return self._send(200, result)
+
+    def _windows(self, path, target, params):
+        name = target.get("name")
+        try:
+            if path == "/log-check":
+                return self._send(200, windows_ondemand.log_check(target))
+            if path == "/processes":
+                return self._send(200, windows_ondemand.processes(target))
+            try:
+                lines = int(params.get("lines", [DEFAULT_LINES])[0])
+            except ValueError:
+                lines = DEFAULT_LINES
+            return self._send(200, windows_ondemand.info_logs(target, lines=lines, source=params.get("source", [""])[0] or None,
+                                                              start=_num(params, "start"), end=_num(params, "end")))
+        except Exception as e:
+            print(f"[ONDEMAND] {path} target={name} error={e}")
+            return self._send(502, {"error": f"WinRM {name}: {e}"})
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        if url.path != "/winrm-test":
+            return self._send(404, {"error": "not found"})
+        if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
+            return self._send(403, {"error": "forbidden"})
+        try:
+            n = min(int(self.headers.get("Content-Length") or 0), 65536)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            return self._send(200, windows_ondemand.test(body if isinstance(body, dict) else {}))
+        except Exception as e:
+            return self._send(200, {"ok": False, "error": str(e)[:400]})
 
     def log_message(self, *args):     # ไม่ต้องพิมพ์ access log ทุก request
         pass

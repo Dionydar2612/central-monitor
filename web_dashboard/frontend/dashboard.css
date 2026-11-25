@@ -1732,3 +1732,7 @@ button.ovst{border:0;font:inherit;cursor:pointer}button.ovst:hover{filter:bright
 .tcPrev .tcTitle{font-weight:700;font-size:16px;margin-bottom:6px}.tcPrev b{display:block;margin-top:10px}.tcPrev hr{border:0;border-top:1px solid var(--line,#ddd);margin:10px 0}
 @media(max-width:900px){.tcWrap{grid-template-columns:1fr}}
 .tcPrev .tcLine{margin-top:8px}.tcPrev .tcLine b{display:inline;margin:0}
+
+/* Settings: ฟอร์มเครื่องแสดงเฉพาะช่องของชนิดที่เลือก (Linux = .ssh-only, Windows = .win-only) */
+#formCard[data-type="winrm"] .ssh-only{display:none!important}
+#formCard:not([data-type="winrm"]) .win-only{display:none!important}

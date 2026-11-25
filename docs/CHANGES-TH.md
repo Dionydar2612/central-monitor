@@ -1,3 +1,14 @@
+# เพิ่มเติม (25 พ.ย. 2026): เครื่อง Windows แบบไม่ลง agent (WinRM · อ่านอย่างเดียว) ตั้งค่าจากหน้าเว็บทั้งหมด
+- Settings > + Add target > **ชนิดเครื่อง = Windows**: กรอก Host / Password / Thumbprint, **Scan certificate**, **ทดสอบการเชื่อมต่อ**,
+  **Download ชุดติดตั้ง (.zip)** ที่กรอก CentralIP + LogPaths ให้ (บนเครื่อง Windows: ดับเบิลคลิก `setup-cm-monitor.bat` ครั้งเดียว)
+- บน Windows ไม่มี service / task / agent: JEA endpoint `CentralMonitor` + user `cm-monitor` (ไม่ใช่ admin) + WinRM HTTPS 5986 จาก IP central เท่านั้น
+- puller `windows_pull.py`: metric ชื่อแบบ node_exporter (หน้าแรก / sensor / bottleneck / กฎ / Teams / Daily Summary ใช้ได้ทันที),
+  Event log + ไฟล์ log (Warning ขึ้นไป) -> OpenSearch, service / process / event -> หน้ารายละเอียดเครื่อง, Load INFO log / Process สด / ตรวจ log
+- รหัสผ่านเก็บแยกแบบเข้ารหัส `data/state/secrets/winrm/` (ไม่อยู่ใน puller.yaml) · กฎแจ้งเตือนเลือก OS windows ได้ · หน้าแรกแสดง OS Windows
+- **ต้อง `cm-update --rebuild`** (puller ใช้ pypsrp, central-api มีชุดติดตั้ง) · รายละเอียด: docs/WINDOWS-TH.md
+
+---
+
 # เพิ่มเติม (24 พ.ย. 2026): ไม่เปิดพอร์ต 9090 · ช่วงเวลาด่วนเพิ่ม 12 ชม. / 1 วัน / 3 วัน
 - Prometheus ไม่เปิดพอร์ต 9090 ออก host แล้ว (ระบบใช้ทาง network ภายใน) ต้องการ UI -> `docker/docker-compose.prometheus-ui.yml`
 - หน้าแรก: ช่วงเวลาด่วน 15 นาที, 1 ชม., 6 ชม., 12 ชม., 1 วัน, 3 วัน, 7 วัน, 30 วัน และจำช่วงที่เลือกไว้ใน browser

@@ -122,6 +122,22 @@ def puller_get(path, params, timeout=30):
             return e.code, {"error": f"HTTP {e.code}"}
 
 
+def puller_post(path, body, timeout=60):
+    """POST JSON ไป HTTP ภายในของ puller (ondemand.py) คืน (status, dict)  ติดต่อไม่ได้ -> raise"""
+    from settings import PULLER_TOKEN, PULLER_URL
+
+    req = urllib.request.Request(PULLER_URL + path, data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"X-Central-Token": PULLER_TOKEN, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except ValueError:
+            return e.code, {"error": f"HTTP {e.code}"}
+
+
 def prom_vector(query, timestamp=None):
     """instant query ที่คืนหลาย series -> [(labels dict, ค่า float)]  ล้มเหลว -> []"""
     try:

@@ -346,6 +346,11 @@ def system(web, target=None):
     if target:
         data.update({"host": target.get("host"), "group": target.get("group") or "",
                      "type": target.get("type") or "ssh"})
+        if str(target.get("type") or "ssh") == "winrm":      # Windows ไม่ลง agent (WinRM -> JEA)
+            data["os"] = "windows"
+            data["agent"] = {"collector": "WinRM (agentless, JEA read-only) " + (data["agent"]["collector"].replace("node_exporter winrm-", "module ")
+                                                                               if "winrm-" in data["agent"]["collector"] else "")}
+            data["clock_source"] = None
         if not data["ip_addresses"] and target.get("host"):
             data["ip_addresses"] = [{"nic": None, "address": target.get("host"), "family": "configured"}]
     return data

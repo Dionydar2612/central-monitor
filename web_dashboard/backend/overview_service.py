@@ -88,7 +88,8 @@ def _server(target, sensor_states, batch):
     except (TypeError, ValueError):
         prio = 3
     base = {"web": name, "host": target.get("host"), "group": target.get("group") or "", "priority": prio if 1 <= prio <= 5 else 3,
-            "paused": bool(target.get("paused")), "os": "linux", "kind": "ssh",
+            "paused": bool(target.get("paused")), "os": "windows" if str(target.get("type") or "ssh") == "winrm" else "linux",
+            "kind": "winrm" if str(target.get("type") or "ssh") == "winrm" else "ssh",
             "pause_reason": ((target.get("pause") or {}).get("reason") or "") if target.get("paused") and isinstance(target.get("pause"), dict) else "",
             "paused_at": ((target.get("pause") or {}).get("at")) if target.get("paused") and isinstance(target.get("pause"), dict) else None}
 

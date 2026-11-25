@@ -4,6 +4,7 @@ test_backend.py - ทดสอบ web_dashboard/backend (ผู้ใช้/ส�
 """
 
 import importlib.util
+import json
 import os
 import shutil
 import sys
@@ -37,6 +38,82 @@ class Backend(unittest.TestCase):
     def login(self, u, p):
         self.c.post("/api/logout")
         return self.c.post("/api/login", json={"username": u, "password": p}).status_code
+
+    def test_windows_target(self):
+        """เครื่อง Windows (type: winrm) จากหน้า Settings: รหัสเก็บแยก (เข้ารหัส) / web-nodes.json / ชุดติดตั้ง"""
+        import zipfile
+        import io as _io
+        import targets_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        thumb = "ab" * 20
+        body = {"type": "winrm", "name": "win-01", "host": "10.0.0.9", "group": "TQ/Win", "logs": [],
+                "winrm": {"port": 5986, "user": "cm-monitor", "thumbprint": thumb, "event_logs": ["System", "Application"]}}
+        bad = c.post("/api/targets", json=body).json
+        self.assertIn("password", bad["fields"])                      # เพิ่มใหม่ต้องมีรหัส
+        bad = c.post("/api/targets", json={**body, "password": "x", "winrm": {**body["winrm"], "thumbprint": "123"},
+                                            "logs": [{"name": "app", "path": "/var/log/x.log"}]}).json
+        self.assertIn("winrm.thumbprint", bad["fields"])
+        self.assertIn("logs.0.path", bad["fields"])                    # path แบบ Linux ใช้กับ Windows ไม่ได้
+        bad = c.post("/api/targets", json={**body, "password": "x", "logs": [{"name": "app", "path": "D:\\a*\\x.log"}]}).json
+        self.assertIn("logs.0.path", bad["fields"])                    # wildcard ในชื่อโฟลเดอร์
+        logs = [{"name": "application", "path": "D:\\THMux\\logs\\*.log", "type": "THMux"}]
+        r = c.post("/api/targets", json={**body, "password": "S3cret-pw#1", "logs": logs})
+        self.assertEqual(r.status_code, 201, r.json)
+        yml = open(os.path.join(self.tmp, "puller.yaml")).read()
+        self.assertIn("type: winrm", yml)
+        self.assertIn("thumbprint: " + thumb.upper(), yml)
+        self.assertNotIn("S3cret", yml)                                # รหัสไม่อยู่ใน puller.yaml
+        sec = os.path.join(self.tmp, "state", "secrets", "winrm", "win-01.json")
+        self.assertEqual(oct(os.stat(sec).st_mode & 0o777), "0o600")
+        with open(sec) as f:
+            self.assertNotIn("S3cret", f.read())
+        import cm_secrets
+        self.assertEqual(cm_secrets.get_password("win-01"), "S3cret-pw#1")
+        with open(os.path.join(self.tmp, "web-nodes.json")) as f:
+            nodes = json.load(f)
+        e = [x for x in nodes if x["labels"].get("web") == "win-01"][0]
+        self.assertEqual(e["targets"], ["central-puller:9110"])
+        self.assertEqual(e["labels"]["__metrics_path__"], "/win/win-01")
+        self.assertEqual(e["labels"]["instance"], "10.0.0.9:5986")
+        self.assertEqual(e["labels"]["job"], "win-01-win")
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-01"][0]
+        self.assertEqual(t["type"], "winrm")
+        self.assertTrue(t["has_password"])
+        self.assertNotIn("password", json.dumps(t).replace("has_password", ""))
+        # แก้โดยไม่ใส่รหัส = ใช้รหัสเดิม
+        r = c.put("/api/targets/win-01", json={**body, "host": "10.0.0.10", "logs": logs})
+        self.assertLess(r.status_code, 300, r.json)
+        self.assertEqual(cm_secrets.get_password("win-01"), "S3cret-pw#1")
+        self.assertIn("instance: 10.0.0.10:5986", open(os.path.join(self.tmp, "puller.yaml")).read())
+        # กฎแจ้งเตือนเห็นเครื่องเป็น Windows
+        rules = c.get("/api/alert-rules").json
+        self.assertEqual([x["os"] for x in rules["targets"] if x["name"] == "win-01"], ["windows"])
+        # ชุดติดตั้ง (zip ในหน่วยความจำ) + ค่าตั้งที่กรอกให้
+        targets_service.WINDOWS_SETUP_DIR = os.path.join(ROOT, "agent", "windows")
+        self.assertEqual(c.get("/api/targets/windows-setup.zip?central=bad").status_code, 400)
+        r = c.get("/api/targets/windows-setup.zip?central=172.27.2.22&name=win-01")
+        self.assertEqual(r.status_code, 200, r.data[:200])
+        z = zipfile.ZipFile(_io.BytesIO(r.data))
+        names = z.namelist()
+        self.assertIn("cm-monitor-win-01/setup-cm-monitor.bat", names)
+        self.assertIn("cm-monitor-win-01/CentralMonitor.psm1", names)
+        cfg = z.read("cm-monitor-win-01/cm-monitor-config.txt").decode("utf-8-sig")
+        self.assertIn("CentralIP=172.27.2.22", cfg)
+        self.assertIn("LogPaths=D:\\THMux\\logs\\*.log", cfg)
+        self.assertIn("\r\n", cfg)
+        # operator แก้ได้แค่การแจ้งเตือน / log (รหัส / การเชื่อมต่อคงเดิม)
+        self.assertEqual(c.post("/api/users", json={"username": "op-w", "password": "password1", "role": "operator"}).status_code, 201)
+        self.assertEqual(self.login("op-w", "password1"), 200)
+        r = c.put("/api/targets/win-01", json={"alert": {"minutes": 5}, "host": "1.1.1.1"})
+        self.assertLess(r.status_code, 300, r.json)
+        t = [x for x in c.get("/api/targets").json["targets"] if x["name"] == "win-01"][0]
+        self.assertEqual(t["host"], "10.0.0.10")
+        self.assertEqual(t["alert"], {"minutes": 5})
+        self.assertEqual(c.get("/api/targets/windows-setup.zip?central=172.27.2.22").status_code, 403)
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        self.assertEqual(c.delete("/api/targets/win-01").status_code, 200)
+        self.assertFalse(os.path.exists(sec))                          # ลบเครื่อง = ลบรหัส
 
     def test_roles_and_audit(self):
         c = self.c

@@ -20,7 +20,7 @@
 # =====================================================================
 Set-StrictMode -Version 2.0
 
-$script:CMVersion   = '1.0.0'
+$script:CMVersion   = '1.1.0'
 $script:DataDir     = Join-Path $env:ProgramData 'CentralMonitor'
 $script:AllowFile   = Join-Path $script:DataDir 'allowed-paths.txt'
 $script:MaxText     = 2048          # max characters per event message
@@ -29,6 +29,7 @@ $script:CountersAt  = [datetime]::MinValue
 $script:TotalRamMB  = 0
 $script:Self        = $null
 $script:StartedAt   = [datetime]::UtcNow
+$script:ProcPrev    = $null         # previous process CPU sample (Get-CMProcesses)
 
 # ---------------------------------------------------------------- helpers (not visible to the caller)
 function Initialize-CMSession {
@@ -89,6 +90,19 @@ function Get-CMCounterSet {
     # key, category, counter, instance
     $global = @(
         @('cpu_pct',        'Processor', '% Processor Time',            '_Total'),
+        @('cpu_user_pct',   'Processor', '% User Time',                 '_Total'),
+        @('cpu_priv_pct',   'Processor', '% Privileged Time',           '_Total'),
+        @('ctx_switch_s',   'System',    'Context Switches/sec',        ''),
+        @('processes',      'System',    'Processes',                   ''),
+        @('mem_committed_b','Memory',    'Committed Bytes',             ''),
+        @('mem_limit_b',    'Memory',    'Commit Limit',                ''),
+        @('mem_cache_b',    'Memory',    'Cache Bytes',                 ''),
+        @('mem_pagein_s',   'Memory',    'Pages Input/sec',             ''),
+        @('mem_pageout_s',  'Memory',    'Pages Output/sec',            ''),
+        @('mem_fault_s',    'Memory',    'Page Reads/sec',              ''),
+        @('tcp_estab',      'TCPv4',     'Connections Established',     ''),
+        @('tcp_fail',       'TCPv4',     'Connection Failures',         ''),
+        @('tcp_reset',      'TCPv4',     'Connections Reset',           ''),
         @('cpu_queue',      'System',    'Processor Queue Length',      ''),
         @('uptime_s',       'System',    'System Up Time',              ''),
         @('mem_avail_mb',   'Memory',    'Available MBytes',            ''),
@@ -102,13 +116,21 @@ function Get-CMCounterSet {
         if ($null -ne $c) { [void]$list.Add([pscustomobject]@{ K = $d[0]; I = ''; C = $c }) }
     }
 
+    foreach ($inst in (Get-CMInstances 'Processor')) {
+        $c = New-CMCounter 'Processor' '% Processor Time' $inst
+        if ($null -ne $c) { [void]$list.Add([pscustomobject]@{ K = 'core_pct'; I = $inst; C = $c }) }
+    }
+
     $disk = @(
         @('disk_read_lat_s',  'Avg. Disk sec/Read'),
         @('disk_write_lat_s', 'Avg. Disk sec/Write'),
         @('disk_queue',       'Current Disk Queue Length'),
         @('disk_idle_pct',    '% Idle Time'),
         @('disk_reads_s',     'Disk Reads/sec'),
-        @('disk_writes_s',    'Disk Writes/sec')
+        @('disk_writes_s',    'Disk Writes/sec'),
+        @('disk_read_bps',    'Disk Read Bytes/sec'),
+        @('disk_write_bps',   'Disk Write Bytes/sec'),
+        @('disk_avg_queue',   'Avg. Disk Queue Length')
     )
     foreach ($inst in (Get-CMInstances 'PhysicalDisk')) {
         foreach ($d in $disk) {
@@ -262,7 +284,8 @@ function Get-CMServices {
     [CmdletBinding()]
     param(
         [ValidateCount(0, 200)]
-        [string[]]$Name
+        [string[]]$Name,
+        [switch]$All                      # every service (Settings: choose services to watch)
     )
     Initialize-CMSession
     $out = New-Object System.Collections.ArrayList
@@ -270,7 +293,7 @@ function Get-CMServices {
         # default: services set to start automatically (a stopped one is a problem)
         foreach ($s in @(Get-Service -ErrorAction SilentlyContinue)) {
             try { $st = [string]$s.StartType } catch { $st = '' }
-            if ($st -ne 'Automatic') { continue }
+            if (-not $All -and $st -ne 'Automatic') { continue }
             [void]$out.Add([ordered]@{ name = $s.Name; display = $s.DisplayName; status = [string]$s.Status; start = $st })
         }
     } else {
@@ -466,6 +489,46 @@ function Get-CMLogTail {
     }
 }
 
+function Get-CMProcesses {
+    # top processes by CPU (over -SampleSeconds) and by RAM. Get-Process only (no WMI).
+    [CmdletBinding()]
+    param(
+        [ValidateRange(1, 50)]
+        [int]$Top = 10,
+        [ValidateRange(1, 5)]
+        [int]$SampleSeconds = 1
+    )
+    Initialize-CMSession
+    $cores = [Environment]::ProcessorCount
+    $first = @{}
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try { $first[$p.Id] = $p.TotalProcessorTime.TotalSeconds } catch { }
+    }
+    $t0 = [datetime]::UtcNow
+    Start-Sleep -Seconds $SampleSeconds
+    $span = ([datetime]::UtcNow - $t0).TotalSeconds
+    $rows = New-Object System.Collections.ArrayList
+    $totalRam = 0
+    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+        $cpu = 0.0
+        try {
+            if ($first.ContainsKey($p.Id)) { $cpu = ($p.TotalProcessorTime.TotalSeconds - $first[$p.Id]) / $span / $cores * 100 }
+        } catch { }
+        $ws = [long]$p.WorkingSet64
+        $totalRam += $ws
+        $th = 0
+        try { $th = $p.Threads.Count } catch { }
+        [void]$rows.Add([pscustomobject]@{ pid = $p.Id; name = $p.ProcessName; cpu = [Math]::Round([Math]::Max(0, $cpu), 2); ws_mb = [Math]::Round($ws / 1MB, 1); threads = $th })
+    }
+    $byCpu = @($rows | Sort-Object cpu -Descending | Select-Object -First $Top)
+    $byRam = @($rows | Sort-Object ws_mb -Descending | Select-Object -First $Top)
+    return (ConvertTo-CMJson ([ordered]@{
+        v = $script:CMVersion; host = $env:COMPUTERNAME; ts = (Get-CMUnixTime)
+        cores = $cores; count = $rows.Count; interval = [Math]::Round($span, 2)
+        top_cpu = $byCpu; top_ram = $byRam; self_pid = $script:Self.Id
+    }))
+}
+
 function Get-CMInventory {
     [CmdletBinding()] param()
     Initialize-CMSession
@@ -513,4 +576,4 @@ function Get-CMInventory {
     return (ConvertTo-CMJson $inv)
 }
 
-Export-ModuleMember -Function Get-CMVersion, Get-CMMetrics, Get-CMServices, Get-CMEvents, Get-CMLogTail, Get-CMInventory
+Export-ModuleMember -Function Get-CMVersion, Get-CMMetrics, Get-CMServices, Get-CMEvents, Get-CMLogTail, Get-CMInventory, Get-CMProcesses

@@ -513,12 +513,22 @@ def _target_sensors(t, global_th, interval, checkpoints, previous, opts):
     return out
 
 
+def windows_status(name):
+    """สถานะการเชื่อมต่อ WinRM ของเครื่อง (windows_pull worker) หรือ None"""
+    try:
+        import windows_pull
+        return windows_pull.status(name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     """ค่าดิบของทุก sensor ของเครื่อง (status = ระดับจากค่าตอนนี้ ยังไม่ผ่านการยืนยัน N รอบ)"""
     name = t["name"]
     hyst = opts["hyst"]
     th = _merge_thresholds(global_th, t.get("thresholds"))
-    base = {"web": name, "host": t.get("host"), "group": t.get("group") or "", "os": "linux"}
+    is_win = str(t.get("type") or "ssh") == "winrm"
+    base = {"web": name, "host": t.get("host"), "group": t.get("group") or "", "os": "windows" if is_win else "linux"}
     prom = t.get("prometheus") or {}
     labels = f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
     out = []
@@ -546,8 +556,12 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     if up is None:
         up = _one(f"up{{{labels}}}")
     if up != 1:
-        add("availability", "availability", "Availability", "down", unit="",
-            message="node_exporter is not responding (machine down or port 9100 blocked)")
+        msg = "node_exporter is not responding (machine down or port 9100 blocked)"
+        if is_win:
+            st = windows_status(name)
+            msg = ("WinRM: " + (st or {}).get("last_error", "")) if (st or {}).get("last_error") else \
+                "WinRM is not responding (machine down, port 5986 blocked, or setup-cm-monitor not run)"
+        add("availability", "availability", "Availability", "down", unit="", message=msg[:300])
         return out
     add("availability", "availability", "Availability", "ok", unit="", message="Up")
     ex = _linux_exprs(labels)
@@ -618,6 +632,16 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         out.extend(custom_rules.evaluate(
             t, opts["rules"], ex, labels,
             lambda sid: (previous.get(sid) or {}).get("status"), hyst, base, _query, _ping_exprs))
+
+    if is_win:
+        st = windows_status(name) or {}
+        if st.get("last_error"):
+            add("logpull", "logpull", "WinRM collection", "warning", unit="", message=f"WinRM: {st['last_error'][:250]}")
+        elif st.get("last_ok"):
+            age = time.time() - st["last_ok"]
+            add("logpull", "logpull", "WinRM collection", "ok" if age < 300 else "warning", age / 60, unit="min",
+                message=f"last WinRM read {age / 60:.0f} min ago")
+        return out
 
     last = _last_contact(name, checkpoints)
     if last is None:

@@ -65,7 +65,7 @@ def list_rules(user=None, role="admin"):
         r["owner"] = str(r.get("owner") or "")
         r["can_edit"] = can_edit(r, user, role)
     targets = [{"name": t.get("name"), "group": t.get("group") or "", "host": t.get("host") or "",
-                "os": "linux"}
+                "os": "windows" if str(t.get("type") or "ssh") == "winrm" else "linux"}
                for t in targets_service._plain(doc.get("targets") or [])
                if isinstance(t, dict) and t.get("name") and str(t.get("type") or "ssh") != "agent"]
     groups = sorted({t["group"] for t in targets if t["group"]})
@@ -220,7 +220,7 @@ def clean_rule(data, existing_ids=(), keep_id=None, old_url="", old_web_url=None
     rule["targets"] = [str(x).strip() for x in (data.get("targets") or []) if str(x).strip()][:200]
     rule["groups"] = [str(x).strip().strip("/") for x in (data.get("groups") or []) if str(x).strip().strip("/")][:50]
     os_ = str(data.get("os") or "any")
-    rule["os"] = os_ if os_ in ("any", "linux") else "any"
+    rule["os"] = os_ if os_ in ("any", "linux", "windows") else "any"
 
     if metric not in STATE_METRICS:
         op = str(data.get("op") or meta[3])

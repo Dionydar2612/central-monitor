@@ -90,6 +90,16 @@ storage:
 #       - name: journal         # systemd journal (journalctl) แทนไฟล์
 #         path: journal         #   journal = ทั้งเครื่อง, journal:nginx.service,ssh.service = เฉพาะ unit
 #         type: system          #   user ปลายทางต้องอยู่กลุ่ม systemd-journal (หรือ adm)
+#
+#   เครื่อง Windows แบบไม่ลง agent (WinRM -> JEA อ่านอย่างเดียว) เพิ่มจากหน้า Settings จะง่ายกว่า (docs/WINDOWS-TH.md)
+#   - name: alben-2016
+#     type: winrm
+#     host: 192.168.181.101
+#     winrm: {port: 5986, user: cm-monitor, thumbprint: <40 ตัวอักษรจาก setup-cm-monitor.bat>, event_logs: [System, Application]}
+#     prometheus: {job: alben-2016-win, instance: 192.168.181.101:5986}   # สร้างให้เมื่อบันทึกจากหน้า Settings
+#     logs:                                                                # ไฟล์บน Windows (ต้องอยู่ใน LogPaths ของเครื่องนั้น)
+#       - {name: application, path: 'D:\THMux\logs\*.log', type: THMux}
+#     รหัสผ่านไม่เขียนที่นี่: ใส่ในหน้า Settings (เก็บแบบเข้ารหัสที่ data/state/secrets/winrm/)
 # ---------------------------------------------------------------------
 targets: []
 

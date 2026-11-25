@@ -863,3 +863,164 @@ class TeamsNotify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WindowsAgentless(unittest.TestCase):
+    """เครื่อง Windows แบบไม่ลง agent (type: winrm): แปลงค่าเป็น metric แบบ node_exporter, log -> buffer, ป้ายสถานะ"""
+
+    def _metrics(self, ts, busy0=50.0, busy1=10.0):
+        return {"v": "1.1.0", "host": "ALBEN", "ts": ts, "mem_total_mb": 8192,
+                "values": [{"k": "cpu_pct", "i": "", "v": 30.0}, {"k": "cpu_user_pct", "i": "", "v": 20.0},
+                           {"k": "cpu_priv_pct", "i": "", "v": 10.0},
+                           {"k": "core_pct", "i": "0", "v": busy0}, {"k": "core_pct", "i": "1", "v": busy1},
+                           {"k": "cpu_queue", "i": "", "v": 1.0}, {"k": "mem_avail_mb", "i": "", "v": 2048},
+                           {"k": "mem_committed_b", "i": "", "v": 4e9}, {"k": "mem_limit_b", "i": "", "v": 8e9},
+                           {"k": "uptime_s", "i": "", "v": 3600}, {"k": "tcp_retrans_s", "i": "", "v": 2.0},
+                           {"k": "tcp_sent_s", "i": "", "v": 100.0},
+                           {"k": "disk_reads_s", "i": "0 C:", "v": 10.0}, {"k": "disk_read_lat_s", "i": "0 C:", "v": 0.005},
+                           {"k": "disk_idle_pct", "i": "0 C:", "v": 80.0}, {"k": "disk_writes_s", "i": "0 C:", "v": 0.0},
+                           {"k": "net_rx_bps", "i": "Intel[R] NIC", "v": 1000.0}, {"k": "net_bw_bps", "i": "Intel[R] NIC", "v": 1e9},
+                           {"k": "net_rx_err", "i": "Intel[R] NIC", "v": 3}],
+                "drives": [{"drive": "C:", "size_gb": 100.0, "free_gb": 25.0}],
+                "self": {"pid": 1, "ws_mb": 60.0, "cpu_s": 1.0}}
+
+    def test_node_metrics(self):
+        import windows_pull
+        nm = windows_pull.NodeMetrics()
+        nm.update(self._metrics(0), now=1000.0)
+        nm.update(self._metrics(30), now=1030.0)
+        c = {(k[0], k[1]): v for k, v in nm.counters.items()}
+        idle0 = c[("node_cpu_seconds_total", (("cpu", "0"), ("mode", "idle")))]
+        user0 = c[("node_cpu_seconds_total", (("cpu", "0"), ("mode", "user")))]
+        self.assertAlmostEqual(idle0, 15.0)                     # (1 - 50%) x 30 s
+        self.assertAlmostEqual(user0, 10.0)                     # 50% x 30 s x user share 2/3
+        self.assertAlmostEqual(c[("node_disk_reads_completed_total", (("device", "0 C:"),))], 300.0)
+        self.assertAlmostEqual(c[("node_disk_read_time_seconds_total", (("device", "0 C:"),))], 1.5)
+        self.assertAlmostEqual(c[("node_disk_io_time_seconds_total", (("device", "0 C:"),))], 6.0)
+        self.assertEqual(c[("node_network_receive_errs_total", (("device", "Intel[R] NIC"),))], 3.0)
+        g = nm.gauges
+        self.assertEqual(g[("node_memory_MemTotal_bytes", ())], 8192 * 1048576)
+        self.assertEqual(g[("node_filesystem_avail_bytes", (("device", "C:"), ("fstype", "ntfs"), ("mountpoint", "C:")))], 25 * 1073741824)
+        self.assertEqual(g[("node_network_speed_bytes", (("device", "Intel[R] NIC"),))], 1.25e8)
+        text = nm.exposition()
+        self.assertIn('node_cpu_seconds_total{cpu="1",mode="idle"} 27.000000', text)
+        self.assertIn("# TYPE node_cpu_seconds_total counter", text)
+        self.assertIn("node_load1 ", text)
+        for line in text.splitlines():               # รูปแบบ Prometheus text ทุกบรรทัด
+            self.assertRegex(line, r'^(# TYPE \w+ (counter|gauge)|\w+(\{([a-z_]+="[^"]*",?)+\})? -?\d+\.\d+)$')
+
+    def test_gap_does_not_integrate(self):
+        import windows_pull
+        nm = windows_pull.NodeMetrics()
+        nm.update(self._metrics(0), now=1000.0)
+        nm.update(self._metrics(900), now=1900.0)            # ติดต่อไม่ได้ 15 นาที -> ไม่สะสมย้อนหลัง
+        idle = nm.counters[("node_cpu_seconds_total", (("cpu", "0"), ("mode", "idle")))]
+        self.assertEqual(idle, 0.0)
+
+    def test_event_line_level(self):
+        import windows_pull
+        ev = {"time": "2026-11-25T03:00:00.000Z", "level": 2, "id": 7031, "provider": "Service Control Manager",
+              "msg": "The X service terminated\r\nunexpectedly."}
+        line = windows_pull.event_line(ev, "ALBEN")
+        self.assertEqual(line, "2026-11-25T03:00:00.000Z [ERROR] ALBEN Service_Control_Manager[7031]: The X service terminated ⏎ unexpectedly.")
+        self.assertEqual(log_levels.detect_log_level(line), "ERROR")
+        self.assertIn("[ERROR]", windows_pull.event_line({**ev, "level": 1}, "A"))
+        self.assertEqual(log_levels.detect_log_level(windows_pull.event_line({**ev, "level": 3}, "A")), "WARN")
+        self.assertEqual(windows_pull.event_source("System"), "system")
+        self.assertEqual(windows_pull.event_source("Application"), "application")
+
+    def test_service_status(self):
+        import windows_pull
+        f = windows_pull._svc_status
+        self.assertEqual(f({"status": "Running", "start": "Automatic"}), "active")
+        self.assertEqual(f({"status": "Stopped", "start": "Automatic"}), "failed")
+        self.assertEqual(f({"status": "Stopped", "start": "Manual"}), "inactive")
+        self.assertEqual(f({"status": "NotFound"}), "not-found")
+
+    def test_worker_events_and_logs_to_buffer(self):
+        import windows_pull
+        buf = os.environ["CENTRAL_BUFFER_DIR"]
+        os.makedirs(buf, exist_ok=True)
+        before = set(os.listdir(buf))
+        calls = []
+
+        class FakeSession:
+            def call(self, cmd, params=None):
+                calls.append((cmd, dict(params or {})))
+                if cmd == "Get-CMEvents":
+                    if params["AfterRecordId"] < 0:
+                        return {"newest": 100, "events": []}
+                    return {"newest": 102, "more": False, "events": [
+                        {"rid": 101, "time": "2026-11-25T03:00:00.000Z", "level": 2, "id": 1, "provider": "P", "msg": "boom"},
+                        {"rid": 102, "time": "2026-11-25T03:00:01.000Z", "level": 3, "id": 2, "provider": "P", "msg": "careful"}]}
+                if cmd == "Get-CMLogTail":
+                    if params.get("List"):
+                        return {"files": [{"path": "D:\\App\\logs\\a.log"}, {"path": "D:\\App\\other.txt"}]}
+                    return {"start": 0, "next_offset": 40, "fingerprint": "AA", "size": 40, "rotated": False,
+                            "text": "2026-11-25T03:00:00Z INFO ok\n2026-11-25T03:00:02Z ERROR bad thing\n"}
+                raise AssertionError(cmd)
+
+        w = windows_pull.Worker("win-t")
+        w.configure({"site": {"name": "s"}, "storage": {}},
+                    {"name": "win-t", "type": "winrm", "winrm": {"event_logs": ["System"]},
+                     "logs": [{"name": "application", "path": "D:\\App\\logs\\*.log", "type": "THMux"}]})
+        st = {}
+        s = FakeSession()
+        w.do_events(s, st)                                    # ครั้งแรก: จำตำแหน่งปัจจุบัน ไม่ดึงย้อนหลัง
+        self.assertEqual(st["events"]["System"], 100)
+        w.do_events(s, st)
+        self.assertEqual(st["events"]["System"], 102)
+        w.do_logs(s, st)
+        self.assertEqual(st["tails"]["application::D:\\App\\logs\\a.log"]["offset"], 40)
+        new = sorted(set(os.listdir(buf)) - before)
+        sysf = [f for f in new if "__win-t__system__" in f]
+        appf = [f for f in new if "__win-t__application__" in f]
+        self.assertEqual(len(sysf), 1, new)
+        self.assertEqual(len(appf), 1, new)
+        self.assertIn("[ERROR] win-t P[1]: boom", open(os.path.join(buf, sysf[0])).read())
+        app = open(os.path.join(buf, appf[0])).read()
+        self.assertNotIn("INFO ok", app)                       # ไม่เก็บ INFO
+        self.assertIn("ERROR bad thing", app)
+        self.assertEqual(len(w.events_15m) >= 0, True)
+        tails = [c for c in calls if c[0] == "Get-CMLogTail" and not c[1].get("List")]
+        self.assertEqual([c[1]["Path"] for c in tails], ["D:\\App\\logs\\a.log"])   # wildcard ตรงเฉพาะไฟล์ .log
+        self.assertEqual(tails[0][1]["Offset"], -1)                                  # ครั้งแรก = ท้ายไฟล์
+
+    def test_prometheus_entry_matches_backend(self):
+        import prometheus_targets
+        sys.path.insert(0, os.path.join(ROOT, "web_dashboard", "backend"))
+        web = {"name": "win-01", "type": "winrm", "prometheus": {"job": "win-01-win", "instance": "10.0.0.9:5986"}}
+        e = prometheus_targets.winrm_entry(web, "production")
+        self.assertEqual(e["labels"]["__metrics_path__"], "/win/win-01")
+        self.assertEqual(e["labels"]["instance"], "10.0.0.9:5986")
+        src = open(os.path.join(ROOT, "web_dashboard", "backend", "targets_service.py")).read()
+        self.assertIn('"__metrics_path__": f"/win/{web[\'name\']}"', src)
+        a = open(os.path.join(ROOT, "start_push_log", "puller", "cm_secrets.py")).read()
+        b = open(os.path.join(ROOT, "web_dashboard", "backend", "cm_secrets.py")).read()
+        self.assertEqual(a, b, "cm_secrets.py สองสำเนาต้องเหมือนกัน")
+
+    def test_secrets_roundtrip(self):
+        import cm_secrets
+        os.environ["CENTRAL_PULLER_TOKEN"] = "k1"
+        old = os.environ.pop("CENTRAL_SECRET_KEY", None)
+        try:
+            cm_secrets.set_password("win-s", "pa$$-ไทย")
+            self.assertEqual(cm_secrets.get_password("win-s"), "pa$$-ไทย")
+            self.assertEqual(oct(os.stat(os.path.join(cm_secrets.SECRET_DIR, "win-s.json")).st_mode & 0o777), "0o600")
+            self.assertNotIn("pa$$", open(os.path.join(cm_secrets.SECRET_DIR, "win-s.json")).read())
+            os.environ["CENTRAL_PULLER_TOKEN"] = "k2"
+            with self.assertRaises(cm_secrets.SecretError):
+                cm_secrets.get_password("win-s")
+            self.assertEqual(cm_secrets.prune_orphans(["other"]), ["win-s"])
+        finally:
+            os.environ.pop("CENTRAL_PULLER_TOKEN", None)
+            if old is not None:
+                os.environ["CENTRAL_SECRET_KEY"] = old
+
+    def test_rule_os(self):
+        import custom_rules
+        win, lin = {"name": "w", "type": "winrm"}, {"name": "l"}
+        self.assertTrue(custom_rules.applies({"os": "windows"}, win))
+        self.assertFalse(custom_rules.applies({"os": "windows"}, lin))
+        self.assertFalse(custom_rules.applies({"os": "linux"}, win))
+        self.assertTrue(custom_rules.applies({"os": "any"}, win))

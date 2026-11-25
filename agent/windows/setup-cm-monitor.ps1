@@ -34,7 +34,7 @@ $ModDir    = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonit
 $RuleName  = 'CentralMonitor-WinRM-HTTPS'
 $ManiPath  = Join-Path $DataDir 'manifest.json'
 $CredPath  = Join-Path $DataDir 'cm-monitor-credential.txt'
-$Version   = '1.0.0'
+$Version   = '1.1.0'
 $SID_PERF  = 'S-1-5-32-558'   # Performance Monitor Users
 $SID_EVT   = 'S-1-5-32-573'   # Event Log Readers
 $SID_ADM   = 'S-1-5-32-544'   # Administrators
@@ -153,7 +153,7 @@ function Get-HttpsListener {
 $exitCode = 0
 $newPassword = $null
 try {
-    Say '=== Central Monitor - Windows agentless setup (v1.0.0) ===' 'Cyan'
+    Say '=== Central Monitor - Windows agentless setup (v1.1.0) ===' 'Cyan'
     Info "log: $LogFile"
 
     # ----------------------------------------------------------- checks
@@ -195,7 +195,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $ModDir 'RoleCapabilities') -Force | Out-Null
     Copy-Item -LiteralPath $src -Destination (Join-Path $ModDir 'CentralMonitor.psm1') -Force
     foreach ($f in @('CentralMonitor.psd1', 'RoleCapabilities\CentralMonitor.psrc')) { Remove-Item -LiteralPath (Join-Path $ModDir $f) -Force -ErrorAction SilentlyContinue }
-    $funcs = @('Get-CMVersion', 'Get-CMMetrics', 'Get-CMServices', 'Get-CMEvents', 'Get-CMLogTail', 'Get-CMInventory')
+    $funcs = @('Get-CMVersion', 'Get-CMMetrics', 'Get-CMServices', 'Get-CMEvents', 'Get-CMLogTail', 'Get-CMInventory', 'Get-CMProcesses')
     New-ModuleManifest -Path (Join-Path $ModDir 'CentralMonitor.psd1') -RootModule 'CentralMonitor.psm1' -ModuleVersion $Version `
         -Author 'Central Monitor' -Description 'Central Monitor read-only functions for the JEA endpoint' `
         -FunctionsToExport $funcs -CmdletsToExport @() -VariablesToExport @() -AliasesToExport @() `

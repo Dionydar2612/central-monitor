@@ -28,7 +28,7 @@
 <section class="card" id="targetsCard">
 <div class="top"><h2>Targets</h2><button class="st-btn primary" id="addBtn">+ Add target</button></div>
 <div class="tblw"><table>
-<thead><tr><th>Name</th><th>Type</th><th>Group</th><th>Host</th><th>SSH user</th><th>Log files</th><th>Host key</th><th>Status</th><th></th></tr></thead>
+<thead><tr><th>Name</th><th>Type</th><th>Group</th><th>Host</th><th>User</th><th>Log files</th><th>Host key / Cert</th><th>Status</th><th></th></tr></thead>
 <tbody id="tbody"><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
 </table></div>
 <div class="st-msg" id="listMsg" role="status"></div>
@@ -47,6 +47,7 @@
 <div class="fsec"><div class="fsec-h">ข้อมูลเครื่อง</div>
 <div class="st-grid">
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
+<div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH + node_exporter)</option><option value="winrm">Windows (WinRM · ไม่ลง agent)</option></select><small class="win-only">central ดึงเองผ่าน WinRM HTTPS แบบอ่านอย่างเดียว ไม่ติดตั้งโปรแกรมค้างบนเครื่อง</small><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
 <div class="st-f" data-f="priority"><label for="f_prio">Priority (ความสำคัญ)</label><select id="f_prio"><option value="5">★★★★★ สำคัญสุด</option><option value="4">★★★★☆ สูง</option><option value="3" selected>★★★☆☆ ปกติ</option><option value="2">★★☆☆☆ ต่ำ</option><option value="1">★☆☆☆☆ ต่ำสุด</option></select><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
@@ -58,6 +59,25 @@
 </div>
 
 <div class="fpane" data-p="conn" hidden>
+<div class="win-only">
+<div class="fsec"><div class="fsec-h">1) ติดตั้งบนเครื่อง Windows (ครั้งแรกครั้งเดียว)</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:8px">ดาวน์โหลดชุดติดตั้ง → คัดลอกไปเครื่อง Windows → แตก zip → ดับเบิลคลิก <code>setup-cm-monitor.bat</code> (ขอสิทธิ์ admin เอง ไม่ต้องมีอินเทอร์เน็ต)<br>
+สร้าง user <code>cm-monitor</code> (ไม่ใช่ admin) + JEA endpoint อ่านอย่างเดียว + WinRM HTTPS 5986 ที่รับเฉพาะ IP ของ central · ไม่มี service / scheduled task / ไฟล์ข้อมูลบนเครื่อง · ตอนจบจะแสดง <b>Thumbprint</b> และ <b>รหัสผ่าน</b> ให้กรอกด้านล่าง<br>
+ถอน: <code>remove-cm-monitor.bat</code> · ตรวจ: <code>check-cm-monitor.bat</code> (อ่านอย่างเดียว)</div>
+<div class="st-grid">
+<div class="st-f" data-f="central"><label for="w_central">IP ของ central ที่เครื่อง Windows เห็น</label><input id="w_central" autocomplete="off" placeholder="172.27.2.22"><small>เครื่อง Windows อนุญาต WinRM จาก IP นี้เท่านั้น</small><div class="st-err"></div></div>
+<div class="st-f"><label>&nbsp;</label><button class="st-btn sm" id="w_download" type="button">⬇ Download ชุดติดตั้ง (.zip)</button><small>LogPaths ในชุดติดตั้ง = โฟลเดอร์ของ log ในแท็บ Log</small></div>
+</div></div>
+<div class="fsec"><div class="fsec-h">2) การเชื่อมต่อ WinRM</div><div class="st-grid">
+<div class="st-f" data-f="winrm.port"><label for="w_port">WinRM HTTPS port</label><input id="w_port" inputmode="numeric" value="5986"><div class="st-err"></div></div>
+<div class="st-f" data-f="winrm.user"><label for="w_user">User (ไม่ใช่ admin)</label><input id="w_user" autocomplete="off" value="cm-monitor"><div class="st-err"></div></div>
+<div class="st-f" data-f="password"><label for="w_pass">รหัสผ่าน</label><input id="w_pass" type="password" autocomplete="new-password"><small id="w_pass_hint">จาก setup-cm-monitor.bat · เก็บแบบเข้ารหัสบน central ไม่แสดงกลับ</small><div class="st-err"></div></div>
+<div class="st-f" data-f="winrm.thumbprint"><label for="w_thumb">Certificate thumbprint</label><input id="w_thumb" autocomplete="off" placeholder="40 ตัวอักษร จาก setup-cm-monitor.bat"><small>central จะไม่ส่งรหัสผ่านถ้าใบรับรองไม่ตรง (กันเครื่องปลอม)</small><div class="st-err"></div></div>
+<div class="st-f" data-f="winrm.event_logs"><label for="w_evlogs">Event log ที่เก็บ (Warning ขึ้นไป)</label><input id="w_evlogs" autocomplete="off" value="System, Application"><small>คั่นด้วย , เช่น System, Application, Microsoft-Windows-TaskScheduler/Operational</small><div class="st-err"></div></div>
+</div>
+<div style="margin-top:8px"><button class="st-btn sm" id="w_scan" type="button">Scan certificate</button> <button class="st-btn sm" id="w_test" type="button">ทดสอบการเชื่อมต่อ</button> <span id="w_msg" class="st-msg" role="status"></span></div>
+</div>
+</div>
 <div class="ssh-only">
 <div class="fsec"><div class="fsec-h">SSH (ดึง log)</div><div class="st-grid">
 <div class="st-f ssh-only" data-f="ssh.port"><label for="f_port">SSH port</label><input id="f_port" inputmode="numeric" value="22"><div class="st-err"></div></div><div class="st-f ssh-only" data-f="ssh.user"><label for="f_user">SSH user (read-only)</label><input id="f_user" autocomplete="off" value="central-pull"><div class="st-err"></div></div>
@@ -90,15 +110,17 @@
 </div>
 
 <div class="fpane" data-p="logs" hidden>
-<div class="ssh-only"><div class="fsec">
+<div><div class="fsec">
 <div class="st-h3">Log files ที่ต้องการดึง</div>
-<div style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
+<div class="win-only" style="color:var(--mut);font-size:13px">เครื่อง Windows: Event log (แท็บ การเชื่อมต่อ) เก็บให้อัตโนมัติ · ไฟล์ log ของโปรแกรมใส่ path แบบ Windows เช่น <code>D:\THMux\logs\*.log</code> (wildcard เฉพาะชื่อไฟล์)<br>
+โฟลเดอร์ต้องอยู่ใน <code>LogPaths</code> ของเครื่องนั้น (ชุดติดตั้งที่ดาวน์โหลดใส่ให้ตามรายการนี้) ถ้าเพิ่มทีหลังให้รัน setup-cm-monitor.bat ใหม่ · เก็บเฉพาะ ERROR / WARN</div>
+<div class="ssh-only" style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
 journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>
 <div class="st-loghead"><span>ชนิด log (parser)</span><span>path</span><span>ชื่อเรียก</span><span></span></div>
 <div id="logs"></div>
 <div class="st-err" id="logsErr" style="color:#e5484d;font-size:12px;margin-top:6px"></div>
 <button class="st-btn sm" id="addLog" style="margin-top:10px">+ Add log file</button>
-<button class="st-btn sm" id="addJournal" style="margin-top:10px">+ Add journal log</button>
+<button class="st-btn sm ssh-only" id="addJournal" style="margin-top:10px">+ Add journal log</button>
 <button class="st-btn sm" id="logCheck" type="button" style="margin-top:10px">ตรวจ log</button>
 </div></div>
 </div>

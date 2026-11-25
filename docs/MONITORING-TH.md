@@ -1,6 +1,7 @@
-# Monitoring & Bottleneck Detection (Linux)
+# Monitoring & Bottleneck Detection
 
-รองรับเฉพาะเครื่อง Linux (SSH + node_exporter) · ส่วนของเครื่อง Windows (agent, windows_exporter, Netstat Monitor) เอาออกแล้ว
+เครื่อง Linux (SSH + node_exporter) และ Windows แบบไม่ลง agent (WinRM -> JEA, ดู [WINDOWS-TH.md](WINDOWS-TH.md))
+เครื่อง Windows ส่ง metric ชื่อเดียวกับ node_exporter จึงใช้เกณฑ์ / sensor / bottleneck ด้านล่างชุดเดียวกัน
 
 ## 1. เส้นทางข้อมูล
 
@@ -54,4 +55,5 @@ log / journal / สถานะ  <── puller ผ่าน SSH (user central-p
   ต้องมี `host` ในการตั้งค่าเครื่อง และ ICMP ต้องไม่ถูก firewall บล็อก
 - blackbox_exporter มากับโหมด bundled-prometheus เท่านั้น · โหมด external ต้องเพิ่ม job `ping` (ดู metrics/prometheus/prometheus.yml) และรัน blackbox_exporter เอง
 - latency ของดิสก์คิดเฉพาะดิสก์ที่มี I/O ≥ 1 ครั้ง/วินาที · แสดง I/O ต่อดิสก์ (sda) ไม่ใช่ต่อ partition
-- เครื่อง Windows ที่ยังค้างใน `puller.yaml` (`type: agent`) จะไม่ถูกตรวจ และขึ้นในหน้า Settings ว่า "Windows (เลิกรองรับ)" ให้ลบได้
+- เครื่อง Windows แบบเดิมที่ยังค้างใน `puller.yaml` (`type: agent`) จะไม่ถูกตรวจ และขึ้นในหน้า Settings ว่า "Windows (เลิกรองรับ)" ให้ลบได้
+  (เพิ่มใหม่เป็นชนิด Windows แบบไม่ลง agent: `type: winrm`)

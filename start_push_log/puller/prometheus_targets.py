@@ -49,6 +49,22 @@ def _atomic_json(path, data):
     os.replace(tmp, path)
 
 
+WINRM_EXPORTER = os.environ.get("CENTRAL_WINRM_EXPORTER", "central-puller:9110")
+
+
+def winrm_entry(web, environment):
+    """เครื่อง Windows (type: winrm): Prometheus scrape puller ที่ /win/<ชื่อ> (windows_pull.py)
+    ติด label job / instance ของเครื่องนั้นเอง -> query ของ dashboard ใช้ job/instance เดิมได้
+    (ต้องตรงกับ web_dashboard/backend/targets_service.py: winrm_prometheus_entry)"""
+    name = web.get("name")
+    prom = web.get("prometheus") or {}
+    if not name or not prom.get("job") or not prom.get("instance"):
+        return None
+    return {"targets": [WINRM_EXPORTER],
+            "labels": {"job": prom["job"], "instance": prom["instance"], "web": name, "environment": environment,
+                       "__metrics_path__": f"/win/{name}"}}
+
+
 def generate_targets():
     """สร้าง web-nodes.json จาก puller.yaml (เขียนแบบ atomic)"""
     with open(CONFIG_FILE, "r") as f:
@@ -66,6 +82,11 @@ def generate_targets():
             continue                     # เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
         name = web.get("name")
         prometheus = web.get("prometheus", {})
+        if str(web.get("type") or "ssh") == "winrm":
+            entry = winrm_entry(web, environment)
+            if entry:
+                targets.append(entry)
+            continue
 
         job = prometheus.get("job")
         instance = prometheus.get("instance")

@@ -24,6 +24,7 @@ RUN set -eu; \
 
 # openssh-client: ให้ puller ใช้ `ssh` ไปเครื่องปลายทาง | python3-yaml: อ่าน puller.yaml
 # python3-prometheus-client: เปิด /metrics ของ puller
+# pypsrp (+ requests / cryptography จาก apt): WinRM ไปเครื่อง Windows แบบไม่ลง agent (windows_pull.py)
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
        openssh-client \
@@ -31,6 +32,11 @@ RUN apt-get update \
        python3 \
        python3-yaml \
        python3-prometheus-client \
+       python3-requests \
+       python3-cryptography \
+       python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages "pypsrp>=0.8,<1" \
+    && apt-get purge -y python3-pip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # โฟลเดอร์ที่ถูก mount ทับตอนรัน (docker-compose.yml): /data <- ./data, /app/config <- ./config

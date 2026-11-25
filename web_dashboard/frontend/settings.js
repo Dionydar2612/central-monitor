@@ -70,6 +70,21 @@ function renderTable() {
                 el("td", {}, isOp() ? "" : el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete"))));
             return;
         }
+        if (t.type === "winrm") {               /* Windows แบบไม่ลง agent (WinRM -> JEA) */
+            const wp = t.winrm.port && Number(t.winrm.port) !== 5986 ? ":" + t.winrm.port : "";
+            const ready = t.has_password && t.winrm.thumbprint;
+            tb.append(el("tr", {},
+                el("td", {}, el("b", {}, t.name)),
+                el("td", {}, "Windows (WinRM)"),
+                el("td", {}, t.group || "-"),
+                el("td", {}, t.host + wp),
+                el("td", {}, t.winrm.user || "-"),
+                el("td", {}, String(t.logs.length) + " + Event log"),
+                el("td", { class: ready ? "ok" : "wr", title: t.winrm.thumbprint || "" }, ready ? "✓ cert + password" : "⚠ ยังไม่ครบ"),
+                el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
+                el("td", {}, el("div", { class: "st-actions" }, rowActions(t)))));
+            return;
+        }
         const port = t.ssh.port && Number(t.ssh.port) !== 22 ? ":" + t.ssh.port : "";
         tb.append(el("tr", {},
             el("td", {}, el("b", {}, t.name)),
@@ -80,13 +95,13 @@ function renderTable() {
             el("td", {}, String(t.logs.length)),
             el("td", { class: t.host_key_known ? "ok" : "wr" }, t.host_key_known ? "✓ known" : "⚠ missing"),
             el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
-            el("td", {}, el("div", { class: "st-actions" }, rowActions(t, () => { openForm(t); $("dp_pass").focus(); }, "Deploy key")))));
+            el("td", {}, el("div", { class: "st-actions" }, rowActions(t)))));
     });
 }
 
 const isOp = () => S.role === "operator";
 /* ปุ่มท้ายแถว: operator = Pause + แก้การแจ้งเตือน/Log · admin = ทุกปุ่ม */
-function rowActions(t, extraFn, extraLabel) {
+function rowActions(t) {
     const out = [el("button", { class: "st-btn sm", onclick: () => pauseTarget(t) }, t.paused ? "Resume" : "Pause"),
                  el("button", { class: "st-btn sm", onclick: () => openForm(t) }, isOp() ? "การแจ้งเตือน / Log" : "Edit")];
     /* Deploy key / Install command อยู่ในฟอร์ม Edit (แท็บ การเชื่อมต่อ) ไม่แสดงในรายการ */
@@ -178,7 +193,7 @@ function logRow(item) {
     };
     const row = el("div", { class: "st-logrow" },
         mk("n", "ชนิด log (parser)", "name", item.name, "application", "logNames"),
-        mk("p", "path", "path", item.path, "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
+        mk("p", "path", "path", item.path, formType() === "winrm" ? "D:\\App\\logs\\*.log" : "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
         mk("t", "ชื่อเรียก", "type", item.type || "", "ชื่อที่แสดงในหน้า Logs", "logLabels"),
         el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"),
         el("div", { class: "st-logst" }));
@@ -331,12 +346,26 @@ function openForm(t) {
         $(`th_${k}_${lv}`).value = v ?? "";
     }));
     $("f_host").value = t ? t.host : "";
-    $("f_port").value = t ? ((t.ssh && t.ssh.port) || 22) : 22;
-    $("f_user").value = t ? t.ssh.user : "central-pull";
+    $("f_type").value = t && t.type === "winrm" ? "winrm" : "ssh";
+    $("f_type").disabled = !!t;                    /* เปลี่ยนชนิดของเครื่องที่บันทึกแล้วไม่ได้ (ลบแล้วเพิ่มใหม่) */
+    applyType();
+    const w = (t && t.winrm) || {};
+    $("w_port").value = w.port || 5986;
+    $("w_user").value = w.user || "cm-monitor";
+    $("w_thumb").value = w.thumbprint || "";
+    $("w_evlogs").value = (w.event_logs || ["System", "Application"]).join(", ");
+    $("w_pass").value = "";
+    $("w_pass").placeholder = t && t.has_password ? "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)" : "";
+    if (!$("w_central").value) $("w_central").value = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : "";
+    say("w_msg", "");
+    $("f_port").value = t && t.ssh ? (t.ssh.port || 22) : 22;
+    $("f_user").value = t && t.ssh ? t.ssh.user : "central-pull";
+    if (!t || t.type !== "winrm") {
     $("f_job").value = t ? (t.prometheus.job || "") : "";
     $("f_inst").value = t ? (t.prometheus.instance || "") : "";
     $("f_scheme").value = t && t.prometheus ? (t.prometheus.scheme || "http") : "http";
     $("f_mpath").value = t && t.prometheus ? (t.prometheus.metrics_path || "") : "";
+    }
     /* ชื่อเรียกที่เคยตั้งไว้ (ทุกเครื่อง) ให้เลือกซ้ำได้ ชื่อใหม่พิมพ์เองได้ */
     const dlb = $("logLabels");
     if (dlb) { dlb.textContent = ""; [...new Set(S.targets.flatMap(x => (x.logs || []).map(l => l.type)).filter(Boolean))].sort().forEach(v => dlb.append(el("option", { value: v }))); }
@@ -383,7 +412,7 @@ function readForm() {
         name: r.querySelector('[data-k="name"]').value.trim(),
         path: r.querySelector('[data-k="path"]').value.trim(),
         type: r.querySelector('[data-k="type"]').value.trim(),
-    }));
+    })).filter(l => formType() !== "winrm" || l.path);
     return {
         name: $("f_name").value.trim(),
         group: $("f_group").value.trim(),
@@ -392,11 +421,59 @@ function readForm() {
         thresholds: Object.fromEntries(TH_KINDS.map(k => [k, { warning: $(`th_${k}_warning`).value.trim(), error: $(`th_${k}_error`).value.trim() }])),
         alert: readAlertFields(),
         host: $("f_host").value.trim(),
+        type: formType(),
+        ...(formType() === "winrm" ? {
+            winrm: { port: $("w_port").value.trim() || 5986, user: $("w_user").value.trim() || "cm-monitor",
+                     thumbprint: $("w_thumb").value.trim(), event_logs: $("w_evlogs").value.split(",").map(x => x.trim()).filter(Boolean) },
+            password: $("w_pass").value,
+        } : {}),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
         prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim(),
                       scheme: $("f_scheme").value, metrics_path: $("f_mpath").value.trim() },
         logs,
     };
+}
+
+/* ---------- Windows (WinRM ไม่ลง agent) ---------- */
+
+function formType() { return $("f_type") ? $("f_type").value : "ssh"; }
+function applyType() { $("formCard").dataset.type = formType(); }
+
+function winrmBody() {
+    return { host: $("f_host").value.trim(), port: $("w_port").value.trim() || 5986, user: $("w_user").value.trim() || "cm-monitor",
+             password: $("w_pass").value, thumbprint: $("w_thumb").value.trim(), name: S.editing || "" };
+}
+
+async function scanCert() {
+    const b = $("w_scan"); b.disabled = true; say("w_msg", "กำลังอ่านใบรับรอง...", "");
+    try {
+        const d = await api("POST", "/api/targets/winrm-cert", winrmBody());
+        const old = $("w_thumb").value.replace(/[^0-9a-f]/gi, "").toUpperCase();
+        $("w_thumb").value = d.thumbprint;
+        say("w_msg", old && old !== d.thumbprint
+            ? `⚠ ใบรับรองเปลี่ยน (เดิม ${old.slice(0, 8)}…) ตรวจกับค่าที่ setup-cm-monitor.bat แสดงก่อนบันทึก`
+            : `Thumbprint ${d.thumbprint} — ตรวจให้ตรงกับที่ setup-cm-monitor.bat แสดง`, old && old !== d.thumbprint ? "bad" : "ok");
+    } catch (e) { if (e.message !== "auth") say("w_msg", "อ่านไม่ได้: " + (e.fields ? Object.values(e.fields).join(" · ") : e.message), "bad"); }
+    finally { b.disabled = false; }
+}
+
+async function testWinrm() {
+    const b = $("w_test"); b.disabled = true; say("w_msg", "กำลังทดสอบ (สูงสุด ~30 วินาที)...", "");
+    try {
+        const d = await api("POST", "/api/targets/winrm-test", winrmBody());
+        if (d.ok) say("w_msg", `✓ เชื่อมต่อได้ ${d.computer || ""} · ${d.os || ""} (build ${d.build || "?"}) · PowerShell ${d.ps || "?"} · module ${d.module || "?"} · ${d.seconds}s`, "ok");
+        else say("w_msg", "✗ " + (d.error || "เชื่อมต่อไม่ได้"), "bad");
+    } catch (e) { if (e.message !== "auth") say("w_msg", "✗ " + (e.data && e.data.error || e.message), "bad"); }
+    finally { b.disabled = false; }
+}
+
+function downloadSetup() {
+    const central = $("w_central").value.trim();
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(central) && !central.includes(":")) { say("w_msg", "ใส่ IP ของ central ก่อน", "bad"); $("w_central").focus(); return; }
+    const paths = [...$("logs").children].map(r => r.querySelector('[data-k="path"]').value.trim()).filter(Boolean).join(";");
+    const q = new URLSearchParams({ central, logpaths: paths });
+    if (S.editing) q.set("name", S.editing);
+    location.href = "/api/targets/windows-setup.zip?" + q.toString();
 }
 
 /* ---------- host key ---------- */
@@ -495,7 +572,8 @@ async function save() {
         return;
     }
     const trust = S.scanned.length && $("hkTrust") && $("hkTrust").checked;
-    if (trust) body.trust_fingerprints = S.scanned.map(k => k.fingerprint);
+    if (body.type === "winrm") { /* Windows: ไม่มี SSH host key */ }
+    else if (trust) body.trust_fingerprints = S.scanned.map(k => k.fingerprint);
     else if (!S.hostKeyKnown && !confirm("ยังไม่ได้เก็บ SSH host key ของเครื่องนี้\npuller จะดึง log ไม่ได้จนกว่าจะเก็บ host key\n\nบันทึกต่อไหม?")) return;
 
     const b = $("saveBtn"); b.disabled = true;
@@ -503,11 +581,14 @@ async function save() {
         if (S.editing) await api("PUT", "/api/targets/" + encodeURIComponent(S.editing), body);
         else await api("POST", "/api/targets", body);
         const name = S.editing || body.name;
-        const dep = await deployKey(name);            // null = ไม่ได้กรอกรหัสผ่าน (ข้ามการวาง key)
+        const dep = body.type === "winrm" ? null : await deployKey(name);   // null = ไม่ได้กรอกรหัสผ่าน (ข้ามการวาง key)
+        $("w_pass").value = "";
         closeForm(); await loadTargets();
         if (dep && dep.ok) say("listMsg", `บันทึก ${name} แล้ว · ${dep.message}`, "ok");
         else if (dep) say("listMsg", `บันทึก ${name} แล้ว แต่วาง public key ไม่สำเร็จ: ${dep.message} — กด Deploy key ที่แถวของเครื่องนี้เพื่อลองใหม่ หรือวางเองตามคำสั่งในหน้า Edit`, "bad");
-        else say("listMsg", `บันทึก ${name} แล้ว — puller จะดึงเครื่องนี้ภายในไม่กี่วินาที (Prometheus เห็นเครื่องใหม่ทันที)`, "ok");
+        else say("listMsg", body.type === "winrm"
+            ? `บันทึก ${name} แล้ว — central เริ่มอ่านเครื่อง Windows นี้ภายใน ~15 วินาที (CPU / RAM / Disk ขึ้นในหน้า Dashboard ภายใน ~1 นาที)`
+            : `บันทึก ${name} แล้ว — puller จะดึงเครื่องนี้ภายในไม่กี่วินาที (Prometheus เห็นเครื่องใหม่ทันที)`, "ok");
         window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
         if (e.message === "auth") return;
@@ -831,6 +912,15 @@ document.addEventListener("DOMContentLoaded", () => {
     $("addLog").onclick = () => $("logs").append(logRow(null));
     $("addJournal").onclick = () => $("logs").append(logRow({ name: "journal", path: "journal", type: "system" }));
     $("scanBtn").onclick = scanHostKey;
+    $("f_type").addEventListener("change", () => {
+        applyType(); clearErrors();
+        document.querySelectorAll('#logs [data-k="path"]').forEach(i => {
+            i.placeholder = formType() === "winrm" ? "D:\\App\\logs\\*.log" : "/var/log/myapp/app.log  หรือ  journal:nginx.service";
+        });
+    });
+    $("w_scan").onclick = scanCert;
+    $("w_test").onclick = testWinrm;
+    $("w_download").onclick = downloadSetup;
     $("copyCmd").onclick = copySetup;
     $("deployBtn").onclick = deployNow;
     $("f_user").addEventListener("input", renderSetup);

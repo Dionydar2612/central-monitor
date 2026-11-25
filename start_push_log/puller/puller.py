@@ -24,6 +24,8 @@ puller.py - จุดเริ่มต้นของ central-puller (ระบ
     events.py              เขียน System log (data/state/events.log)
     checkpoint.py          จำ byte offset ที่ดึงแล้ว (data/state/checkpoints.json)
     system_info.py         เก็บ load/memory/service/process/event + history
+    windows_pull.py        เครื่อง Windows แบบไม่ลง agent (WinRM -> JEA) metric แบบ node_exporter + log + สถานะ
+    winrm_client.py        ช่องทาง WinRM HTTPS (ตรวจ thumbprint) · cm_secrets.py  รหัสผ่าน WinRM (เข้ารหัส)
     prometheus_targets.py  สร้าง data/prometheus/web-nodes.json ให้ Prometheus
     metrics.py             ตัวชี้วัดสุขภาพของ puller เอง (/metrics)
 
@@ -40,6 +42,7 @@ from ondemand import start_server as start_ondemand_server
 from scheduler import run_forever
 from sensor_monitor import start as start_sensor_monitor
 from web_checks import start as start_web_checks
+from windows_pull import start as start_windows_pull
 
 
 def main():
@@ -56,6 +59,11 @@ def main():
 
     start_web_checks()          # เช็คเว็บ/SSL (puller.yaml -> checks:) thread แยก
     start_sensor_monitor()      # สถานะ sensor ต่อเครื่อง (CPU/Memory/Disk/Availability/Log pull) + System log
+
+    try:
+        start_windows_pull()    # เครื่อง Windows (type: winrm) ไม่ลง agent: thread ต่อเครื่อง + /win/<ชื่อ> พอร์ต 9110
+    except Exception as e:
+        print(f"[WINRM ERROR] {e}")
 
     run_forever()
 

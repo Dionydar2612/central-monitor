@@ -38,6 +38,7 @@ import urllib.parse
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+import cm_secrets
 import settings
 
 MAX_TARGETS = 200
@@ -71,7 +72,12 @@ WILDCARDS = "*?["
 GROUP_PART = r"[A-Za-z0-9฀-๿ _.()&+-]{1,40}"
 GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,9}}$")
 GROUP_MAX_DEPTH = 10
-TARGET_TYPES = ("ssh",)
+TARGET_TYPES = ("ssh", "winrm")       # winrm = Windows ไม่ลง agent (start_push_log/puller/windows_pull.py)
+WINPATH_RE = re.compile(r'^[A-Za-z]:\\[^\x00-\x1f"<>|:]{1,300}$')
+WINUSER_RE = re.compile(r"^(?:[A-Za-z0-9._-]{1,15}\\)?[A-Za-z0-9 _.@-]{1,64}$")
+THUMB_RE = re.compile(r"^[0-9A-F]{40}$")
+EVENTLOG_RE = re.compile(r"^[A-Za-z0-9 ._/-]{1,200}$")
+DEFAULT_EVENT_LOGS = ["System", "Application"]
 
 
 PRIORITY_DEFAULT = 3
@@ -386,6 +392,101 @@ def is_agent(t):
     return isinstance(t, dict) and str(t.get("type") or "ssh") == "agent"
 
 
+def norm_thumbprint(value):
+    return "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
+
+
+def validate_winrm(data, existing_names, editing=None):
+    """เครื่อง Windows แบบไม่ลง agent (type: winrm)  รหัสผ่านไม่อยู่ในผลลัพธ์ (เก็บแยกด้วย cm_secrets)"""
+    errors = {}
+    name = editing or _text(data, "name")
+    if not NAME_RE.match(name):
+        errors["name"] = "ใช้ a-z 0-9 และ - เท่านั้น (ขึ้นต้นด้วยตัวอักษร/ตัวเลข ยาวไม่เกิน 40)"
+    elif editing is None and name in existing_names:
+        errors["name"] = "มีชื่อนี้อยู่แล้ว"
+    host = _text(data, "host")
+    if not _valid_host(host):
+        errors["host"] = "ต้องเป็น IP หรือชื่อโดเมนที่ถูกต้อง"
+    w = data.get("winrm") if isinstance(data.get("winrm"), dict) else {}
+    port = _as_int_port(w.get("port"), "winrm.port", errors, default=5986)
+    user = _text(w, "user") or "cm-monitor"
+    if not WINUSER_RE.match(user):
+        errors["winrm.user"] = "ชื่อ user ไม่ถูกต้อง (เช่น cm-monitor หรือ DOMAIN\\cm-monitor)"
+    thumb = norm_thumbprint(w.get("thumbprint"))
+    if not THUMB_RE.match(thumb):
+        errors["winrm.thumbprint"] = "ใส่ Thumbprint 40 ตัวอักษร (จาก setup-cm-monitor.bat) หรือกด Scan certificate"
+    evlogs = w.get("event_logs")
+    if isinstance(evlogs, str):
+        evlogs = [x.strip() for x in evlogs.split(",")]
+    evlogs = [str(x).strip() for x in (evlogs if isinstance(evlogs, list) else DEFAULT_EVENT_LOGS) if str(x).strip()]
+    if len(evlogs) > 10 or any(not EVENTLOG_RE.match(x) for x in evlogs):
+        errors["winrm.event_logs"] = "ชื่อ Event log คั่นด้วย , (ไม่เกิน 10) เช่น System, Application"
+    password = data.get("password")
+    password = password if isinstance(password, str) else ""
+    if len(password) > 128:
+        errors["password"] = "รหัสผ่านยาวเกินไป"
+    elif not password and not (editing and cm_secrets.has_password(name)):
+        errors["password"] = "ใส่รหัสผ่านของ cm-monitor (setup-cm-monitor.bat แสดงตอนจบ)"
+
+    logs_in = data.get("logs") if isinstance(data.get("logs"), list) else []
+    logs = []
+    if len(logs_in) > MAX_LOGS_PER_TARGET:
+        errors["logs"] = f"เพิ่มได้ไม่เกิน {MAX_LOGS_PER_TARGET} ไฟล์ต่อเครื่อง"
+    for i, item in enumerate(logs_in[:MAX_LOGS_PER_TARGET]):
+        item = item if isinstance(item, dict) else {}
+        l_name, l_path = _text(item, "name"), _text(item, "path")
+        l_type = _text(item, "type") or "application"
+        if not l_path and not l_name:
+            continue
+        prefix = f"logs.{i}."
+        if not LOGNAME_RE.match(l_name):
+            errors[prefix + "name"] = "ใช้ A-Z a-z 0-9 _ - เท่านั้น"
+        folder = l_path.rsplit("\\", 1)[0]
+        if not WINPATH_RE.match(l_path) or ".." in l_path.split("\\") or l_path.endswith("\\"):
+            errors[prefix + "path"] = "path ของ Windows เช่น D:\\App\\logs\\app.log หรือ D:\\App\\logs\\*.log"
+        elif any(ch in folder for ch in "*?"):
+            errors[prefix + "path"] = "wildcard ใช้ได้เฉพาะชื่อไฟล์ (ส่วนท้าย) ไม่ใช่ชื่อโฟลเดอร์"
+        if not LOGTYPE_RE.match(l_type):
+            errors[prefix + "type"] = "ใช้ A-Z a-z 0-9 _ - เท่านั้น"
+        enc = _text(item, "encoding")
+        entry = {"name": l_name, "path": l_path, "type": l_type}
+        if enc in ("unicode", "default"):
+            entry["encoding"] = enc
+        logs.append(entry)
+
+    group = clean_group(data.get("group"), errors)
+    priority = clean_priority(data.get("priority"), errors)
+    paused = bool(data.get("paused", False))
+    pause = clean_pause(data, paused, errors)
+    thresholds = clean_thresholds(data.get("thresholds"), errors)
+    alert = clean_alert(data.get("alert"), errors)
+    if errors:
+        raise ValidationError(errors)
+    instance = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+    return {
+        "name": name, "type": "winrm", "host": host, "group": group, "priority": priority,
+        "paused": paused, "pause": pause, "thresholds": thresholds, "alert": alert,
+        "prometheus": {"job": f"{name}-win", "instance": instance},
+        "winrm": {"port": port, "user": user, "thumbprint": thumb, "event_logs": evlogs},
+        "logs": logs,
+        "_password": password,
+    }
+
+
+def is_winrm(t):
+    return isinstance(t, dict) and str(t.get("type") or "ssh") == "winrm"
+
+
+def winrm_prometheus_entry(web, environment):
+    """ต้องตรงกับ start_push_log/puller/prometheus_targets.py: winrm_entry"""
+    prom = web.get("prometheus") or {}
+    if not web.get("name") or not prom.get("job") or not prom.get("instance"):
+        return None
+    return {"targets": [os.environ.get("CENTRAL_WINRM_EXPORTER", "central-puller:9110")],
+            "labels": {"job": prom["job"], "instance": prom["instance"], "web": web["name"], "environment": environment,
+                       "__metrics_path__": f"/win/{web['name']}"}}
+
+
 def validate_target(data, existing_names, editing=None):
     """ตรวจ + จัดรูปข้อมูล target หนึ่งเครื่อง  คืน dict ที่พร้อมเขียนลง yaml
     ผิด -> raise ValidationError พร้อมข้อความรายช่อง"""
@@ -393,7 +494,9 @@ def validate_target(data, existing_names, editing=None):
     if not isinstance(data, dict):
         raise ValidationError({"_": "invalid body"})
     if str(data.get("type") or "ssh") not in TARGET_TYPES:
-        raise ValidationError({"type": "รองรับเฉพาะเครื่อง Linux (ssh) · เครื่อง Windows เลิกรองรับแล้ว"})
+        raise ValidationError({"type": "ชนิดเครื่องต้องเป็น ssh (Linux) หรือ winrm (Windows)"})
+    if str(data.get("type") or "ssh") == "winrm":
+        return validate_winrm(data, existing_names, editing)
 
     name = editing or _text(data, "name")
     if not NAME_RE.match(name):
@@ -550,7 +653,11 @@ def _to_node(t):
         node["alert"] = _flow(t["alert"])
     prom = CommentedMap(t["prometheus"])
     node["prometheus"] = prom
-    node["ssh"] = CommentedMap(t["ssh"])
+    if t.get("type") == "winrm":
+        node.insert(1, "type", "winrm")
+        node["winrm"] = _winrm_node(t["winrm"])
+    else:
+        node["ssh"] = CommentedMap(t["ssh"])
     logs = CommentedSeq()
     for item in t["logs"]:
         logs.append(CommentedMap(item))
@@ -563,6 +670,14 @@ def _apply(node, t):
     for key in ("type", "os", "agent", "critical_services"):     # เครื่อง Windows แบบเดิม -> แก้เป็น Linux
         if key in node:
             del node[key]
+    win = t.get("type") == "winrm"
+    if win:
+        node.insert(1, "type", "winrm")
+        node["winrm"] = _winrm_node(t["winrm"])
+        node["prometheus"] = CommentedMap(t["prometheus"])
+    for key in (("ssh",) if win else ("winrm",)):
+        if key in node:
+            del node[key]
     node["host"] = t["host"]
     _set_or_drop(node, "group", t.get("group") or None)
     _set_or_drop(node, "priority", t["priority"] if t.get("priority") and t["priority"] != PRIORITY_DEFAULT else None)
@@ -570,7 +685,7 @@ def _apply(node, t):
     _set_or_drop(node, "pause", _flow(t["pause"]) if t.get("paused") and t.get("pause") else None)
     _set_or_drop(node, "thresholds", _thresholds_node(t["thresholds"]) if t.get("thresholds") else None)
     _set_or_drop(node, "alert", _flow(t["alert"]) if t.get("alert") else None)
-    for key in ("prometheus", "ssh"):
+    for key in (() if win else ("prometheus", "ssh")):
         if not isinstance(node.get(key), CommentedMap):
             node[key] = CommentedMap()
         for k, v in t[key].items():
@@ -579,6 +694,14 @@ def _apply(node, t):
     for item in t["logs"]:
         logs.append(CommentedMap(item))
     node["logs"] = logs
+
+
+def _winrm_node(w):
+    m = CommentedMap((k, v) for k, v in w.items() if k != "event_logs")
+    ev = CommentedSeq(w.get("event_logs") or [])
+    ev.fa.set_flow_style()
+    m["event_logs"] = ev
+    return m
 
 
 def _flow(d):
@@ -646,6 +769,11 @@ def regenerate_prometheus_targets(doc):
     for web in doc.get("targets") or []:
         prom = web.get("prometheus") or {}
         if is_agent(web):
+            continue
+        if is_winrm(web):
+            entry = winrm_prometheus_entry(web, environment)
+            if entry:
+                out.append(entry)
             continue
         if web.get("name") and prom.get("job") and prom.get("instance"):
             labels = {"job": prom["job"], "web": web["name"], "environment": environment}
@@ -784,6 +912,19 @@ def _view(t):
         return {"name": t.get("name"), "type": "agent", "legacy": True, "host": t.get("host") or "",
                 "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t),
                 "thresholds": {}, "alert": {}, "logs": [], "watch_services": []}
+    if is_winrm(t):
+        w = t.get("winrm") or {}
+        return {
+            "type": "winrm", "name": t.get("name"), "host": t.get("host"), "group": t.get("group") or "",
+            "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t),
+            "thresholds": t.get("thresholds") or {}, "alert": t.get("alert") or {},
+            "prometheus": t.get("prometheus") or {},
+            "winrm": {"port": w.get("port", 5986), "user": w.get("user") or "cm-monitor",
+                      "thumbprint": w.get("thumbprint") or "", "event_logs": list(w.get("event_logs") or DEFAULT_EVENT_LOGS)},
+            "has_password": cm_secrets.has_password(str(t.get("name") or "")),
+            "logs": t.get("logs") or [],
+            "watch_services": t.get("watch_services") or [],
+        }
     ssh = t.get("ssh") or {}
     port = ssh.get("port", 22)
     return {
@@ -818,6 +959,8 @@ def log_status(name):
     t = next((x for x in (doc.get("targets") or []) if isinstance(x, dict) and x.get("name") == name), None)
     if t is None:
         return None
+    if is_winrm(t):
+        return _winrm_log_status(t)
     try:
         with open(os.path.join(settings.STATE_DIR, "checkpoints.json")) as f:
             state = json.load(f)
@@ -837,7 +980,42 @@ def log_status(name):
     return {"name": name, "logs": out}
 
 
+def _store_password(t):
+    pw = t.pop("_password", "")
+    if t.get("type") == "winrm" and pw:
+        try:
+            cm_secrets.set_password(t["name"], pw)
+        except cm_secrets.SecretError as e:
+            raise ValidationError({"password": str(e)}) from e
+
+
+def _winrm_log_status(t):
+    """สถานะ log ของเครื่อง Windows จาก data/state/winrm-state.json (puller windows_pull.py)"""
+    import fnmatch
+    name = t.get("name")
+    try:
+        with open(os.path.join(settings.STATE_DIR, "winrm-state.json")) as f:
+            st = (json.load(f) or {}).get(name) or {}
+    except (OSError, ValueError, AttributeError):
+        st = {}
+    tails = st.get("tails") or {}
+    out = []
+    for src in t.get("logs") or []:
+        lname, path = str(src.get("name") or ""), str(src.get("path") or "")
+        rows = [v for k, v in tails.items() if isinstance(v, dict) and k.startswith(lname + "::")
+                and fnmatch.fnmatch(k.split("::", 1)[1].lower(), path.lower())]
+        times = sorted(str(v.get("updated_at")) for v in rows if v.get("updated_at"))
+        out.append({"name": lname, "path": path, "type": str(src.get("type") or ""), "files": len(rows),
+                    "last_pull": times[-1] if times else None, "offset": sum(int(v.get("offset") or 0) for v in rows)})
+    for log_name, rid in (st.get("events") or {}).items():
+        out.append({"name": "eventlog", "path": f"EventLog: {log_name}", "type": f"EventLog-{log_name}", "files": 1,
+                    "last_pull": st.get("updated_at"), "offset": rid})
+    return {"name": name, "logs": out}
+
+
 def _confirm_host_key(t, payload):
+    if t.get("type") == "winrm":
+        return
     fps = payload.get("trust_fingerprints")
     if fps:
         trust_host_keys(t["host"], t["ssh"]["port"], fps)
@@ -853,6 +1031,7 @@ def add_target(payload):
             raise ValidationError({"_": f"มีเครื่องครบ {MAX_TARGETS} แล้ว"})
         t = validate_target(payload, names)
         _confirm_host_key(t, payload)
+        _store_password(t)
         seq.append(_to_node(t))
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
@@ -870,6 +1049,7 @@ def update_target(name, payload):
             return None
         t = validate_target(payload, set(), editing=name)
         _confirm_host_key(t, payload)
+        _store_password(t)
         _apply(node, t)
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
@@ -887,7 +1067,7 @@ def update_monitoring(name, payload):
     cur = next((t for t in list_targets() if t.get("name") == name), None)
     if cur is None or is_agent(cur):
         return None
-    body = {k: v for k, v in cur.items() if k not in ("host_key_known", "watch_services")}
+    body = {k: v for k, v in cur.items() if k not in ("host_key_known", "watch_services", "has_password")}
     for k in OPERATOR_FIELDS:
         if k in payload:
             body[k] = payload[k]
@@ -998,6 +1178,7 @@ def delete_target(name):
         del seq[idx]
         _write_doc(y, doc)
         regenerate_prometheus_targets(doc)
+    cm_secrets.delete(name)
     return True
 
 
@@ -1010,7 +1191,7 @@ def delete_target(name):
 #   - เก็บฝั่ง server -> ทุกคน/ทุก browser เห็นการเลือกเดียวกัน
 
 MAX_WATCH_SERVICES = 300
-_SERVICE_NAME = re.compile(r"^[A-Za-z0-9:_.@\\-]{1,256}$")
+_SERVICE_NAME = re.compile(r"^[A-Za-z0-9:_.@$ \\-]{1,256}$")
 
 
 def _find_target(doc, name):
@@ -1179,3 +1360,79 @@ def deploy_key(name, payload):
         return {"ok": False, "message": _friendly_ssh_error(r.stderr.decode(errors="replace"), password, admin, user, host)}
     request_pull(name)      # ให้ puller ลองดึงทันทีด้วย key ใหม่
     return {"ok": True, "message": f"วาง public key ให้ {user}@{host} แล้ว (ลบ key เก่าของ server นี้ออกให้แล้ว) puller จะดึงเครื่องนี้ภายในไม่กี่วินาที"}
+
+
+# ------------------------------------------------------------------
+# ชุดติดตั้งบนเครื่อง Windows (ปุ่มในหน้า Settings > การเชื่อมต่อ)
+# ------------------------------------------------------------------
+
+WINDOWS_SETUP_DIR = os.environ.get("CENTRAL_WINDOWS_SETUP_DIR",
+                                   os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_windows"))
+WINDOWS_SETUP_FILES = ("setup-cm-monitor.bat", "setup-cm-monitor.ps1", "check-cm-monitor.bat", "check-cm-monitor.ps1",
+                       "remove-cm-monitor.bat", "remove-cm-monitor.ps1", "CentralMonitor.psm1", "README-TH.txt")
+
+
+def windows_log_folders(logs):
+    """logs ของเครื่อง -> รายการ LogPaths ของ cm-monitor-config.txt (โฟลเดอร์\\ หรือ pattern ชื่อไฟล์)"""
+    out = []
+    for item in logs or []:
+        path = str((item or {}).get("path") or "")
+        if not WINPATH_RE.match(path):
+            continue
+        leaf = path.rsplit("\\", 1)[1] if "\\" in path else path
+        rule = path if any(ch in leaf for ch in "*?") else path.rsplit("\\", 1)[0] + "\\"
+        if rule not in out:
+            out.append(rule)
+    return out
+
+
+def windows_config_text(central, log_paths, port=5986):
+    lines = [
+        "# =====================================================================",
+        "# Central Monitor - agentless Windows monitoring: settings for setup-cm-monitor.bat",
+        "# Generated by Central Monitor (Settings > Windows target). Run setup-cm-monitor.bat after any change.",
+        "# =====================================================================",
+        "",
+        "# IP of the central server (the only address allowed through the firewall)",
+        f"CentralIP={central}",
+        "",
+        "# WinRM HTTPS port (if this machine already has an HTTPS listener, that one is used)",
+        f"Port={int(port)}",
+        "",
+        "# Log files central may read, separated by ;   (empty = Event Log only)",
+        "#   D:\\THMux\\logs\\          = every file directly in that folder",
+        "#   D:\\THMux\\logs\\*.log     = matching files only (wildcards only in the file name)",
+        "LogPaths=" + ";".join(log_paths),
+        "",
+        "# yes = the cm-monitor user cannot log on at the console or by Remote Desktop (WinRM still works)",
+        "DenyLogon=yes",
+        "",
+    ]
+    return "\r\n".join(lines)
+
+
+def windows_setup_zip(central, name="", logpaths=None):
+    """zip ในหน่วยความจำ (ไม่เขียนไฟล์ลงดิสก์)  คืน (bytes, ชื่อไฟล์)"""
+    import zipfile
+    central = str(central or "").strip()
+    try:
+        ipaddress.ip_address(central)
+    except ValueError as e:
+        raise ValidationError({"central": "ใส่ IP ของ central ที่เครื่อง Windows เห็น (เช่น 172.27.2.22)"}) from e
+    port, folders = 5986, []
+    if name:
+        t = next((x for x in list_targets() if x.get("name") == name and x.get("type") == "winrm"), None)
+        if t is None:
+            raise ValidationError({"name": "ไม่พบเครื่อง Windows ชื่อนี้"})
+        port = int((t.get("winrm") or {}).get("port") or 5986)
+        folders = windows_log_folders(t.get("logs"))
+    if logpaths:
+        folders = windows_log_folders([{"path": p.strip()} for p in str(logpaths).split(";") if p.strip()]) or folders
+    buf = io.BytesIO()
+    top = f"cm-monitor-{name}" if name else "cm-monitor"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for fn in WINDOWS_SETUP_FILES:
+            with open(os.path.join(WINDOWS_SETUP_DIR, fn), "rb") as f:
+                z.writestr(f"{top}/{fn}", f.read())
+        z.writestr(f"{top}/cm-monitor-config.txt", windows_config_text(central, folders, port).encode("utf-8-sig"))
+    return buf.getvalue(), f"{top}.zip"

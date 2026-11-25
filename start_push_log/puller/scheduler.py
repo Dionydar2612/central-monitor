@@ -35,6 +35,8 @@ from metrics import pull_cycle_timestamp
 from prometheus_targets import generate_targets
 from system_info import collect_web_system_info, prune_orphan_systems
 from trigger import take_pull_request
+import cm_secrets
+import windows_pull
 
 DEFAULT_INTERVAL = "1h"          # สถานะเครื่อง
 DEFAULT_LOG_INTERVAL = "2m"      # log
@@ -57,9 +59,10 @@ def cleanup_removed_targets(state, targets):
     try:
         dropped = prune_state(state, names)
         removed = prune_orphan_systems(names)
+        win = windows_pull.prune_state(names) + cm_secrets.prune_orphans(names)
 
-        if dropped or removed:
-            print(f"[CLEANUP] removed targets: checkpoints={dropped} system={removed}")
+        if dropped or removed or win:
+            print(f"[CLEANUP] removed targets: checkpoints={dropped} system={removed} winrm={win}")
 
     except Exception as e:
         print(f"[CLEANUP ERROR] {e}")
@@ -118,8 +121,12 @@ def run_once(config, state, only=None, snapshot=True):
         snapshot = True
 
     paused = [t["name"] for t in targets if t.get("paused")]
+    # type: winrm (Windows ไม่ลง agent) -> windows_pull ทำเองใน thread ของเครื่องนั้น (ปุ่มดึงเดี๋ยวนี้ = ปลุก thread)
+    win = [t["name"] for t in targets if windows_pull.is_winrm(t)]
+    if only is not None and win:
+        windows_pull.request_now(win)
     # type: agent (เครื่อง Windows แบบเดิม เลิกรองรับแล้ว) -> ข้าม ไม่ SSH
-    targets = [t for t in targets if not t.get("paused") and str(t.get("type") or "ssh") != "agent"]
+    targets = [t for t in targets if not t.get("paused") and str(t.get("type") or "ssh") == "ssh"]
 
     label = "logs + status" if snapshot else "logs"
     print(f"\n[CYCLE] {label} targets={len(targets)} parallel={opts['parallel']}"

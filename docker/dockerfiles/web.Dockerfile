@@ -46,6 +46,9 @@ COPY web_dashboard/backend/ /app/
 # frontend: index.html, login.html, dashboard.css, dashboard.js -> /app/static
 COPY web_dashboard/frontend/ /app/static/
 
+# ชุดติดตั้งเครื่อง Windows (ปุ่ม Download ใน Settings > การเชื่อมต่อ): targets_service.windows_setup_zip
+COPY agent/windows/ /app/agent_windows/
+
 # คำสั่งจริงถูกกำหนดใน docker-compose.yml (workers/threads/timeout) ค่านี้เป็นค่าสำรอง
 # print() ออก docker logs ทันที (ไม่พักไว้ใน buffer -> docker logs ว่าง ตอนหาปัญหา)
 ENV PYTHONUNBUFFERED=1

@@ -192,8 +192,12 @@ def rules(config):
 
 
 def applies(rule, target):
-    if str(rule.get("os") or "any") == "windows" or str(target.get("type") or "ssh") == "agent":
-        return False                     # กฎ / เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
+    ttype = str(target.get("type") or "ssh")
+    if ttype == "agent":
+        return False                     # เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
+    want = str(rule.get("os") or "any")
+    if want == "windows" and ttype != "winrm" or want == "linux" and ttype == "winrm":
+        return False                     # กฎเฉพาะ OS: Windows = type winrm (ไม่ลง agent), Linux = ssh
     names = [str(x) for x in rule.get("targets") or []]
     groups = [str(x).strip("/") for x in rule.get("groups") or [] if str(x).strip("/")]
     if not names and not groups:

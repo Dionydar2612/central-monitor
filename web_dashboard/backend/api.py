@@ -62,6 +62,9 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     PUT  /api/targets/<name>      แก้เครื่อง (ชื่อเปลี่ยนไม่ได้)
     DELETE /api/targets/<name>    ลบเครื่อง
     POST /api/targets/host-key    สแกน SSH host key ของ host:port (ยังไม่เก็บ)
+    POST /api/targets/winrm-cert  อ่าน thumbprint ใบรับรอง WinRM ของเครื่อง Windows (ยังไม่เก็บ)
+    POST /api/targets/winrm-test  ทดสอบเชื่อมต่อ Windows (WinRM -> JEA) ด้วยค่าที่กรอกในฟอร์ม
+    GET  /api/targets/windows-setup.zip?central=<IP>[&name=]  ชุดติดตั้งบนเครื่อง Windows (.bat) พร้อมค่าตั้ง
 """
 
 import re
@@ -86,7 +89,7 @@ import host_details
 import netsec_service
 import ui_order_service
 from users_service import UserError, role_at_least
-from clients import prom_value, puller_get
+from clients import prom_value, puller_get, puller_post
 from settings import resolve_web_name
 from logs_service import (
     get_errors_15m,
@@ -169,7 +172,7 @@ _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|lo
                          r"|^/api/targets/[^/]+/sensor-(toggle|settings)$|^/api/targets/[^/]+/log-status$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
 _NETSEC_REFRESH = re.compile(r"^/api/netsec/[^/]+/refresh$")
-_TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$)[^/]+$")
+_TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|winrm-cert$|winrm-test$|windows-setup\.zip$)[^/]+$")
 
 
 def _required_role(method, path):
@@ -214,6 +217,9 @@ _AUDIT_RULES = [
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)/services$"), "target.services", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/deploy-key$"), "target.deploy_key", ("admin_user",)),
     ("POST", re.compile(r"^/api/targets/host-key$"), "target.scan_host_key", ("host", "port")),
+    ("POST", re.compile(r"^/api/targets/winrm-cert$"), "target.scan_winrm_cert", ("host", "port")),
+    ("POST", re.compile(r"^/api/targets/winrm-test$"), "target.test_winrm", ("host", "port", "user", "name")),
+    ("GET", re.compile(r"^/api/targets/windows-setup\.zip$"), "target.windows_setup_download", ()),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused", "pause_reason")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
     ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
@@ -1313,6 +1319,52 @@ def targets_host_key():
     except ValidationError as e:
         return _bad_request(e)
     return jsonify({"keys": [{"type": k["type"], "fingerprint": k["fingerprint"]} for k in keys]})
+
+
+@app.post("/api/targets/winrm-cert")
+def targets_winrm_cert():
+    """Scan certificate: thumbprint ของใบรับรอง WinRM HTTPS (puller ต่อไปอ่าน ไม่ส่งรหัสผ่าน)"""
+    body = _json_body() or {}
+    host = str(body.get("host") or "").strip()
+    if not targets_service._valid_host(host):
+        return jsonify({"error": "invalid host", "fields": {"host": "ต้องเป็น IP หรือชื่อโดเมนที่ถูกต้อง"}}), 400
+    try:
+        status, data = puller_get("/winrm-cert", {"host": host, "port": int(body.get("port") or 5986)}, timeout=20)
+    except (OSError, ValueError) as e:
+        return jsonify({"error": f"ติดต่อ central-puller ไม่ได้: {e}"}), 502
+    return jsonify(data), status
+
+
+@app.post("/api/targets/winrm-test")
+def targets_winrm_test():
+    """ทดสอบเชื่อมต่อเครื่อง Windows ด้วยค่าที่กรอก (รหัสว่าง + name = ใช้รหัสที่บันทึกไว้)  รหัสไม่ถูกบันทึก"""
+    body = _json_body() or {}
+    host = str(body.get("host") or "").strip()
+    if not targets_service._valid_host(host):
+        return jsonify({"ok": False, "error": "Host ไม่ถูกต้อง"}), 400
+    req = {"host": host, "port": body.get("port") or 5986, "user": str(body.get("user") or "cm-monitor"),
+           "password": str(body.get("password") or ""), "name": str(body.get("name") or ""),
+           "thumbprint": targets_service.norm_thumbprint(body.get("thumbprint"))}
+    try:
+        status, data = puller_post("/winrm-test", req, timeout=60)
+    except (OSError, ValueError) as e:
+        return jsonify({"ok": False, "error": f"ติดต่อ central-puller ไม่ได้: {e}"}), 502
+    return jsonify(data), (200 if status == 200 else 502)
+
+
+@app.get("/api/targets/windows-setup.zip")
+def targets_windows_setup():
+    """ชุดติดตั้งสำหรับเครื่อง Windows: .bat / .ps1 / module + cm-monitor-config.txt ที่กรอก CentralIP / LogPaths ให้"""
+    try:
+        blob, filename = targets_service.windows_setup_zip(request.args.get("central", ""), request.args.get("name", ""),
+                                                           request.args.get("logpaths"))
+    except ValidationError as e:
+        return _bad_request(e)
+    except OSError as e:
+        return jsonify({"error": f"ไม่พบไฟล์ชุดติดตั้งใน image (rebuild): {e}"}), 500
+    from flask import Response
+    return Response(blob, mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
 
 
 @app.post("/api/targets/<name>/sensor-toggle")

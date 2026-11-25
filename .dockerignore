@@ -8,3 +8,4 @@ docker/.env
 *.bak.*
 __pycache__
 *.pyc
+agent/windows/logs
