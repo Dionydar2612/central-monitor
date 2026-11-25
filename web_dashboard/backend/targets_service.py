@@ -413,8 +413,8 @@ def validate_winrm(data, existing_names, editing=None):
     if not WINUSER_RE.match(user):
         errors["winrm.user"] = "ชื่อ user ไม่ถูกต้อง (เช่น cm-monitor หรือ DOMAIN\\cm-monitor)"
     thumb = norm_thumbprint(w.get("thumbprint"))
-    if not THUMB_RE.match(thumb):
-        errors["winrm.thumbprint"] = "ใส่ Thumbprint 40 ตัวอักษร (จาก setup-cm-monitor.bat) หรือกด Scan certificate"
+    if thumb and not THUMB_RE.match(thumb):            # ว่างได้: ติดตั้งจากหน้าเว็บ / zip -> ระบบตั้งให้เอง
+        errors["winrm.thumbprint"] = "Thumbprint ต้องยาว 40 ตัวอักษร (หรือเว้นว่างให้ระบบตั้งให้)"
     evlogs = w.get("event_logs")
     if isinstance(evlogs, str):
         evlogs = [x.strip() for x in evlogs.split(",")]
@@ -425,8 +425,8 @@ def validate_winrm(data, existing_names, editing=None):
     password = password if isinstance(password, str) else ""
     if len(password) > 128:
         errors["password"] = "รหัสผ่านยาวเกินไป"
-    elif not password and not (editing and cm_secrets.has_password(name)):
-        errors["password"] = "ใส่รหัสผ่านของ cm-monitor (setup-cm-monitor.bat แสดงตอนจบ)"
+    elif password and len(password) < 8:
+        errors["password"] = "รหัสผ่านสั้นเกินไป (เว้นว่างได้: ติดตั้งจากหน้าเว็บ / ชุดติดตั้งที่ดาวน์โหลดตั้งให้เอง)"
 
     logs_in = data.get("logs") if isinstance(data.get("logs"), list) else []
     logs = []
@@ -922,6 +922,8 @@ def _view(t):
             "winrm": {"port": w.get("port", 5986), "user": w.get("user") or "cm-monitor",
                       "thumbprint": w.get("thumbprint") or "", "event_logs": list(w.get("event_logs") or DEFAULT_EVENT_LOGS)},
             "has_password": cm_secrets.has_password(str(t.get("name") or "")),
+            # thumbprint ที่ puller จำไว้เองตอนเชื่อมต่อสำเร็จครั้งแรก (ติดตั้งด้วย zip ไม่ได้กรอก)
+            "pinned_thumbprint": "" if w.get("thumbprint") else cm_secrets.get_pin(str(t.get("name") or "")),
             "logs": t.get("logs") or [],
             "watch_services": t.get("watch_services") or [],
         }
@@ -1387,7 +1389,16 @@ def windows_log_folders(logs):
     return out
 
 
-def windows_config_text(central, log_paths, port=5986):
+def new_winrm_password():
+    """รหัสของ cm-monitor ที่ central ตั้งเอง: 24 ตัว มีตัวใหญ่ / เล็ก / ตัวเลข / สัญลักษณ์ (ผ่าน password policy ของ Windows)"""
+    import secrets
+    sets = ("ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnopqrstuvwxyz", "23456789", "-_.")
+    chars = [secrets.choice(x) for x in sets] + [secrets.choice("".join(sets)) for _ in range(20)]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
+def windows_config_text(central, log_paths, port=5986, password=""):
     lines = [
         "# =====================================================================",
         "# Central Monitor - agentless Windows monitoring: settings for setup-cm-monitor.bat",
@@ -1408,6 +1419,10 @@ def windows_config_text(central, log_paths, port=5986):
         "# yes = the cm-monitor user cannot log on at the console or by Remote Desktop (WinRM still works)",
         "DenyLogon=yes",
         "",
+        "# Password of cm-monitor chosen by central (already saved there - nothing to copy).",
+        "# setup-cm-monitor.bat removes it from this file after use. Empty = setup makes one and shows it.",
+        f"Password={password}",
+        "",
     ]
     return "\r\n".join(lines)
 
@@ -1420,13 +1435,21 @@ def windows_setup_zip(central, name="", logpaths=None):
         ipaddress.ip_address(central)
     except ValueError as e:
         raise ValidationError({"central": "ใส่ IP ของ central ที่เครื่อง Windows เห็น (เช่น 172.27.2.22)"}) from e
-    port, folders = 5986, []
+    port, folders, password = 5986, [], ""
     if name:
         t = next((x for x in list_targets() if x.get("name") == name and x.get("type") == "winrm"), None)
         if t is None:
             raise ValidationError({"name": "ไม่พบเครื่อง Windows ชื่อนี้"})
         port = int((t.get("winrm") or {}).get("port") or 5986)
         folders = windows_log_folders(t.get("logs"))
+        # รหัสของเครื่องนี้ใส่ใน zip เลย -> ดับเบิลคลิกแล้วจบ ไม่ต้องคัดลอกอะไรกลับมา (ใช้รหัสเดิมถ้ามี)
+        try:
+            password = cm_secrets.get_password(name) or ""
+        except cm_secrets.SecretError:
+            password = ""
+        if not password:
+            password = new_winrm_password()
+            cm_secrets.set_password(name, password)
     if logpaths:
         folders = windows_log_folders([{"path": p.strip()} for p in str(logpaths).split(";") if p.strip()]) or folders
     buf = io.BytesIO()
@@ -1435,5 +1458,87 @@ def windows_setup_zip(central, name="", logpaths=None):
         for fn in WINDOWS_SETUP_FILES:
             with open(os.path.join(WINDOWS_SETUP_DIR, fn), "rb") as f:
                 z.writestr(f"{top}/{fn}", f.read())
-        z.writestr(f"{top}/cm-monitor-config.txt", windows_config_text(central, folders, port).encode("utf-8-sig"))
+        z.writestr(f"{top}/cm-monitor-config.txt", windows_config_text(central, folders, port, password).encode("utf-8-sig"))
     return buf.getvalue(), f"{top}.zip"
+
+
+# ------------------------------------------------------------------
+# ติดตั้งจากหน้าเว็บ: central ใช้บัญชี admin ของเครื่อง (ครั้งเดียว ไม่เก็บ) ติดตั้งให้ผ่าน WinRM
+# งานจริงอยู่ที่ puller (start_push_log/puller/windows_install.py) เพราะ gunicorn ตัดคำขอที่เกิน 60 วินาที
+# ------------------------------------------------------------------
+
+def _winrm_target(name):
+    t = next((x for x in list_targets() if x.get("name") == name), None)
+    if t is None or t.get("type") != "winrm":
+        return None
+    return t
+
+
+def winrm_install_request(name, payload):
+    """คืน body ที่ส่งให้ puller POST /winrm-install  (รหัส admin อยู่ใน body นี้เท่านั้น)  ไม่มีเครื่อง -> None"""
+    t = _winrm_target(name)
+    if t is None:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    errors = {}
+    user = _text(payload, "admin_user")
+    if not WINUSER_RE.match(user):
+        errors["admin_user"] = "ใส่ user ที่เป็น admin ของเครื่อง เช่น Administrator หรือ DOMAIN\\admin"
+    pw = payload.get("admin_password")
+    if not isinstance(pw, str) or not pw or len(pw) > 256:
+        errors["admin_password"] = "ใส่รหัสผ่านของ admin (ใช้ครั้งนี้ครั้งเดียว ไม่ถูกบันทึก)"
+    try:
+        port = int(payload.get("admin_port") or 5985)
+    except (TypeError, ValueError):
+        port = 0
+    if port not in (5985, 5986):
+        errors["admin_port"] = "5985 (HTTP เข้ารหัสด้วย NTLM/Kerberos) หรือ 5986 (HTTPS)"
+    central = _text(payload, "central") or "auto"
+    if central != "auto":
+        try:
+            ipaddress.ip_address(central)
+        except ValueError:
+            errors["central"] = "IP ของ central ไม่ถูกต้อง (เว้นว่าง = ตรวจหาให้เอง)"
+    if errors:
+        raise ValidationError(errors)
+    files = {}
+    for fn in ("setup-cm-monitor.ps1", "CentralMonitor.psm1"):
+        with open(os.path.join(WINDOWS_SETUP_DIR, fn), "rb") as f:
+            files[fn] = base64.b64encode(f.read()).decode("ascii")
+    new_pw = new_winrm_password()
+    cm_secrets.set_pending(name, new_pw)          # ใช้จริงเมื่อติดตั้งสำเร็จ (winrm_install_apply)
+    config = windows_config_text(central, windows_log_folders(t.get("logs")), int(t["winrm"].get("port") or 5986), new_pw)
+    return {"name": name, "host": t["host"], "port": port, "user": user, "password": pw,
+            "files_b64": files, "config": config}
+
+
+def winrm_install_apply(name, status):
+    """ผลจาก puller: สำเร็จ -> ใช้รหัสใหม่ + ตั้ง thumbprint / port ใน puller.yaml + ดึงทันที  (เรียกซ้ำได้)"""
+    if status.get("state") != "done" or not status.get("ok"):
+        return status
+    promoted = cm_secrets.promote_pending(name)
+    thumb = norm_thumbprint(status.get("thumbprint"))
+    if THUMB_RE.match(thumb):
+        y = _yaml()
+        with _locked():
+            doc = _load_doc(y)
+            node = _find_target(doc, name)
+            if node is not None and isinstance(node.get("winrm"), dict):
+                changed = node["winrm"].get("thumbprint") != thumb
+                node["winrm"]["thumbprint"] = thumb
+                try:
+                    p = int(status.get("port") or 0)
+                except (TypeError, ValueError):
+                    p = 0
+                if p and node["winrm"].get("port") != p:
+                    node["winrm"]["port"] = p
+                    host = str(node.get("host") or "")
+                    if isinstance(node.get("prometheus"), dict):
+                        node["prometheus"]["instance"] = f"[{host}]:{p}" if ":" in host else f"{host}:{p}"
+                    changed = True
+                if changed:
+                    _write_doc(y, doc)
+                    regenerate_prometheus_targets(doc)
+    if promoted:
+        request_pull(name)
+    return {**status, "applied": True}

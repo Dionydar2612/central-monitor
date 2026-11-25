@@ -60,22 +60,38 @@
 
 <div class="fpane" data-p="conn" hidden>
 <div class="win-only">
-<div class="fsec"><div class="fsec-h">1) ติดตั้งบนเครื่อง Windows (ครั้งแรกครั้งเดียว)</div>
-<div class="st-mut" style="font-size:13px;margin-bottom:8px">ดาวน์โหลดชุดติดตั้ง → คัดลอกไปเครื่อง Windows → แตก zip → ดับเบิลคลิก <code>setup-cm-monitor.bat</code> (ขอสิทธิ์ admin เอง ไม่ต้องมีอินเทอร์เน็ต)<br>
-สร้าง user <code>cm-monitor</code> (ไม่ใช่ admin) + JEA endpoint อ่านอย่างเดียว + WinRM HTTPS 5986 ที่รับเฉพาะ IP ของ central · ไม่มี service / scheduled task / ไฟล์ข้อมูลบนเครื่อง · ตอนจบจะแสดง <b>Thumbprint</b> และ <b>รหัสผ่าน</b> ให้กรอกด้านล่าง<br>
-ถอน: <code>remove-cm-monitor.bat</code> · ตรวจ: <code>check-cm-monitor.bat</code> (อ่านอย่างเดียว)</div>
+<div class="fsec"><div class="fsec-h">ติดตั้งบนเครื่อง Windows (ครั้งแรกครั้งเดียว · เลือกวิธีใดวิธีหนึ่ง)</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:10px">ติดตั้งแล้วบนเครื่องมี user <code>cm-monitor</code> (ไม่ใช่ admin) + JEA endpoint อ่านอย่างเดียว + WinRM HTTPS ที่รับเฉพาะ IP ของ central · ไม่มี service / scheduled task / ไฟล์ข้อมูล · รหัสผ่านและใบรับรองระบบตั้งให้เอง ไม่ต้องคัดลอก</div>
+<div class="st-h3">วิธีที่ 1: ติดตั้งจากหน้านี้ (ไม่ต้องไปที่เครื่อง)</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:6px">central ใช้บัญชี admin ของเครื่องนั้น <b>ครั้งนี้ครั้งเดียว</b> (ไม่บันทึก) ผ่าน WinRM ที่เครื่องเปิดอยู่ · ใช้ Administrator ของเครื่อง หรือ domain admin (local admin อื่นมักถูก Windows บล็อกทาง network) · ใช้เวลา ~1-3 นาที</div>
+<div class="st-grid">
+<div class="st-f" data-f="admin_user"><label for="wi_user">Admin user</label><input id="wi_user" autocomplete="off" value="Administrator"><div class="st-err"></div></div>
+<div class="st-f" data-f="admin_password"><label for="wi_pass">Admin password</label><input id="wi_pass" type="password" autocomplete="new-password"><div class="st-err"></div></div>
+<div class="st-f" data-f="admin_port"><label for="wi_port">WinRM ที่เครื่องเปิดอยู่</label><select id="wi_port"><option value="5985">5985 (HTTP · เข้ารหัสด้วย NTLM/Kerberos)</option><option value="5986">5986 (HTTPS)</option></select><div class="st-err"></div></div>
+<div class="st-f" data-f="central"><label for="wi_central">IP ของ central ที่เครื่องเห็น</label><input id="wi_central" autocomplete="off" placeholder="เว้นว่าง = ตรวจหาให้เอง"><div class="st-err"></div></div>
+</div>
+<div style="margin-top:8px"><button class="st-btn sm primary" id="wi_go" type="button">ติดตั้งให้เครื่องนี้</button> <span id="wi_msg" class="st-msg" role="status"></span></div>
+<pre id="wi_log" class="st-code" hidden style="max-height:220px;overflow:auto;margin-top:8px;font-size:11.5px;white-space:pre-wrap"></pre>
+<div class="st-h3" style="margin-top:16px">วิธีที่ 2: ดาวน์โหลดแล้วดับเบิลคลิกบนเครื่อง</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:6px">คัดลอก zip ไปเครื่อง Windows → แตก zip → ดับเบิลคลิก <code>setup-cm-monitor.bat</code> → จบ (รหัสของเครื่องนี้อยู่ใน zip แล้ว ถูกลบออกจากไฟล์หลังใช้ · ลบ zip ทิ้งหลังติดตั้ง) · ถอน: <code>remove-cm-monitor.bat</code> · ตรวจ: <code>check-cm-monitor.bat</code></div>
 <div class="st-grid">
 <div class="st-f" data-f="central"><label for="w_central">IP ของ central ที่เครื่อง Windows เห็น</label><input id="w_central" autocomplete="off" placeholder="172.27.2.22"><small>เครื่อง Windows อนุญาต WinRM จาก IP นี้เท่านั้น</small><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><button class="st-btn sm" id="w_download" type="button">⬇ Download ชุดติดตั้ง (.zip)</button><small>LogPaths ในชุดติดตั้ง = โฟลเดอร์ของ log ในแท็บ Log</small></div>
 </div></div>
-<div class="fsec"><div class="fsec-h">2) การเชื่อมต่อ WinRM</div><div class="st-grid">
+<div class="fsec"><div class="fsec-h">การเชื่อมต่อ WinRM</div><div class="st-grid">
 <div class="st-f" data-f="winrm.port"><label for="w_port">WinRM HTTPS port</label><input id="w_port" inputmode="numeric" value="5986"><div class="st-err"></div></div>
 <div class="st-f" data-f="winrm.user"><label for="w_user">User (ไม่ใช่ admin)</label><input id="w_user" autocomplete="off" value="cm-monitor"><div class="st-err"></div></div>
-<div class="st-f" data-f="password"><label for="w_pass">รหัสผ่าน</label><input id="w_pass" type="password" autocomplete="new-password"><small id="w_pass_hint">จาก setup-cm-monitor.bat · เก็บแบบเข้ารหัสบน central ไม่แสดงกลับ</small><div class="st-err"></div></div>
-<div class="st-f" data-f="winrm.thumbprint"><label for="w_thumb">Certificate thumbprint</label><input id="w_thumb" autocomplete="off" placeholder="40 ตัวอักษร จาก setup-cm-monitor.bat"><small>central จะไม่ส่งรหัสผ่านถ้าใบรับรองไม่ตรง (กันเครื่องปลอม)</small><div class="st-err"></div></div>
 <div class="st-f" data-f="winrm.event_logs"><label for="w_evlogs">Event log ที่เก็บ (Warning ขึ้นไป)</label><input id="w_evlogs" autocomplete="off" value="System, Application"><small>คั่นด้วย , เช่น System, Application, Microsoft-Windows-TaskScheduler/Operational</small><div class="st-err"></div></div>
 </div>
-<div style="margin-top:8px"><button class="st-btn sm" id="w_scan" type="button">Scan certificate</button> <button class="st-btn sm" id="w_test" type="button">ทดสอบการเชื่อมต่อ</button> <span id="w_msg" class="st-msg" role="status"></span></div>
+<div style="margin-top:8px"><button class="st-btn sm" id="w_test" type="button">ทดสอบการเชื่อมต่อ</button> <span id="w_msg" class="st-msg" role="status"></span></div>
+<details id="w_adv" style="margin-top:12px"><summary style="cursor:pointer;font-size:13px">ตั้งค่าเอง (ขั้นสูง · ปกติไม่ต้องกรอก)</summary>
+<div class="st-mut" style="font-size:13px;margin:6px 0">ใช้เมื่อรัน setup เองโดยไม่ได้ใช้ชุดที่ดาวน์โหลดจากหน้านี้ (setup แสดงรหัส + Thumbprint ตอนจบ) · เว้นว่าง = ใช้ค่าที่ระบบตั้งไว้</div>
+<div class="st-grid">
+<div class="st-f" data-f="password"><label for="w_pass">รหัสผ่านของ cm-monitor</label><input id="w_pass" type="password" autocomplete="new-password"><small id="w_pass_hint">เก็บแบบเข้ารหัสบน central ไม่แสดงกลับ</small><div class="st-err"></div></div>
+<div class="st-f" data-f="winrm.thumbprint"><label for="w_thumb">Certificate thumbprint</label><input id="w_thumb" autocomplete="off" placeholder="เว้นว่าง = จำใบรับรองตอนเชื่อมต่อสำเร็จครั้งแรก"><small id="w_thumb_hint">central ไม่ส่งรหัสผ่านถ้าใบรับรองไม่ตรง (กันเครื่องปลอม)</small><div class="st-err"></div></div>
+</div>
+<div style="margin-top:8px"><button class="st-btn sm" id="w_scan" type="button">Scan certificate</button></div>
+</details>
 </div>
 </div>
 <div class="ssh-only">

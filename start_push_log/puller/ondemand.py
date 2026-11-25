@@ -26,7 +26,8 @@ ondemand.py - ดึง log ระดับ INFO "สด" จากเครื�
         วัดสด ณ ตอนที่ขอ (CPU ต่อ core 1 วินาที + 10 process ที่ใช้ RAM สูงสุด) แสดงแล้วไม่เก็บ
         หน้าเว็บเรียกทุก ~60 วินาทีขณะเปิดหน้า (central-api cache ไว้ 20 วินาที)
 
-    GET /winrm-cert?host=&port=  ·  POST /winrm-test  ·  เครื่อง type: winrm -> windows_ondemand.py
+    GET /winrm-cert?host=&port=  ·  POST /winrm-test  ·  POST /winrm-install + GET /winrm-install-status?name=
+    (ติดตั้งจากหน้าเว็บ: windows_install.py)  ·  เครื่อง type: winrm -> windows_ondemand.py
     GET /log-check?target=web-01
         -> {"logs":[{name, path, ok, problem, files:[{path, size, mtime, readable}]}], "error"}
         ตรวจ log ที่ตั้งไว้ใน puller.yaml ของเครื่องนั้น (ปุ่ม "ตรวจ" ใน Settings > Log)
@@ -44,6 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import journal
+import windows_install
 import windows_ondemand
 from config import load_config
 from log_filter import only_info
@@ -312,13 +314,15 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
 
-        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check", "/winrm-cert"):
+        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check", "/winrm-cert", "/winrm-install-status"):
             return self._send(404, {"error": "not found"})
 
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
             return self._send(403, {"error": "forbidden"})
 
         params = parse_qs(url.query)
+        if url.path == "/winrm-install-status":
+            return self._send(200, windows_install.status(params.get("name", [""])[0]))
         if url.path == "/winrm-cert":
             try:
                 return self._send(200, windows_ondemand.cert(params.get("host", [""])[0].strip(),
@@ -392,14 +396,17 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
-        if url.path != "/winrm-test":
+        if url.path not in ("/winrm-test", "/winrm-install"):
             return self._send(404, {"error": "not found"})
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
             return self._send(403, {"error": "forbidden"})
         try:
-            n = min(int(self.headers.get("Content-Length") or 0), 65536)
+            n = min(int(self.headers.get("Content-Length") or 0), 4 * 1048576)
             body = json.loads(self.rfile.read(n) or b"{}")
-            return self._send(200, windows_ondemand.test(body if isinstance(body, dict) else {}))
+            body = body if isinstance(body, dict) else {}
+            if url.path == "/winrm-install":                 # ติดตั้งจากหน้าเว็บ (thread แยก)
+                return self._send(202, windows_install.start(body))
+            return self._send(200, windows_ondemand.test(body))
         except Exception as e:
             return self._send(200, {"ok": False, "error": str(e)[:400]})
 

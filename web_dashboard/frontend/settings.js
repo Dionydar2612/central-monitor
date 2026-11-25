@@ -72,7 +72,8 @@ function renderTable() {
         }
         if (t.type === "winrm") {               /* Windows แบบไม่ลง agent (WinRM -> JEA) */
             const wp = t.winrm.port && Number(t.winrm.port) !== 5986 ? ":" + t.winrm.port : "";
-            const ready = t.has_password && t.winrm.thumbprint;
+            const cert = t.winrm.thumbprint || t.pinned_thumbprint;
+            const ready = t.has_password && cert;
             tb.append(el("tr", {},
                 el("td", {}, el("b", {}, t.name)),
                 el("td", {}, "Windows (WinRM)"),
@@ -80,7 +81,8 @@ function renderTable() {
                 el("td", {}, t.host + wp),
                 el("td", {}, t.winrm.user || "-"),
                 el("td", {}, String(t.logs.length) + " + Event log"),
-                el("td", { class: ready ? "ok" : "wr", title: t.winrm.thumbprint || "" }, ready ? "✓ cert + password" : "⚠ ยังไม่ครบ"),
+                el("td", { class: ready ? "ok" : "wr", title: cert || "" }, ready ? "✓ cert + password"
+                    : t.has_password ? "⏳ รอติดตั้ง / เชื่อมต่อครั้งแรก" : "⚠ ยังไม่ได้ติดตั้ง"),
                 el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
                 el("td", {}, el("div", { class: "st-actions" }, rowActions(t)))));
             return;
@@ -355,7 +357,11 @@ function openForm(t) {
     $("w_thumb").value = w.thumbprint || "";
     $("w_evlogs").value = (w.event_logs || ["System", "Application"]).join(", ");
     $("w_pass").value = "";
-    $("w_pass").placeholder = t && t.has_password ? "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)" : "";
+    $("w_pass").placeholder = t && t.has_password ? "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)" : "เว้นว่าง = ระบบตั้งให้ตอนติดตั้ง";
+    $("w_thumb_hint").textContent = w.thumbprint ? "central ไม่ส่งรหัสผ่านถ้าใบรับรองไม่ตรง (กันเครื่องปลอม)"
+        : t && t.pinned_thumbprint ? `จำใบรับรองไว้แล้ว: ${t.pinned_thumbprint}` : "เว้นว่าง = จำใบรับรองตอนเชื่อมต่อสำเร็จครั้งแรก";
+    $("wi_pass").value = ""; say("wi_msg", ""); $("wi_log").hidden = true; $("wi_log").textContent = "";
+    $("w_adv").open = !!(t && w.thumbprint && !t.pinned_thumbprint && !t.has_password);
     if (!$("w_central").value) $("w_central").value = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : "";
     say("w_msg", "");
     $("f_port").value = t && t.ssh ? (t.ssh.port || 22) : 22;
@@ -467,13 +473,81 @@ async function testWinrm() {
     finally { b.disabled = false; }
 }
 
-function downloadSetup() {
+/* ติดตั้ง / ดาวน์โหลดต้องมีเครื่องในระบบก่อน: บันทึกฟอร์มให้เงียบ ๆ (ฟอร์มยังเปิดอยู่) คืน true ถ้าสำเร็จ */
+async function ensureSaved() {
+    clearErrors(); say("formMsg", "");
+    const body = readForm();
+    try {
+        if (S.editing) await api("PUT", "/api/targets/" + encodeURIComponent(S.editing), body);
+        else await api("POST", "/api/targets", body);
+    } catch (e) {
+        if (e.message === "auth") return false;
+        const general = showErrors(e.fields);
+        say("formMsg", general || (e.fields ? "กรุณาแก้ช่องที่มีข้อความสีแดงก่อน" : "บันทึกไม่สำเร็จ: " + e.message), "bad");
+        return false;
+    }
+    if (!S.editing) {
+        S.editing = body.name;
+        $("f_name").disabled = true; $("f_type").disabled = true;
+        $("formTitle").textContent = `Edit target: ${body.name}`;
+        formSave("conn");
+    }
+    $("w_pass").value = "";
+    try { const d = await api("GET", "/api/targets"); S.targets = d.targets; renderTable(); } catch (e) { /* ignore */ }
+    return true;
+}
+
+async function downloadSetup() {
     const central = $("w_central").value.trim();
     if (!/^\d+\.\d+\.\d+\.\d+$/.test(central) && !central.includes(":")) { say("w_msg", "ใส่ IP ของ central ก่อน", "bad"); $("w_central").focus(); return; }
+    if (!await ensureSaved()) return;
     const paths = [...$("logs").children].map(r => r.querySelector('[data-k="path"]').value.trim()).filter(Boolean).join(";");
-    const q = new URLSearchParams({ central, logpaths: paths });
-    if (S.editing) q.set("name", S.editing);
+    const q = new URLSearchParams({ central, logpaths: paths, name: S.editing });
     location.href = "/api/targets/windows-setup.zip?" + q.toString();
+    say("w_msg", "ดาวน์โหลดแล้ว: คัดลอกไปเครื่อง Windows → แตก zip → ดับเบิลคลิก setup-cm-monitor.bat (ไม่ต้องกรอกอะไรกลับมา) · ลบ zip หลังติดตั้ง", "ok");
+}
+
+async function installWin() {
+    const b = $("wi_go");
+    const body = { admin_user: $("wi_user").value.trim(), admin_password: $("wi_pass").value,
+                   admin_port: $("wi_port").value, central: $("wi_central").value.trim() };
+    if (!body.admin_password) { say("wi_msg", "ใส่รหัสผ่านของ admin ก่อน", "bad"); $("wi_pass").focus(); return; }
+    b.disabled = true;
+    try {
+        if (!await ensureSaved()) return;
+        const name = S.editing;
+        say("wi_msg", "กำลังเริ่ม...", "");
+        try { await api("POST", `/api/targets/${encodeURIComponent(name)}/winrm-install`, body); }
+        catch (e) {
+            if (e.message === "auth") return;
+            say("wi_msg", "เริ่มไม่ได้: " + (showErrors(e.fields) || e.message), "bad");
+            return;
+        } finally { $("wi_pass").value = ""; }       /* รหัส admin ไม่ค้างในหน้า */
+        const started = Date.now();
+        for (;;) {
+            await new Promise(r => setTimeout(r, 3000));
+            let d;
+            try { d = await api("GET", `/api/targets/${encodeURIComponent(name)}/winrm-install`); }
+            catch (e) { if (e.message === "auth") return; d = { state: "running", step: "รอคำตอบ..." }; }
+            const sec = Math.round((Date.now() - started) / 1000);
+            if (d.state === "running") { say("wi_msg", `⏳ ${d.step || "กำลังติดตั้ง"} (${sec} วิ)`, ""); continue; }
+            if (d.log) { $("wi_log").textContent = d.log; $("wi_log").hidden = false; }
+            if (d.state === "done" && d.ok) {
+                say("wi_msg", `✓ ติดตั้งเสร็จบน ${d.computer || name}${d.warnings ? ` (คำเตือน ${d.warnings} ข้อ ดู log ด้านล่าง)` : ""} · central เริ่มเก็บข้อมูลภายใน ~1 นาที`, "ok");
+                try {
+                    const r = await api("GET", "/api/targets"); S.targets = r.targets; renderTable();
+                    const nt = S.targets.find(x => x.name === name);
+                    if (nt) {
+                        $("w_thumb").value = nt.winrm.thumbprint || ""; $("w_port").value = nt.winrm.port || 5986;
+                        $("w_pass").placeholder = "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)";
+                    }
+                } catch (e) { /* ignore */ }
+            } else {
+                say("wi_msg", "✗ " + (d.error || "ติดตั้งไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
+            }
+            break;
+        }
+    } finally { b.disabled = false; }
 }
 
 /* ---------- host key ---------- */
@@ -921,6 +995,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("w_scan").onclick = scanCert;
     $("w_test").onclick = testWinrm;
     $("w_download").onclick = downloadSetup;
+    $("wi_go").onclick = installWin;
     $("copyCmd").onclick = copySetup;
     $("deployBtn").onclick = deployNow;
     $("f_user").addEventListener("input", renderSetup);

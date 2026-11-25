@@ -58,12 +58,15 @@ def server_thumbprint(host, port, timeout=10):
 class Session:
     """session WinRM 1 ตัวต่อเครื่อง (ไม่ thread-safe: ใช้จาก worker ของเครื่องนั้นเท่านั้น)"""
 
-    def __init__(self, host, port, user, password, thumbprint, timeout=20):
+    def __init__(self, host, port, user, password, thumbprint, timeout=20, on_learn=None):
         self.host, self.port, self.user = host, int(port), user
         self.password, self.thumbprint = password, norm_thumb(thumbprint)
         self.timeout = int(timeout)
         self.pool = None
         self.opened = 0.0
+        # ไม่มี thumbprint (ติดตั้งด้วย zip ที่ไม่ต้องคัดลอกอะไร): จำใบรับรองที่เห็นครั้งแรก "หลัง" ล็อกอินผ่าน
+        # แล้วใช้ตรวจทุกครั้งต่อไป (trust on first use) -> on_learn(thumbprint) เก็บไว้ที่ cm_secrets
+        self.on_learn = on_learn
 
     @property
     def is_open(self):
@@ -72,12 +75,15 @@ class Session:
     def open(self):
         if not HAVE_PYPSRP:
             raise WinRMError("puller image ไม่มี pypsrp - รัน cm-update --rebuild")
-        if not self.thumbprint:
+        if not self.thumbprint and self.on_learn is None:
             raise WinRMError("ยังไม่ได้ตั้ง Certificate thumbprint ของเครื่องนี้ (Settings > การเชื่อมต่อ > Scan certificate)")
         if not self.password:
             raise WinRMError("ยังไม่ได้ใส่รหัสผ่านของ cm-monitor (Settings > การเชื่อมต่อ)")
         self.close()
         got = server_thumbprint(self.host, self.port)
+        learning = not self.thumbprint
+        if learning:
+            self.thumbprint = got
         if got != self.thumbprint:
             raise WinRMError(f"ใบรับรองไม่ตรง: เครื่องส่ง {got} แต่ตั้งไว้ {self.thumbprint} - ไม่เชื่อมต่อ "
                              "(ถ้าติดตั้งใหม่ ให้ Scan certificate อีกครั้ง)")
@@ -90,9 +96,13 @@ class Session:
         try:
             pool.open()
         except Exception as e:  # noqa: BLE001
+            if learning:
+                self.thumbprint = ""
             raise WinRMError(_friendly(e)) from e
         self.pool = pool
         self.opened = time.time()
+        if learning and self.on_learn:
+            self.on_learn(got)
 
     def close(self):
         if self.pool is not None:

@@ -64,7 +64,9 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     POST /api/targets/host-key    สแกน SSH host key ของ host:port (ยังไม่เก็บ)
     POST /api/targets/winrm-cert  อ่าน thumbprint ใบรับรอง WinRM ของเครื่อง Windows (ยังไม่เก็บ)
     POST /api/targets/winrm-test  ทดสอบเชื่อมต่อ Windows (WinRM -> JEA) ด้วยค่าที่กรอกในฟอร์ม
-    GET  /api/targets/windows-setup.zip?central=<IP>[&name=]  ชุดติดตั้งบนเครื่อง Windows (.bat) พร้อมค่าตั้ง
+    GET  /api/targets/windows-setup.zip?central=<IP>[&name=]  ชุดติดตั้งบนเครื่อง Windows (.bat) พร้อมค่าตั้ง (+ รหัสของเครื่อง)
+    POST /api/targets/<name>/winrm-install  ติดตั้งให้เครื่อง Windows จากหน้าเว็บ (บัญชี admin ใช้ครั้งเดียว ไม่เก็บ)
+    GET  /api/targets/<name>/winrm-install  สถานะการติดตั้ง (หน้าเว็บถามทุก ~3 วินาที)
 """
 
 import re
@@ -220,6 +222,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/targets/winrm-cert$"), "target.scan_winrm_cert", ("host", "port")),
     ("POST", re.compile(r"^/api/targets/winrm-test$"), "target.test_winrm", ("host", "port", "user", "name")),
     ("GET", re.compile(r"^/api/targets/windows-setup\.zip$"), "target.windows_setup_download", ()),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-install$"), "target.windows_install", ("admin_user", "admin_port", "central")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused", "pause_reason")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
     ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
@@ -1365,6 +1368,38 @@ def targets_windows_setup():
     from flask import Response
     return Response(blob, mimetype="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+@app.post("/api/targets/<name>/winrm-install")
+def targets_winrm_install(name):
+    """ติดตั้งบนเครื่อง Windows จากหน้าเว็บ: puller ทำในเบื้องหลัง (ใช้เวลา ~1-3 นาที) หน้าเว็บถามสถานะด้วย GET"""
+    body = _json_body() or {}
+    try:
+        req = targets_service.winrm_install_request(name, body)
+    except ValidationError as e:
+        return _bad_request(e)
+    except OSError as e:
+        return jsonify({"error": f"ไม่พบไฟล์ชุดติดตั้งใน image (rebuild): {e}"}), 500
+    if req is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        status, data = puller_post("/winrm-install", req, timeout=30)
+    except (OSError, ValueError) as e:
+        return jsonify({"error": f"ติดต่อ central-puller ไม่ได้: {e}"}), 502
+    return jsonify(data), (202 if status in (200, 202) else 502)
+
+
+@app.get("/api/targets/<name>/winrm-install")
+def targets_winrm_install_status(name):
+    try:
+        status, data = puller_get("/winrm-install-status", {"name": name}, timeout=15)
+    except (OSError, ValueError) as e:
+        return jsonify({"state": "unknown", "error": f"ติดต่อ central-puller ไม่ได้: {e}"}), 502
+    try:
+        data = targets_service.winrm_install_apply(name, data)
+    except (OSError, YAMLError, targets_service.cm_secrets.SecretError) as e:
+        data = {**data, "error": f"ติดตั้งสำเร็จแต่บันทึกค่าไม่ได้: {e}"}
+    return jsonify(data), status
 
 
 @app.post("/api/targets/<name>/sensor-toggle")

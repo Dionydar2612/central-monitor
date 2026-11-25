@@ -7,6 +7,7 @@ cm_secrets.py - เก็บรหัสผ่านของเครื่อ�
     web_dashboard/backend/cm_secrets.py      (หน้า Settings เขียนรหัส)
 
 ที่เก็บ    data/state/secrets/winrm/<ชื่อเครื่อง>.json   (สิทธิ์ 0600)
+           {"password": <เข้ารหัส>, "pending": <รหัสระหว่างติดตั้งจากหน้าเว็บ>, "thumbprint": <ใบรับรองที่จำไว้>}
            ไม่อยู่ใน puller.yaml / ไม่ส่งออก API / ไม่ลง log / ไม่อยู่ใน backup ของ config
 กุญแจ     SHA-256 ของ CENTRAL_SECRET_KEY (docker/.env) -> container ทั้งสองได้ค่าเดียวกัน
            (central-api: CENTRAL_SECRET_KEY, central-puller: CENTRAL_PULLER_TOKEN = ค่าเดียวกัน)
@@ -77,31 +78,76 @@ def _path(name):
     return os.path.join(SECRET_DIR, f"{name}.json")
 
 
-def set_password(name, password):
+def _read(name):
+    try:
+        with open(_path(name)) as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise SecretError(f"cannot read stored secret: {e}") from e
+
+
+def _write(name, doc):
     path = _path(name)
     os.makedirs(SECRET_DIR, mode=0o700, exist_ok=True)
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        json.dump({"v": 1, "password": encrypt(password)}, f)
+        json.dump({"v": 1, **{k: v for k, v in doc.items() if k != "v"}}, f)
     os.replace(tmp, path)
+
+
+def set_password(name, password):
+    doc = _read(name)
+    doc["password"] = encrypt(password)
+    doc.pop("pending", None)
+    _write(name, doc)
 
 
 def get_password(name):
     """คืนรหัสผ่าน หรือ None ถ้ายังไม่ได้ตั้ง  (อ่านไม่ได้ -> SecretError)"""
-    try:
-        with open(_path(name)) as f:
-            doc = json.load(f)
-    except FileNotFoundError:
+    doc = _read(name)
+    if not doc.get("password"):
         return None
-    except (OSError, ValueError) as e:
-        raise SecretError(f"cannot read stored secret: {e}") from e
-    return decrypt(str(doc.get("password") or ""))
+    return decrypt(str(doc["password"]))
+
+
+def set_pending(name, password):
+    """รหัสที่กำลังติดตั้งจากหน้าเว็บ (ยังไม่ใช้จนกว่าติดตั้งสำเร็จ -> promote_pending)"""
+    doc = _read(name)
+    doc["pending"] = encrypt(password)
+    _write(name, doc)
+
+
+def promote_pending(name):
+    """ติดตั้งสำเร็จ: รหัสที่รอ -> รหัสที่ใช้จริง  คืน True ถ้ามีให้ย้าย"""
+    doc = _read(name)
+    if not doc.get("pending"):
+        return False
+    doc["password"] = doc.pop("pending")
+    _write(name, doc)
+    return True
+
+
+def get_pin(name):
+    """thumbprint ของใบรับรองที่จำไว้ตอนเชื่อมต่อสำเร็จครั้งแรก (ไม่ได้ตั้งใน puller.yaml)"""
+    try:
+        return str(_read(name).get("thumbprint") or "")
+    except SecretError:
+        return ""
+
+
+def set_pin(name, thumbprint):
+    doc = _read(name)
+    doc["thumbprint"] = str(thumbprint or "").upper()
+    _write(name, doc)
 
 
 def has_password(name):
     try:
-        return os.path.isfile(_path(name))
+        return bool(_read(name).get("password"))
     except SecretError:
         return False
 

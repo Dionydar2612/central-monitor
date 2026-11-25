@@ -49,11 +49,13 @@ class Backend(unittest.TestCase):
         thumb = "ab" * 20
         body = {"type": "winrm", "name": "win-01", "host": "10.0.0.9", "group": "TQ/Win", "logs": [],
                 "winrm": {"port": 5986, "user": "cm-monitor", "thumbprint": thumb, "event_logs": ["System", "Application"]}}
-        bad = c.post("/api/targets", json=body).json
-        self.assertIn("password", bad["fields"])                      # เพิ่มใหม่ต้องมีรหัส
+        r = c.post("/api/targets", json={**body, "name": "win-00", "winrm": {}})
+        self.assertEqual(r.status_code, 201, r.json)                   # ไม่มีรหัส / thumbprint ได้ (ระบบตั้งให้ตอนติดตั้ง)
+        self.assertFalse(r.json["has_password"])
+        self.assertEqual(c.delete("/api/targets/win-00").status_code, 200)
         bad = c.post("/api/targets", json={**body, "password": "x", "winrm": {**body["winrm"], "thumbprint": "123"},
                                             "logs": [{"name": "app", "path": "/var/log/x.log"}]}).json
-        self.assertIn("winrm.thumbprint", bad["fields"])
+        self.assertIn("winrm.thumbprint", bad["fields"])               # ใส่มาต้องครบ 40 ตัว
         self.assertIn("logs.0.path", bad["fields"])                    # path แบบ Linux ใช้กับ Windows ไม่ได้
         bad = c.post("/api/targets", json={**body, "password": "x", "logs": [{"name": "app", "path": "D:\\a*\\x.log"}]}).json
         self.assertIn("logs.0.path", bad["fields"])                    # wildcard ในชื่อโฟลเดอร์
@@ -100,8 +102,40 @@ class Backend(unittest.TestCase):
         self.assertIn("cm-monitor-win-01/CentralMonitor.psm1", names)
         cfg = z.read("cm-monitor-win-01/cm-monitor-config.txt").decode("utf-8-sig")
         self.assertIn("CentralIP=172.27.2.22", cfg)
+        self.assertIn("Password=S3cret-pw#1", cfg)                     # รหัสของเครื่องอยู่ใน zip (ไม่ต้องคัดลอกกลับ)
+        self.assertIn("cm-monitor-win-01/reset-password-cm-monitor.bat", names)
         self.assertIn("LogPaths=D:\\THMux\\logs\\*.log", cfg)
         self.assertIn("\r\n", cfg)
+        # ติดตั้งจากหน้าเว็บ: puller ทำเบื้องหลัง · สำเร็จ -> รหัสใหม่ + thumbprint ลง puller.yaml
+        sent = {}
+        orig_post, orig_get = self.api.puller_post, self.api.puller_get
+        self.addCleanup(setattr, self.api, "puller_post", orig_post)
+        self.addCleanup(setattr, self.api, "puller_get", orig_get)
+        def fake_post(path, body, timeout=60):
+            sent.update(body)
+            return 202, {"state": "running", "step": "เริ่ม"}
+        self.api.puller_post = fake_post
+        bad = c.post("/api/targets/win-01/winrm-install", json={"admin_user": "Administrator", "admin_port": 22}).json
+        self.assertIn("admin_password", bad["fields"])
+        self.assertIn("admin_port", bad["fields"])
+        r = c.post("/api/targets/win-01/winrm-install", json={"admin_user": "Administrator", "admin_password": "Adm!n-pw"})
+        self.assertEqual(r.status_code, 202, r.json)
+        self.assertEqual(sent["password"], "Adm!n-pw")
+        self.assertIn("CentralIP=auto", sent["config"])
+        self.assertIn("setup-cm-monitor.ps1", sent["files_b64"])
+        new_pw = [ln for ln in sent["config"].split("\r\n") if ln.startswith("Password=")][0][9:]
+        self.assertEqual(len(new_pw), 24)
+        self.assertEqual(cm_secrets.get_password("win-01"), "S3cret-pw#1")   # ยังไม่เปลี่ยนจนกว่าติดตั้งสำเร็จ
+        self.assertNotIn("Adm!n-pw", open(os.path.join(self.tmp, "puller.yaml")).read())
+        self.api.puller_get = lambda path, params, timeout=30: (200, {"state": "running", "step": "setup"})
+        self.assertEqual(c.get("/api/targets/win-01/winrm-install").json["state"], "running")
+        self.assertEqual(cm_secrets.get_password("win-01"), "S3cret-pw#1")
+        self.api.puller_get = lambda path, params, timeout=30: (200, {"state": "done", "ok": True, "thumbprint": "cd" * 20, "port": 5986})
+        self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["applied"])
+        self.assertEqual(cm_secrets.get_password("win-01"), new_pw)
+        self.assertIn("thumbprint: " + "CD" * 20, open(os.path.join(self.tmp, "puller.yaml")).read())
+        self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["applied"])   # ถามซ้ำได้
+        self.assertEqual(cm_secrets.get_password("win-01"), new_pw)
         # operator แก้ได้แค่การแจ้งเตือน / log (รหัส / การเชื่อมต่อคงเดิม)
         self.assertEqual(c.post("/api/users", json={"username": "op-w", "password": "password1", "role": "operator"}).status_code, 201)
         self.assertEqual(self.login("op-w", "password1"), 200)
@@ -111,6 +145,7 @@ class Backend(unittest.TestCase):
         self.assertEqual(t["host"], "10.0.0.10")
         self.assertEqual(t["alert"], {"minutes": 5})
         self.assertEqual(c.get("/api/targets/windows-setup.zip?central=172.27.2.22").status_code, 403)
+        self.assertEqual(c.post("/api/targets/win-01/winrm-install", json={}).status_code, 403)
         self.assertEqual(self.login("admin", "rootpass"), 200)
         self.assertEqual(c.delete("/api/targets/win-01").status_code, 200)
         self.assertFalse(os.path.exists(sec))                          # ลบเครื่อง = ลบรหัส

@@ -55,7 +55,7 @@ function Warn([string]$m) { Say "[WARN] $m" 'Yellow'; $script:Warnings++ }
 function Step([string]$m) { Say ''; Say "--- $m" 'Cyan' }
 
 function Read-Config {
-    $cfg = @{ CentralIP = ''; Port = '5986'; LogPaths = ''; DenyLogon = 'yes' }
+    $cfg = @{ CentralIP = ''; Port = '5986'; LogPaths = ''; DenyLogon = 'yes'; Password = '' }
     $path = Join-Path $Here 'cm-monitor-config.txt'
     if (-not (Test-Path -LiteralPath $path)) { throw "cm-monitor-config.txt not found next to the .bat ($path)" }
     foreach ($line in (Get-Content -LiteralPath $path)) {
@@ -152,6 +152,10 @@ function Get-HttpsListener {
 # =====================================================================
 $exitCode = 0
 $newPassword = $null
+$pwFromCentral = $false
+$thumb = ''
+$port = 0
+$errMsg = ''
 try {
     Say '=== Central Monitor - Windows agentless setup (v1.1.0) ===' 'Cyan'
     Info "log: $LogFile"
@@ -240,17 +244,25 @@ try {
     # ----------------------------------------------------------- user
     Step '3/8 Local user cm-monitor (not an administrator)'
     $u = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
+    # Password= in cm-monitor-config.txt: central chose it (download from Settings / install from the web page)
+    # -> nothing to copy back. It is removed from the config file at the end of this run.
+    $cfgPw = [string]$cfg.Password
+    if ($cfgPw -and ($cfgPw.Length -lt 12 -or $cfgPw.Length -gt 128)) { throw 'Password in cm-monitor-config.txt must be 12-128 characters' }
     if ($null -eq $u) {
-        $newPassword = New-RandomPassword
+        if ($cfgPw) { $newPassword = $cfgPw; $pwFromCentral = $true } else { $newPassword = New-RandomPassword }
         $sec = ConvertTo-SecureString $newPassword -AsPlainText -Force
         $u = New-LocalUser -Name $UserName -Password $sec -Description $UserDesc -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires
         $m.created['user'] = $true
-        Ok 'user created (random 24-character password)'
+        Ok $(if ($pwFromCentral) { 'user created (password set by central)' } else { 'user created (random 24-character password)' })
     } else {
         if (-not $m.created.ContainsKey('user') -and $u.Description -ne $UserDesc) {
             throw "A user named '$UserName' already exists and was not created by this setup. Nothing was changed."
         }
-        if ($Options -contains 'resetpw') {
+        if ($cfgPw) {
+            $newPassword = $cfgPw; $pwFromCentral = $true
+            Set-LocalUser -Name $UserName -Password (ConvertTo-SecureString $newPassword -AsPlainText -Force)
+            Ok 'existing user - password set by central (nothing to copy)'
+        } elseif ($Options -contains 'resetpw') {
             $newPassword = New-RandomPassword
             Set-LocalUser -Name $UserName -Password (ConvertTo-SecureString $newPassword -AsPlainText -Force)
             Ok 'existing user - NEW password set (update it in central Settings)'
@@ -437,7 +449,8 @@ try {
     Save-Manifest $m
 } catch {
     Say ''
-    Say "[FAIL] $($_.Exception.Message)" 'Red'
+    $errMsg = $_.Exception.Message
+    Say "[FAIL] $errMsg" 'Red'
     Log ($_ | Out-String)
     $exitCode = 1
 }
@@ -451,7 +464,9 @@ if ($exitCode -eq 0) {
     Say "  Port         : $port"
     Say "  User         : $UserName"
     Say "  Thumbprint   : $thumb"
-    if ($null -ne $newPassword) {
+    if ($pwFromCentral) {
+        Say '  Password     : (set by central - nothing to copy)'
+    } elseif ($null -ne $newPassword) {
         Write-Host "  Password     : $newPassword" -ForegroundColor Yellow
         Set-Content -LiteralPath $CredPath -Value @("user=$UserName", "password=$newPassword", "thumbprint=$thumb", "port=$port") -Encoding ASCII
         & icacls.exe $CredPath /inheritance:r /grant:r "*${SID_ADM}:F" "*${SID_SYS}:F" | Out-Null
@@ -466,4 +481,20 @@ if ($exitCode -eq 0) {
     Say 'RESULT: FAILED - see the message above and the log file' 'Red'
 }
 Say "log: $LogFile"
+
+# the password from central must not stay in the config file next to the .bat
+try {
+    $cfgFile = Join-Path $Here 'cm-monitor-config.txt'
+    if ((Test-Path -LiteralPath $cfgFile) -and (Select-String -LiteralPath $cfgFile -Pattern '^\s*Password\s*=\s*\S' -Quiet)) {
+        $lines = @(Get-Content -LiteralPath $cfgFile | ForEach-Object { if ($_ -match '^\s*Password\s*=') { 'Password=' } else { $_ } })
+        [System.IO.File]::WriteAllLines($cfgFile, [string[]]$lines, (New-Object System.Text.UTF8Encoding($true)))
+    }
+} catch { Log "could not clear Password in cm-monitor-config.txt: $($_.Exception.Message)" }
+
+# result for the web installer (central reads it, then deletes the folder) - no password inside
+try {
+    [ordered]@{ ok = ($exitCode -ne 1); exit = $exitCode; error = $errMsg; thumbprint = $thumb; port = $port;
+                warnings = $script:Warnings; computer = $env:COMPUTERNAME; version = $Version } |
+        ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Here 'setup-result.json') -Encoding ASCII
+} catch { }
 exit $exitCode

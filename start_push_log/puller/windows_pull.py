@@ -377,18 +377,23 @@ class Worker(threading.Thread):
 
     def _session(self):
         w = winrm_settings(self.target)
-        pw_path = os.path.join(cm_secrets.SECRET_DIR, f"{self.target_name}.json")
-        try:
-            pw_mtime = os.path.getmtime(pw_path)
-        except OSError:
-            pw_mtime = 0
-        key = (self.target.get("host"), w["port"], w["user"], w["thumbprint"], pw_mtime)
-        if self.session is None or key != self.session_key:
-            if self.session:
-                self.session.close()
-            password = cm_secrets.get_password(self.target_name)
-            self.session = winrm_client.Session(self.target.get("host"), w["port"], w["user"], password, w["thumbprint"])
-            self.session_key = key
+        name = self.target_name
+        password = cm_secrets.get_password(name)
+        # thumbprint: ตั้งใน puller.yaml (ติดตั้งจากหน้าเว็บ / กรอกเอง) หรือที่จำไว้ตอนเชื่อมต่อสำเร็จครั้งแรก (zip)
+        thumb = w["thumbprint"] or cm_secrets.get_pin(name)
+        key = (self.target.get("host"), w["port"], w["user"], thumb, password)
+        if self.session is not None and key != self.session_key and not (
+                self.session_key and self.session_key[3] == "" and thumb == self.session.thumbprint
+                and key[:3] + key[4:] == self.session_key[:3] + self.session_key[4:]):
+            self.session.close()
+            self.session = None
+        if self.session is None:
+            def learn(tp):
+                cm_secrets.set_pin(name, tp)
+                print(f"[WINRM] {name} certificate {tp} remembered (first successful login)")
+            self.session = winrm_client.Session(self.target.get("host"), w["port"], w["user"], password, thumb,
+                                                on_learn=None if thumb else learn)
+        self.session_key = key
         return self.session
 
     def _soft(self, key, fn, *args):

@@ -1052,3 +1052,90 @@ class WindowsSoftErrors(unittest.TestCase):
         w.session.is_open = False                                             # session หลุด -> ส่งต่อให้รอบหลัก
         with self.assertRaises(winrm_client.WinRMError):
             w._soft("services", w.session.call, "Get-CMServices")
+
+
+class WindowsEasyInstall(unittest.TestCase):
+    def test_tofu_learns_cert_only_after_login(self):
+        """ไม่มี thumbprint: จำใบรับรองหลังล็อกอินผ่านเท่านั้น · ครั้งต่อไปใบรับรองต้องตรง"""
+        import winrm_client
+        learned = []
+
+        class Pool:
+            ok = True
+            def __init__(self, *a, **k): pass
+            def open(self):
+                if not Pool.ok:
+                    raise RuntimeError("401 Unauthorized")
+            def close(self): pass
+
+        orig = (winrm_client.server_thumbprint, getattr(winrm_client, "RunspacePool", None), getattr(winrm_client, "WSMan", None),
+                winrm_client.HAVE_PYPSRP)
+        try:
+            winrm_client.server_thumbprint = lambda h, p: "AA" * 20
+            winrm_client.RunspacePool, winrm_client.WSMan, winrm_client.HAVE_PYPSRP = Pool, (lambda *a, **k: None), True
+            Pool.ok = False
+            s = winrm_client.Session("h", 5986, "u", "p", "", on_learn=learned.append)
+            with self.assertRaises(winrm_client.WinRMError):
+                s.open()
+            self.assertEqual(learned, [])                          # ล็อกอินไม่ผ่าน -> ไม่จำ
+            self.assertEqual(s.thumbprint, "")
+            Pool.ok = True
+            s.open()
+            self.assertEqual(learned, ["AA" * 20])
+            winrm_client.server_thumbprint = lambda h, p: "BB" * 20
+            with self.assertRaises(winrm_client.WinRMError):     # ใบรับรองเปลี่ยน -> ไม่เชื่อมต่อ
+                s.open()
+            with self.assertRaises(winrm_client.WinRMError):     # ไม่มี thumbprint + ไม่ให้เรียนรู้ = ปฏิเสธ
+                winrm_client.Session("h", 5986, "u", "p", "").open()
+        finally:
+            (winrm_client.server_thumbprint, winrm_client.RunspacePool, winrm_client.WSMan, winrm_client.HAVE_PYPSRP) = orig
+
+    def test_install_job(self):
+        """ติดตั้งจากหน้าเว็บ: เขียนไฟล์ (base64) -> เริ่ม setup -> รอผล -> ลบโฟลเดอร์ · ไม่มีรหัสในสถานะ"""
+        import base64
+        import windows_install
+        import winrm_client
+        scripts = []
+        polls = iter(["RUNNING\n12:00:01 --- 5/8 WinRM HTTPS listener",
+                      'DONE\n{"ok":true,"exit":0,"error":"","thumbprint":"cd' + "cd" * 19 + '","port":5986,"warnings":0,"computer":"ABC86"}\n@@LOG\nRESULT: SUCCESS'])
+
+        class P:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def run(pool, script):
+            scripts.append(script)
+            if "Win32_Process" in script:
+                return "STARTED 1234 172.20.219.241"
+            if "setup-result.json" in script:
+                return next(polls)
+            return "CLEAN"
+
+        orig = (windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP)
+        try:
+            windows_install._pool = lambda *a: P()
+            windows_install._run = run
+            windows_install.time.sleep = lambda s: None
+            winrm_client.HAVE_PYPSRP = True
+            cfg = "CentralIP=auto\r\nPassword=Secret-For-cm-monitor\r\n"
+            windows_install.start({"name": "w1", "host": "10.0.0.5", "port": 5985, "user": "Administrator",
+                                   "password": "Adm!n", "config": cfg,
+                                   "files_b64": {"setup-cm-monitor.ps1": base64.b64encode(b"# setup").decode()}})
+            for _ in range(200):
+                st = windows_install.status("w1")
+                if st.get("state") != "running":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(st["state"], "done", st)
+            self.assertTrue(st["ok"])
+            self.assertEqual(st["thumbprint"], "CD" * 20)
+            self.assertNotIn("Adm!n", json.dumps(st))
+            self.assertNotIn("Secret-For", json.dumps(st))
+            start = scripts[0]
+            self.assertNotIn("Secret-For", start)                  # config ส่งเป็น base64 เท่านั้น
+            self.assertIn(base64.b64encode(cfg.encode()).decode(), start)
+            self.assertIn("unattended", start)
+            self.assertIn("CLEAN", run(None, windows_install.CLEANUP_SCRIPT))
+            self.assertTrue(any("Remove-Item" in x for x in scripts[-2:]))
+        finally:
+            windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP = orig
