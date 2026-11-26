@@ -62,6 +62,10 @@
 <div class="agent-only">
 <div class="fsec"><div class="fsec-h">cm-agent: ตั้งค่าก่อนติดตั้ง (ยิ่งปิด / ยิ่งนาน = เครื่องยิ่งเบา)</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:8px" id="ag_ready"></div>
+<div class="st-grid">
+<div class="st-f" data-f="agent.mode"><label for="ag_mode">วิธีรับข้อมูล</label><select id="ag_mode"><option value="push">push · เครื่องส่งมาที่ central (พอร์ต 4318 + token)</option><option value="pull">pull · central ดึงจากเครื่องเอง (เครื่องต่อหา central ไม่ได้)</option></select><small id="ag_mode_hint"></small><div class="st-err"></div></div>
+<div class="st-f ag-pull" data-f="agent.exporter_port"><label for="ag_exporter_port">พอร์ต windows_exporter บนเครื่อง</label><input id="ag_exporter_port" inputmode="numeric" value="9182"><small>firewall บนเครื่องเปิดพอร์ตนี้ให้เฉพาะ IP ของ central</small><div class="st-err"></div></div>
+</div>
 <div class="st-f" data-f="agent.features.metrics"><label>สิ่งที่เก็บ</label>
 <label class="st-check"><input type="checkbox" id="ag_f_metrics" checked> Metrics + สถานะ (CPU / RAM / Disk / Network / Service)</label>
 <label class="st-check"><input type="checkbox" id="ag_f_logs" checked> Event Log + ไฟล์ log (ERROR / WARN)</label>
@@ -70,15 +74,15 @@
 <div class="st-err"></div></div>
 <div class="st-grid">
 <div class="st-f" data-f="agent.metrics_interval"><label for="ag_metrics_interval">อ่าน metrics ทุก (วินาที)</label><input id="ag_metrics_interval" inputmode="numeric"><small>15-600 · ปริยาย 60</small><div class="st-err"></div></div>
-<div class="st-f" data-f="agent.heartbeat_interval"><label for="ag_heartbeat_interval">สัญญาณ "ยังทำงาน" ทุก (วินาที)</label><input id="ag_heartbeat_interval" inputmode="numeric"><small>15-600 · ขาด ~3 รอบ = Down</small><div class="st-err"></div></div>
+<div class="st-f ag-push" data-f="agent.heartbeat_interval"><label for="ag_heartbeat_interval">สัญญาณ "ยังทำงาน" ทุก (วินาที)</label><input id="ag_heartbeat_interval" inputmode="numeric"><small>15-600 · ขาด ~3 รอบ = Down</small><div class="st-err"></div></div>
 <div class="st-f" data-f="agent.event_interval"><label for="ag_event_interval">อ่าน Event Log ทุก (วินาที)</label><input id="ag_event_interval" inputmode="numeric"><small>5-600 · ปริยาย 30</small><div class="st-err"></div></div>
-<div class="st-f" data-f="agent.log_refresh"><label for="ag_log_refresh">หาไฟล์ log ใหม่ทุก (วินาที)</label><input id="ag_log_refresh" inputmode="numeric"><small>10-600 · ปริยาย 60</small><div class="st-err"></div></div>
-<div class="st-f" data-f="agent.flush"><label for="ag_flush">ส่งข้อมูลทุก (วินาที)</label><input id="ag_flush" inputmode="numeric"><small>1-120 · ปริยาย 15</small><div class="st-err"></div></div>
+<div class="st-f ag-push" data-f="agent.log_refresh"><label for="ag_log_refresh">หาไฟล์ log ใหม่ทุก (วินาที)</label><input id="ag_log_refresh" inputmode="numeric"><small>10-600 · ปริยาย 60</small><div class="st-err"></div></div>
+<div class="st-f ag-push" data-f="agent.flush"><label for="ag_flush">ส่งข้อมูลทุก (วินาที)</label><input id="ag_flush" inputmode="numeric"><small>1-120 · ปริยาย 15</small><div class="st-err"></div></div>
 <div class="st-f" data-f="agent.inventory_minutes"><label for="ag_inventory_minutes">รายการโปรแกรม / พอร์ตทุก (นาที)</label><input id="ag_inventory_minutes" inputmode="numeric"><small>15-1440 · ปริยาย 60</small><div class="st-err"></div></div>
 <div class="st-f" data-f="agent.event_logs"><label for="ag_evlogs">Event log ที่เก็บ (Warning ขึ้นไป)</label><input id="ag_evlogs" autocomplete="off" value="System, Application"><div class="st-err"></div></div>
-<div class="st-f" data-f="agent.port"><label for="ag_port">พอร์ต central ที่รับ</label><input id="ag_port" inputmode="numeric" value="4318"><div class="st-err"></div></div>
+<div class="st-f ag-push" data-f="agent.port"><label for="ag_port">พอร์ต central ที่รับ</label><input id="ag_port" inputmode="numeric" value="4318"><div class="st-err"></div></div>
 <div class="st-f" data-f="agent.central"><label for="ag_central">IP / ชื่อ central ที่เครื่องเห็น</label><input id="ag_central" autocomplete="off" placeholder="เว้นว่าง = ตรวจหาให้ตอนติดตั้ง"><div class="st-err"></div></div>
-<div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="ag_skip_cert"> ไม่ตรวจใบรับรองของ central (ยังเข้ารหัส)</label></div>
+<div class="st-f ag-push"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="ag_skip_cert"> ไม่ตรวจใบรับรองของ central (ยังเข้ารหัส)</label></div>
 </div>
 <small class="st-mut">บันทึกแล้วกด ติดตั้ง / อัปเดต อีกครั้งเพื่อส่งค่าใหม่ไปที่เครื่อง</small>
 </div>

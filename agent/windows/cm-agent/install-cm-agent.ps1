@@ -8,6 +8,9 @@
 #   - service cm-agent    : Fluent Bit, reads windows_exporter + Event Log + log files
 #                           and sends them to central over HTTPS (port 4318) with a token
 #   - task CentralMonitorInventory (only when Software=1): installed programs + listening ports
+# Mode=pull (this machine cannot reach central, but central can reach it):
+#   no Fluent Bit / token; cm-exporter listens on 0.0.0.0:ExporterPort with a firewall rule for the
+#   central IP only, central reads it; logs = task CentralMonitorLogs (cm-logs.ps1 -> textfile)
 # Folders: %ProgramFiles%\central-monitor-agent (programs)  %ProgramData%\central-monitor-agent (data)
 #
 # Every interval / feature comes from cm-agent-config.txt next to this file, so the load on
@@ -46,7 +49,7 @@ function Step([string]$m) { Say ''; Say "--- $m" 'Cyan' }
 # ---------------------------------------------------------------- config
 function Read-Config {
     $cfg = [ordered]@{
-        Name = ''; CentralIP = ''; Port = '4318'; Token = ''; SkipCertCheck = '0'
+        Name = ''; CentralIP = ''; Port = '4318'; Token = ''; SkipCertCheck = '0'; Mode = 'push'; ExporterPort = '9182'
         Metrics = '1'; Logs = '1'; Software = '1'; Processes = '0'
         Channels = 'System,Application'; LogPaths = ''
         MetricsInterval = '60'; HeartbeatInterval = '60'; EventInterval = '30'; LogRefresh = '60'
@@ -110,7 +113,7 @@ function Try-Download([string]$url, [string]$dest) {
 }
 
 # ---------------------------------------------------------------- main
-$exitCode = 0; $errMsg = ''; $features = @{}; $HbInt = 60; $MetricsInt = 60
+$exitCode = 0; $errMsg = ''; $features = @{}; $HbInt = 60; $MetricsInt = 60; $Pull = $false
 try {
     $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
               [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -123,6 +126,7 @@ try {
     $Central = ([string]$cfg.CentralIP).Trim()
     if (-not $Central -or $Central -eq 'auto') { throw 'CentralIP is empty - type the IP / name of central' }
     $Port = Num $cfg 'Port' 1 65535
+    $Pull = ([string]$cfg.Mode).Trim().ToLower() -eq 'pull'
     $Token = ([string]$cfg.Token).Trim()
     if (-not $Token) {
         # run again from the zip: Token was cleared after the first install -> reuse the one in the installed config
@@ -132,8 +136,15 @@ try {
             if ($m) { $Token = $m.Matches[0].Groups[1].Value; Info 'Token: reusing the one of the installed agent' }
         }
     }
-    if ($Token.Length -lt 16) { throw 'Token is missing (copy it from central or install from the web page)' }
+    if (-not $Pull -and $Token.Length -lt 16) { throw 'Token is missing (copy it from central or install from the web page)' }
     $UseMetrics  = Flag $cfg 'Metrics'
+    if ($Pull) {
+        $ExpPort = Num $cfg 'ExporterPort' 1024 65535
+        if (-not $UseMetrics) { Warn 'Mode=pull: central reads everything from windows_exporter - Metrics turned on'; $UseMetrics = $true }
+        try { $CentralIps = @([System.Net.Dns]::GetHostAddresses($Central) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) }
+        catch { $CentralIps = @() }
+        if (-not $CentralIps) { throw "cannot resolve '$Central' - use the IP of central" }
+    }
     $UseLogs     = Flag $cfg 'Logs'
     $UseSoftware = (Flag $cfg 'Software')
     $UseProc     = (Flag $cfg 'Processes')
@@ -147,14 +158,15 @@ try {
     $InvMin     = Num $cfg 'InventoryMinutes' 15 1440
     $Channels   = (@(([string]$cfg.Channels) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) -join ','
     $LogPaths   = @(([string]$cfg.LogPaths) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $features = [ordered]@{ metrics = $UseMetrics; logs = $UseLogs; software = $UseSoftware; processes = $UseProc
+    $features = [ordered]@{ mode = $(if ($Pull) { 'pull' } else { 'push' }); metrics = $UseMetrics; logs = $UseLogs; software = $UseSoftware; processes = $UseProc
                             metrics_interval = $MetricsInt; heartbeat_interval = $HbInt; event_interval = $EvInt
                             log_refresh = $LogRefresh; flush = $Flush; inventory_minutes = $InvMin }
-    Ok "machine '$Name' -> ${Central}:$Port"
+    if ($Pull) { Ok "machine '$Name' <- central $Central reads :$ExpPort (pull mode)" } else { Ok "machine '$Name' -> ${Central}:$Port" }
     Info ("metrics=$UseMetrics (every ${MetricsInt}s, processes=$UseProc)  logs=$UseLogs (events every ${EvInt}s, files every ${LogRefresh}s)" +
           "  software=$UseSoftware (every $InvMin min)  heartbeat every ${HbInt}s  flush ${Flush}s")
 
     Step '2/7 Test the connection to central'
+    if ($Pull) { Info 'pull mode - central connects to this machine, nothing to test here' } else {
     try {
         $c = New-Object Net.Sockets.TcpClient
         $iar = $c.BeginConnect($Central, $Port, $null, $null)
@@ -162,12 +174,16 @@ try {
         else { Warn "${Central}:$Port not reachable now (firewall?) - installing anyway, data is kept on disk and sent later" }
         $c.Close()
     } catch { Warn "${Central}:$Port not reachable: $($_.Exception.Message)" }
+    }
 
     Step '3/7 Programs (Fluent Bit / windows_exporter)'
     New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir, (Join-Path $DataDir 'buffer'), $TextDir | Out-Null
     $FluentExe = Join-Path $InstallDir 'bin\fluent-bit.exe'
-    $zip = Find-File @('fluent-bit-*-win64.zip') $null
-    if (-not $zip -and -not (Test-Path -LiteralPath $FluentExe)) {
+    $zip = $null
+    if ($Pull) {
+        if (Get-Service $Svc -ErrorAction SilentlyContinue) { Stop-Svc $Svc; & sc.exe delete $Svc | Out-Null; Info 'pull mode - removed service cm-agent (push)' }
+    } else { $zip = Find-File @('fluent-bit-*-win64.zip') $null }
+    if (-not $Pull -and -not $zip -and -not (Test-Path -LiteralPath $FluentExe)) {
         $zip = Try-Download 'https://packages.fluentbit.io/windows/fluent-bit-5.1.5-win64.zip' (Join-Path $env:TEMP 'fluent-bit-5.1.5-win64.zip')
     }
     Stop-Svc $Svc
@@ -179,6 +195,8 @@ try {
         Copy-Item -Path (Join-Path $exe.Directory.Parent.FullName '*') -Destination $InstallDir -Recurse -Force
         Remove-Item $tmp -Recurse -Force
         Ok "Fluent Bit from $(Split-Path -Leaf $zip)"
+    } elseif ($Pull) {
+        Info 'pull mode - Fluent Bit not needed'
     } elseif (Test-Path -LiteralPath $FluentExe) {
         Ok 'Fluent Bit: keep the installed copy'
     } else {
@@ -204,7 +222,9 @@ try {
         Get-ChildItem -LiteralPath $InstallDir -File | Unblock-File -ErrorAction SilentlyContinue
     }
 
-    Step '4/7 windows_exporter (service cm-exporter, 127.0.0.1 only)'
+    $Listen = if ($Pull) { '0.0.0.0' } else { '127.0.0.1' }
+    $UseText = $UseSoftware -or ($Pull -and $UseLogs)
+    Step "4/7 windows_exporter (service cm-exporter, ${Listen}:$ExpPort)"
     if ($UseMetrics) {
         $busy = Get-NetTCPConnection -LocalPort $ExpPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($busy) {
@@ -218,9 +238,9 @@ try {
         foreach ($s in $sets) {
             $set = $s
             if ($UseProc) { $set += ',process' }
-            if ($UseSoftware) { $set += ',textfile' }
+            if ($UseText) { $set += ',textfile' }
             $eargs = @("--collectors.enabled=$set")
-            if ($UseSoftware) { $eargs += "--collector.textfile.directories=`"$TextDir`"" }
+            if ($UseText) { $eargs += "--collector.textfile.directories=`"$TextDir`"" }
             $out = Join-Path $env:TEMP 'cm-exporter-test.out'; $err = Join-Path $env:TEMP 'cm-exporter-test.err'
             Remove-Item $out, $err -ErrorAction SilentlyContinue
             $p = Start-Process -FilePath $ExpExe -ArgumentList ($eargs + '--scrape.stdout') -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
@@ -233,11 +253,20 @@ try {
         }
         if (-not $chosen) { throw "windows_exporter cannot collect on this machine ($why)" }
         $expLog = Join-Path $DataDir 'windows_exporter.log'
-        $bin = "`"$ExpExe`" --web.listen-address=127.0.0.1:$ExpPort " + ($chosen -join ' ') +
+        $bin = "`"$ExpExe`" --web.listen-address=${Listen}:$ExpPort " + ($chosen -join ' ') +
                " --log.file=`"$expLog`" --log.level=warn"
         Set-ServiceBin $ExpSvc $bin 'Central Monitor Exporter (windows_exporter)' 'Machine metrics for Central Monitor (127.0.0.1 only)'
         Start-Service $ExpSvc
         Ok "collectors: $(($chosen[0]) -replace '--collectors.enabled=', '')"
+        $Rule = 'Central Monitor Exporter (pull)'
+        Get-NetFirewallRule -DisplayName $Rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+        if ($Pull) {
+            try {
+                New-NetFirewallRule -DisplayName $Rule -Direction Inbound -Protocol TCP -LocalPort $ExpPort -RemoteAddress $CentralIps `
+                    -Action Allow -Profile Any -ErrorAction Stop | Out-Null
+                Ok "firewall: TCP $ExpPort only from $($CentralIps -join ', ')"
+            } catch { Warn "firewall rule not created ($($_.Exception.Message)) - allow TCP $ExpPort from $($CentralIps -join ', ') yourself" }
+        }
     } else {
         if (Get-Service $ExpSvc -ErrorAction SilentlyContinue) {
             Stop-Svc $ExpSvc; & sc.exe delete $ExpSvc | Out-Null; Info 'Metrics=0 - removed service cm-exporter'
@@ -261,6 +290,38 @@ try {
         Info 'Software=0 - skipped'
     }
 
+    $LogsTask = 'CentralMonitorLogs'
+    if ($Pull -and $UseLogs) {
+        $LogsScript = Join-Path $InstallDir 'cm-logs.ps1'
+        Copy-Item (Join-Path $Here 'cm-logs.ps1') $LogsScript -Force
+        $lc = [ordered]@{ channels = @($Channels -split ',' | Where-Object { $_ }); logs = @($LogPaths) }
+        [IO.File]::WriteAllText((Join-Path $DataDir 'cm-logs.json'), ($lc | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsScript
+        $everyMin = [Math]::Max(1, [int][Math]::Ceiling($EvInt / 60))
+        $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$LogsScript`""
+        $trg = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $everyMin) -RepetitionDuration (New-TimeSpan -Days 3650)
+        $pr  = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -StartWhenAvailable -MultipleInstances IgnoreNew -Priority 7
+        Register-ScheduledTask -TaskName $LogsTask -Action $act -Trigger $trg -Principal $pr -Settings $set -Force | Out-Null
+        Ok "logs: task $LogsTask every $everyMin min -> central reads them with the metrics"
+    } elseif (Get-ScheduledTask -TaskName $LogsTask -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $LogsTask -Confirm:$false
+        Remove-Item (Join-Path $TextDir 'cm_logs.prom') -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($Pull) {
+        & icacls.exe $DataDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+        Step '6/7 Fluent Bit - not used in pull mode'
+        Step '7/7 Check'
+        $ok = $false
+        foreach ($i in 1..10) {
+            try { $wc = New-Object Net.WebClient; $wc.Proxy = $null; if ($wc.DownloadString("http://127.0.0.1:$ExpPort/metrics") -match 'windows_exporter_build_info') { $ok = $true; break } } catch { }
+            Start-Sleep 2
+        }
+        if (-not $ok) { throw "cm-exporter does not answer on port $ExpPort" }
+        $ips = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | Select-Object -ExpandProperty IPAddress)
+        Ok "cm-exporter answers on ${Listen}:$ExpPort (this machine: $($ips -join ', '))"
+    } else {
     Step '6/7 Fluent Bit config'
     $CaDest = Join-Path $DataDir 'central-ca.pem'
     $skip = Flag $cfg 'SkipCertCheck'
@@ -336,6 +397,7 @@ try {
     Ok 'service cm-agent running'
     if (Test-Path $agentLog) {
         Select-String -Path $agentLog -Pattern '\[error\]' -ErrorAction SilentlyContinue | Select-Object -Last 3 | ForEach-Object { Warn $_.Line }
+    }
     }
 } catch {
     $exitCode = 1

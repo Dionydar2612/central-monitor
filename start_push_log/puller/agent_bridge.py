@@ -14,12 +14,17 @@ central-agent-gw เปิดค่าล่าสุดของทุกเค
        inventory = ข้อมูลเครื่อง / โปรแกรมที่ติดตั้ง / พอร์ตที่เปิด จากไฟล์ textfile ของ cm-inventory.ps1
 
 log (Event Log / ไฟล์ log) ไม่ผ่านที่นี่: central-agent-gw ส่งตรงเข้า OpenSearch
+
+โหมด pull (agent.mode: pull): เครื่อง Windows ส่งออกมาไม่ได้ แต่ central เข้าไปได้
+    central อ่าน http://<host>:<exporter_port>/metrics ของเครื่องเองทุก metrics_interval (windows_exporter ฟัง 0.0.0.0
+    + firewall ให้เฉพาะ IP ของ central) แล้วแปลงแบบเดียวกัน · log = cm_log_entry ในหน้าเดียวกัน -> agent_logs.py
 """
 
 import os
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from config import load_config
 
@@ -35,6 +40,40 @@ _last_error = ""
 
 def is_agent(t):
     return isinstance(t, dict) and str(t.get("type") or "ssh") == "agent"
+
+
+def is_pull(t):
+    a = t.get("agent") if isinstance(t.get("agent"), dict) else {}
+    return str(a.get("mode") or "push") == "pull"
+
+
+def pull_url(t):
+    a = t.get("agent") if isinstance(t.get("agent"), dict) else {}
+    host = str(t.get("host") or "").strip()
+    try:
+        port = int(a.get("exporter_port") or 9182)
+    except (TypeError, ValueError):
+        port = 9182
+    if not host:
+        return None
+    return f"http://[{host}]:{port}/metrics" if ":" in host else f"http://{host}:{port}/metrics"
+
+
+def fetch_pull(url, timeout=10, max_bytes=16 * 1048576):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))      # วงภายใน ไม่ผ่าน proxy
+    with opener.open(urllib.request.Request(url, headers={"Accept": "text/plain"}), timeout=timeout) as r:
+        return r.read(max_bytes).decode("utf-8", "replace")
+
+
+def parse_plain(text):
+    """หน้า /metrics ของ windows_exporter ตรง ๆ (ไม่มี cm_web) -> [(ชื่อ, labels, ค่า)] · ข้าม cm_log_entry (log)"""
+    from prometheus_client.parser import text_string_to_metric_families
+    lines = [ln for ln in text.splitlines() if not ln.startswith("cm_log_entry")]
+    out = []
+    for fam in text_string_to_metric_families("\n".join(lines) + "\n"):
+        for s in fam.samples:
+            out.append((s.name, s.labels, s.value))
+    return out
 
 
 def agent_settings(t):
@@ -114,6 +153,7 @@ class AgentState:
         self.history_at = 0.0
         self.snap_at = 0.0
         self.stale_after = 120
+        self.pulled_at = 0.0
 
     # --- รอบอ่านค่า ---
     def feed(self, samples, now):
@@ -407,15 +447,42 @@ def status(name):
     st = _states.get(name)
     if not st:
         return None
-    return {"last_seen": st.last_seen or None, "stale_after": st.stale_after, "last_error": st.last_error or _last_error}
+    pull = is_pull(st.target)
+    return {"last_seen": st.last_seen or None, "stale_after": st.stale_after, "mode": "pull" if pull else "push",
+            "url": pull_url(st.target) if pull else None,
+            "last_error": st.last_error or ("" if pull else _last_error)}
 
 
-def run_once(text=None, config=None, now=None):
-    """อ่าน gateway 1 รอบ (text = ข้อความ exposition สำหรับ tests)"""
+def _pull_one(st, t, config, now, fetch):
+    url = pull_url(t)
+    if not url:
+        st.last_error = "no host"
+        return
+    try:
+        text = fetch(url)
+    except Exception as e:  # noqa: BLE001
+        st.last_error = f"{url}: {getattr(e, 'reason', None) or e}"
+        return
+    st.last_error = ""
+    st.feed(parse_plain(text), now)
+    st.last_seen = now
+    st.metrics.ok_at = now
+    try:
+        import agent_logs
+        agent_logs.store(config, t["name"], text)
+    except Exception as e:  # noqa: BLE001
+        print(f"[AGENT PULL] {t['name']} logs: {e!r}")
+
+
+def run_once(text=None, config=None, now=None, fetch=None):
+    """อ่าน gateway 1 รอบ + เครื่องโหมด pull ที่ถึงรอบ (text = ข้อความของ gateway สำหรับ tests)"""
     global _last_error
     now = now or time.time()
     config = config or load_config()
     targets = {t["name"]: t for t in config.get("targets") or [] if is_agent(t) and t.get("name")}
+    pulls = {n: t for n, t in targets.items() if is_pull(t)}
+    if text is None and len(pulls) == len(targets):
+        text = ""                                   # ไม่มีเครื่องโหมด push -> ไม่ต้องอ่าน gateway
     if text is None:
         try:
             with urllib.request.urlopen(GW_URL, timeout=10) as r:
@@ -434,8 +501,16 @@ def run_once(text=None, config=None, now=None):
             s = agent_settings(t)
             st.stale_after = max(120, 3 * max(s["heartbeat_interval"], s["metrics_interval"]) + 30)
             _states[name] = st
-            if name in data:
+            if name in data and name not in pulls:
                 st.feed(data[name], now)
+    due = [(st, pulls[n]) for n, st in list(_states.items())
+           if n in pulls and not pulls[n].get("paused") and now - st.pulled_at >= agent_settings(pulls[n])["metrics_interval"] - 1]
+    for st, _ in due:
+        st.pulled_at = now
+    if due:
+        with ThreadPoolExecutor(max_workers=min(8, len(due))) as pool:
+            for st, t in due:
+                pool.submit(_pull_one, st, t, config, now, fetch or fetch_pull)
     return _states
 
 

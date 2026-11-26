@@ -569,8 +569,13 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         if is_agent:
             import agent_bridge
             st = agent_bridge.status(name) or {}
-            msg = ("cm-agent is not sending data" + (f" (last seen {(time.time() - st['last_seen']) / 60:.0f} min ago)" if st.get("last_seen") else
-                   " yet (not installed, port 4318 blocked, or service cm-agent stopped)") + (f" · {st['last_error']}" if st.get("last_error") else ""))
+            ago = f" (last data {(time.time() - st['last_seen']) / 60:.0f} min ago)" if st.get("last_seen") else ""
+            if st.get("mode") == "pull":
+                msg = (f"central cannot read cm-exporter {st.get('url') or ''}{ago}"
+                       + ("" if ago else " (not installed, firewall / port blocked, or service cm-exporter stopped)"))
+            else:
+                msg = "cm-agent is not sending data" + (ago or " yet (not installed, port 4318 blocked, or service cm-agent stopped)")
+            msg += f" · {st['last_error']}" if st.get("last_error") else ""
         elif is_win:
             st = windows_status(name)
             msg = ("WinRM: " + (st or {}).get("last_error", "")) if (st or {}).get("last_error") else \
@@ -656,8 +661,10 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         st = agent_bridge.status(name) or {}
         if st.get("last_seen"):
             age = time.time() - st["last_seen"]
-            add("logpull", "logpull", "cm-agent heartbeat", "ok" if age < st.get("stale_after", 120) else "warning", age / 60, unit="min",
-                message=f"last data from cm-agent {age / 60:.0f} min ago")
+            add("logpull", "logpull", "cm-agent " + ("pull" if st.get("mode") == "pull" else "heartbeat"),
+                "ok" if age < st.get("stale_after", 120) else "warning", age / 60, unit="min",
+                message=(f"central read cm-exporter {age / 60:.0f} min ago" if st.get("mode") == "pull"
+                         else f"last data from cm-agent {age / 60:.0f} min ago"))
         return out
     if is_win:
         st = windows_status(name) or {}

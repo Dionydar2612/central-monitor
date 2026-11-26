@@ -1750,6 +1750,7 @@ button.ovst{border:0;font:inherit;cursor:pointer}button.ovst:hover{filter:bright
 #formCard[data-type="winrm"] .ssh-only,#formCard[data-type="agent"] .ssh-only{display:none!important}
 #formCard:not([data-type="winrm"]) .win-only{display:none!important}
 #formCard:not([data-type="agent"]) .agent-only{display:none!important}
+#formCard[data-agmode="pull"] .ag-push,#formCard:not([data-agmode="pull"]) .ag-pull{display:none!important}
 #formCard:not([data-type="winrm"]):not([data-type="agent"]) .wl-only{display:none!important}
 
 /* NTP Monitor (ntp.html) */

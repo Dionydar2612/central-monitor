@@ -96,7 +96,7 @@ function renderTable() {
             const feats = ["metrics", "logs", "software", "processes"].filter(k => f[k]).join(" · ");
             tb.append(el("tr", {},
                 el("td", {}, el("b", {}, t.name)),
-                el("td", {}, "Windows (cm-agent)"),
+                el("td", {}, `Windows (cm-agent · ${a.mode === "pull" ? "pull" : "push"})`),
                 el("td", {}, t.group || "-"),
                 el("td", {}, t.host || "-"),
                 el("td", { class: "st-mut", title: feats }, `ทุก ${a.metrics_interval || 60}s`),
@@ -496,6 +496,9 @@ function agentFill(t) {
     AG_FEAT.forEach(k => { $("ag_f_" + k).checked = !!((a.features || d.features)[k]); });
     $("ag_evlogs").value = (a.event_logs || d.event_logs).join(", ");
     $("ag_port").value = a.port || 4318;
+    $("ag_mode").value = a.mode === "pull" ? "pull" : "push";
+    $("ag_exporter_port").value = a.exporter_port || 9182;
+    agentMode();
     $("ag_central").value = a.central || "";
     $("ag_skip_cert").checked = !!a.skip_cert;
     const on = !!(t && t.type === "agent");
@@ -507,12 +510,27 @@ function agentRead() {
     return { ...Object.fromEntries(AG_INT.map(k => [k, $("ag_" + k).value.trim()])),
              features: Object.fromEntries(AG_FEAT.map(k => [k, $("ag_f_" + k).checked])),
              event_logs: $("ag_evlogs").value.split(",").map(x => x.trim()).filter(Boolean),
-             port: $("ag_port").value.trim() || 4318, central: $("ag_central").value.trim(), skip_cert: $("ag_skip_cert").checked };
+             port: $("ag_port").value.trim() || 4318, central: $("ag_central").value.trim(), skip_cert: $("ag_skip_cert").checked,
+             mode: $("ag_mode").value, exporter_port: $("ag_exporter_port").value.trim() || 9182 };
+}
+function agentMode() {
+    const pull = $("ag_mode").value === "pull";
+    $("formCard").dataset.agmode = pull ? "pull" : "push";
+    $("ag_mode_hint").textContent = pull
+        ? "ติดตั้งเฉพาะ windows_exporter (ฟัง 0.0.0.0 + firewall เฉพาะ IP central) ไม่มี Fluent Bit / token · log อ่านพร้อม metrics ทุกรอบ"
+        : "Fluent Bit ส่ง metrics / log มาที่ central เอง (เครื่องต้องต่อพอร์ต 4318 ของ central ได้)";
+    if (pull) $("ag_f_metrics").checked = true;
+    $("ag_f_metrics").disabled = pull;
 }
 async function agentReady() {
     const box = $("ag_ready");
     if (!S.agentInfo) { try { S.agentInfo = await api("GET", "/api/agent-info"); } catch (e) { box.textContent = ""; return; } }
     const i = S.agentInfo, b = i.bins || {};
+    if ($("ag_mode").value === "pull") {
+        box.innerHTML = `โหมด pull: central ต้องต่อเข้าเครื่องที่พอร์ต windows_exporter ได้ (ไม่ใช้ token / พอร์ต 4318)<br>`
+            + `windows_exporter ใน <code>data/agent-bin</code>: ${b.windows_exporter ? "✓ " + esc(b.windows_exporter.file) : "✗ ไม่มี (เครื่อง Windows จะดาวน์โหลดเอง)"}`;
+        return;
+    }
     const fb = b.fluent_bit ? `✓ ${b.fluent_bit.file}` : "✗ ไม่มี (เครื่อง Windows จะดาวน์โหลดเองจากอินเทอร์เน็ต)";
     const we = b.windows_exporter ? `✓ ${b.windows_exporter.file}` : "✗ ไม่มี (เครื่อง Windows จะดาวน์โหลดเองจากอินเทอร์เน็ต)";
     box.innerHTML = `central: token ${i.token ? "✓" : "✗ (รัน cm-update)"} · ใบรับรอง ${i.ca ? "✓" : "✗ (รัน cm-update)"}<br>`
@@ -1195,6 +1213,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("ai_go").onclick = () => agentJob("install");
     $("au_go").onclick = () => agentJob("uninstall");
     $("ag_download").onclick = agentDownload;
+    $("ag_mode").onchange = () => { agentMode(); agentReady(); };
     $("w_scan").onclick = scanCert;
     $("w_test").onclick = testWinrm;
     $("w_download").onclick = downloadSetup;

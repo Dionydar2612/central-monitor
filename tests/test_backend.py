@@ -94,6 +94,15 @@ class Backend(unittest.TestCase):
             self.assertIn("CentralIP=auto", req["config"])
             self.assertIn("windows_exporter-0.32.1-amd64.exe", req["files_b64"])
             self.assertIsNone(targets_service.agent_install_request("nope", {}))
+            # โหมด pull: ไม่ต้องมี token / ใบรับรอง · config บอก Mode / ExporterPort
+            r = c.put("/api/targets/ag-01", json={**body, "agent": {**body["agent"], "mode": "pull", "exporter_port": 9300}})
+            self.assertLess(r.status_code, 300, r.json)
+            os.environ.pop("CENTRAL_AGENT_TOKEN", None)
+            req = targets_service.agent_install_request("ag-01", {"admin_user": "Administrator", "admin_password": "x", "admin_port": 5985})
+            self.assertIn("Mode=pull", req["config"])
+            self.assertIn("ExporterPort=9300", req["config"])
+            self.assertIn("cm-logs.ps1", req["files_b64"])
+            self.assertIn("/win/ag-01", open(os.path.join(self.tmp, "web-nodes.json")).read())
         finally:
             os.environ.pop("CENTRAL_AGENT_TOKEN", None)
         self.assertEqual(c.delete("/api/targets/ag-01").status_code, 200)

@@ -1,7 +1,7 @@
 # =====================================================================
 # uninstall-cm-agent.ps1 - remove Central Monitor cm-agent from this machine
 # Run it through uninstall-cm-agent.bat, or let central remove it from the web page.
-# Removes: services cm-agent + cm-exporter, task CentralMonitorInventory,
+# Removes: services cm-agent + cm-exporter, tasks CentralMonitorInventory / CentralMonitorLogs, pull firewall rule,
 #          %ProgramFiles%\central-monitor-agent, %ProgramData%\central-monitor-agent
 # Does not touch the agentless (WinRM / cm-monitor) setup or any other program. ASCII only.
 # =====================================================================
@@ -29,6 +29,7 @@ foreach ($t in @('CentralMonitorInventory', 'CentralMonitorProbe', 'CentralMonit
         Say "[ OK ] removed task $t" 'Green'
     }
 }
+Get-NetFirewallRule -DisplayName 'Central Monitor Exporter (pull)' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
 Start-Sleep 2
 foreach ($d in @((Join-Path $env:ProgramFiles 'central-monitor-agent'), (Join-Path $env:ProgramData 'central-monitor-agent'))) {
     if (Test-Path -LiteralPath $d) {

@@ -12,6 +12,16 @@ cm-agent (Fluent Bit) ──HTTPS :4318 + token──▶ central-agent-gw ──
 task CentralMonitorInventory (Software) ทุก InventoryMinutes
 ```
 
+## 2 วิธีรับข้อมูล (เลือกในหน้า Settings > การเชื่อมต่อ > วิธีรับข้อมูล)
+
+| | push (ปริยาย) | pull |
+|---|---|---|
+| ใช้เมื่อ | เครื่อง Windows ต่อไปหา central :4318 ได้ | เครื่องต่อหา central ไม่ได้ (firewall ระหว่างวง) แต่ central ต่อเข้าเครื่องได้ |
+| บนเครื่อง | cm-agent (Fluent Bit) + cm-exporter (127.0.0.1) | cm-exporter อย่างเดียว ฟัง 0.0.0.0:9182 + firewall เปิดให้เฉพาะ IP ของ central |
+| token / ใบรับรอง | ใช้ | ไม่ใช้ |
+| log | Fluent Bit ส่งเข้า OpenSearch ทันที | task CentralMonitorLogs (cm-logs.ps1) ทุก EventInterval (อย่างน้อย 1 นาที) เขียนลง textfile · central อ่านพร้อม metrics ทุก MetricsInterval |
+| สถานะ Down | ไม่มี heartbeat ~3 รอบ | central อ่าน http://<host>:9182/metrics ไม่ได้ ~3 รอบ |
+
 - **ไม่สร้าง user ใหม่**: service `cm-agent` / `cm-exporter` และ task รันด้วย LocalSystem
 - หน้าเว็บเหมือนเครื่อง Linux / WinRM: Performance / Bottleneck / Hardware / System / Alerts + แท็บ **Software** (โปรแกรมที่ติดตั้ง + พอร์ตที่เปิด)
 - เกณฑ์ / sensor / Custom alert rules / การ์ด Teams ใช้ชุดเดียวกัน · availability = heartbeat (ขาด ~3 รอบ = Down)
@@ -54,4 +64,5 @@ task CentralMonitorInventory (Software) ทุก InventoryMinutes
 ## ตรวจปัญหา
 
 - บนเครื่อง: `Get-Service cm-agent, cm-exporter` · log `C:\ProgramData\central-monitor-agent\fluent-bit.log`
+- pull: จาก central `docker exec central-puller wget -qO- http://<IP เครื่อง>:9182/metrics | head` ต้องได้ข้อมูล
 - central: `docker logs central-agent-gw --tail 50` · `docker exec central-puller wget -qO- http://agent-gw:8889/metrics | grep cm_web | head`

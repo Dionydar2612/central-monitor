@@ -4,6 +4,7 @@
 - ติดตั้ง / อัปเดต / ถอนจากหน้าเว็บผ่าน WinRM (admin ใช้ครั้งเดียว) หรือ zip ดับเบิลคลิก · ไฟล์ Fluent Bit / windows_exporter วางที่ data/agent-bin
 - central-agent-gw (:4318) กลับมา: log -> OpenSearch · metrics -> puller agent_bridge.py แปลงเป็นชื่อแบบ node_exporter (/win/<เครื่อง>) หน้าเว็บ / sensor / กฎ ใช้ร่วมกับเครื่องอื่น
 - แท็บ Software (โปรแกรมที่ติดตั้ง + พอร์ต) สำหรับเครื่อง cm-agent · คู่มือ docs/WINDOWS-AGENT-TH.md
+- โหมด pull กลับมา: central ดึง windows_exporter ของเครื่องเอง (0.0.0.0:9182 + firewall เฉพาะ IP central) ไม่ใช้ token / Fluent Bit · log ผ่าน cm-logs.ps1 (textfile) อ่านพร้อม metrics (agent_logs.py)
 
 ---
 

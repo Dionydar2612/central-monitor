@@ -5,6 +5,10 @@
 # =====================================================================
 
 # --- connection ---
+# Mode = push (this machine sends to central :Port) or pull (central reads this machine :ExporterPort;
+#        use it when this machine cannot reach central but central can reach it - no token needed)
+Mode=push
+ExporterPort=9182
 # Name = machine name in central (a-z 0-9 -) - CentralIP = IP / name of central that this machine can reach
 Name=
 CentralIP=

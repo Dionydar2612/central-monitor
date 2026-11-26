@@ -218,6 +218,35 @@ class AgentBridge(unittest.TestCase):
         st2 = agent_bridge.run_once("", {"targets": []}, now=1100)
         self.assertEqual(st2, {})
 
+    def test_pull_mode(self):
+        """โหมด pull: central อ่าน windows_exporter ของเครื่องเองตามรอบ metrics_interval · log (cm_log_entry) -> agent_logs"""
+        import agent_bridge
+        import agent_logs
+        cfg = {"targets": [{"name": "win-p", "type": "agent", "host": "10.0.0.7",
+                            "agent": {"mode": "pull", "exporter_port": 9300, "metrics_interval": 60}}]}
+        plain = self.text(0, 100, 50, 0, 10).replace('cm_web="win-a",', "").replace('{cm_web="win-a"}', "")
+        plain += 'cm_log_entry{seq="3",type="eventlog",body="2026-11-26T01:00:00Z [ERROR] [System] Disk (Event 7): bad"} 1764118800\n'
+        urls, got = [], []
+        orig = agent_logs.store
+        agent_logs.store = lambda config, name, text, **k: got.append((name, len(agent_logs.parse_entries(text))))
+        try:
+            agent_bridge._states.clear()
+            fetch = lambda u: urls.append(u) or plain                     # noqa: E731
+            st = agent_bridge.run_once(None, cfg, now=2000, fetch=fetch)["win-p"]
+            agent_bridge.run_once(None, cfg, now=2030, fetch=fetch)          # ยังไม่ถึงรอบ -> ไม่อ่านซ้ำ
+            self.assertEqual(urls, ["http://10.0.0.7:9300/metrics"])
+            self.assertEqual(st.last_seen, 2000)
+            self.assertEqual(got, [("win-p", 1)])
+            self.assertEqual(st.inventory["software"][0]["name"], "7-Zip")
+            self.assertEqual(agent_bridge.status("win-p")["mode"], "pull")
+            bad = agent_bridge.run_once(None, cfg, now=2100, fetch=lambda u: (_ for _ in ()).throw(OSError("timed out")))["win-p"]
+            self.assertIn("timed out", bad.last_error)
+            self.assertEqual(bad.last_seen, 2000)
+        finally:
+            agent_logs.store = orig
+        self.assertEqual(agent_logs.new_entries(agent_logs.parse_entries(plain), 2)[0][0]["seq"], 3)
+        self.assertEqual(agent_logs.new_entries(agent_logs.parse_entries(plain), 3)[0], [])
+
 
 class TimeSync(unittest.TestCase):
     """sensor Time sync (NTP): ไม่ sync = Error · คลาดเกินเกณฑ์ = Warning / Error · ไม่มีค่า = ไม่สร้าง sensor"""
