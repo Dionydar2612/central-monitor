@@ -135,6 +135,7 @@ class NodeMetrics:
         self.gauges = {}
         self.prev_t = None
         self.raw = {}              # ค่าสะสมล่าสุดจากเครื่อง (_cum)
+        self.max_gap = 300         # ช่วงห่างสูงสุดที่ยังสะสมค่าอัตรา x เวลา (cm-agent ตั้งตาม metrics_interval)
         self.load = [None, None, None]
         self.ok_at = 0.0
         self.info = {}             # จาก inventory
@@ -169,7 +170,7 @@ class NodeMetrics:
             vals[(row.get("k"), row.get("i") or "")] = row.get("v")
         v = lambda k, i="": vals.get((k, i))          # noqa: E731
         dt = (now - self.prev_t) if self.prev_t else 0.0
-        integrate = 0 < dt <= 300                     # ช่องว่างนาน (ติดต่อไม่ได้) ไม่สะสมย้อนหลัง
+        integrate = 0 < dt <= self.max_gap            # ช่องว่างนาน (ติดต่อไม่ได้) ไม่สะสมย้อนหลัง
         g = {}
         with self.lock:
             # --- CPU ---

@@ -30,6 +30,7 @@ from config import load_config
 
 GW_URL = os.environ.get("CENTRAL_AGENT_GW_METRICS", "http://agent-gw:8889/metrics")
 POLL = 15
+PULL_MAX = 60
 SNAPSHOT_EVERY = 300
 MIB = 1048576
 
@@ -86,7 +87,9 @@ def agent_settings(t):
         mi = max(15, min(int(a.get("metrics_interval") or 60), 600))
     except (TypeError, ValueError):
         mi = 60
-    return {"heartbeat_interval": hb, "metrics_interval": mi}
+    # โหมด pull: central อ่านหน้า /metrics เองไม่เกินทุก PULL_MAX วิ (อ่าน 1 หน้าเบามาก) เพราะ sensor / กราฟใช้ rate(...[5m])
+    # อ่านห่างกว่านี้ (เช่น 600 วิ) = ในช่วง 5 นาทีไม่มีค่าใหม่ -> CPU idle ไม่เพิ่ม -> CPU 100% ปลอม
+    return {"heartbeat_interval": hb, "metrics_interval": mi, "pull_interval": min(mi, PULL_MAX)}
 
 
 # ---------------------------------------------------------------------------
@@ -224,10 +227,18 @@ class AgentState:
         # CPU: สัดส่วนเวลาที่ไม่ idle ต่อ core
         cores = sorted({k[1] for k in cur if k[0] == "cpu"}, key=_core_key)
         tot_busy = tot_all = tot_user = tot_priv = 0.0
+        times = []
         for idx, core in enumerate(cores):
+            # CPU time สะสมจริงจาก windows_exporter -> node_cpu_seconds_total ตรง ๆ (ไม่ขึ้นกับช่วงห่างของการอ่าน)
+            raw = {mode: cur.get(("cpu", core, mode)) for mode in ("idle",) + CPU_BUSY}
+            if raw["idle"] is not None:
+                g = lambda m: raw.get(m) or 0.0          # noqa: E731  รุ่นที่ไม่มีบาง mode = 0
+                times.append({"i": idx, "idle": g("idle"), "user": g("user"), "irq": g("interrupt"), "softirq": g("dpc"),
+                              "system": max(0.0, g("privileged") - g("interrupt") - g("dpc"))})
             dm = {mode: d(("cpu", core, mode)) for mode in ("idle",) + CPU_BUSY}
-            if any(v is None for v in dm.values()):
+            if dm["idle"] is None:
                 continue
+            dm = {k: (v or 0.0) for k, v in dm.items()}
             allt = sum(dm.values())
             if allt <= 0:
                 continue
@@ -306,7 +317,7 @@ class AgentState:
                 drives.append({"drive": vol, "size_gb": size / 1073741824, "free_gb": (frees.get(vol) or 0) / 1073741824})
         host = (ix.label_one("windows_cs_hostname").get("hostname") or self.target_name)
         build = ix.label_one("windows_exporter_build_info").get("version") or ""
-        return {"values": vals, "mem_total_mb": total / MIB if total else None, "drives": drives, "host": host,
+        return {"values": vals, "cpu_times": times, "mem_total_mb": total / MIB if total else None, "drives": drives, "host": host,
                 "v": f"agent {build}".strip(), "self": {}}
 
     # --- service / process / inventory ---
@@ -499,12 +510,14 @@ def run_once(text=None, config=None, now=None, fetch=None):
             st = _states.get(name) or AgentState(name)
             st.target, st.config = t, config
             s = agent_settings(t)
-            st.stale_after = max(120, 3 * max(s["heartbeat_interval"], s["metrics_interval"]) + 30)
+            every = s["pull_interval"] if is_pull(t) else s["metrics_interval"]
+            st.stale_after = max(120, 3 * (every if is_pull(t) else max(s["heartbeat_interval"], every)) + 30)
+            st.metrics.max_gap = max(300, 3 * every)
             _states[name] = st
             if name in data and name not in pulls:
                 st.feed(data[name], now)
     due = [(st, pulls[n]) for n, st in list(_states.items())
-           if n in pulls and not pulls[n].get("paused") and now - st.pulled_at >= agent_settings(pulls[n])["metrics_interval"] - 1]
+           if n in pulls and not pulls[n].get("paused") and now - st.pulled_at >= agent_settings(pulls[n])["pull_interval"] - 1]
     for st, _ in due:
         st.pulled_at = now
     if due:

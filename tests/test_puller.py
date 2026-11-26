@@ -248,6 +248,29 @@ class AgentBridge(unittest.TestCase):
         self.assertEqual(agent_logs.new_entries(agent_logs.parse_entries(plain), 3)[0], [])
 
 
+class AgentSlowInterval(unittest.TestCase):
+    def test_pull_every_600s_still_gives_real_cpu(self):
+        """cm-agent pull ตั้ง metrics_interval 600: เดิม CPU ค้าง 100% (ห่างเกิน 300 วิไม่สะสม + rate[5m] ไม่มีค่าใหม่)
+        -> อ่านจริงไม่เกินทุก 60 วิ + ใช้ CPU time สะสมจาก windows_exporter ตรง ๆ · รุ่นที่ไม่มี mode interrupt/dpc ก็ใช้ได้"""
+        import agent_bridge
+        cfg = {"targets": [{"name": "win-s", "type": "agent", "host": "10.0.0.8",
+                            "agent": {"mode": "pull", "metrics_interval": 600}}]}
+        def page(idle, user):
+            return "".join(f'windows_cpu_time_total{{core="0,{c}",mode="{m}"}} {v}\n'
+                           for c in (0, 1) for m, v in (("idle", idle), ("user", user), ("privileged", 5)))
+        state = {"idle": 1000.0, "user": 100.0}
+        agent_bridge._states.clear()
+        fetch = lambda u: page(state["idle"], state["user"])            # noqa: E731
+        st = agent_bridge.run_once(None, cfg, now=5000, fetch=fetch)["win-s"]
+        state.update(idle=1054.0, user=106.0)
+        agent_bridge.run_once(None, cfg, now=5060, fetch=fetch)          # 60 วิต่อมา อ่านแล้ว (ไม่รอ 600)
+        c = st.metrics.counters
+        idle = {dict(k[1])["cpu"]: v for k, v in c.items() if k[0] == "node_cpu_seconds_total" and dict(k[1])["mode"] == "idle"}
+        self.assertEqual(idle, {"0": 54.0, "1": 54.0})                   # 2 core, idle 90%
+        self.assertGreaterEqual(st.metrics.max_gap, 300)
+        self.assertEqual(agent_bridge.agent_settings(cfg["targets"][0])["pull_interval"], 60)
+
+
 class TimeSync(unittest.TestCase):
     """sensor Time sync (NTP): ไม่ sync = Error · คลาดเกินเกณฑ์ = Warning / Error · ไม่มีค่า = ไม่สร้าง sensor"""
     def run_case(self, sync, off, prev=None):

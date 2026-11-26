@@ -1,3 +1,12 @@
+# แก้ไข (26 พ.ย. 2026): cm-agent โหมด pull CPU ค้าง 100% (เช่น abc86 ที่ตั้ง metrics_interval 600)
+- สาเหตุ: central อ่าน windows_exporter ทุก 600 วิ แต่ตัวแปลงสะสมค่าเฉพาะช่วงห่าง ≤ 300 วิ -> ค่า CPU (และ disk / network) ไม่เพิ่มเลย
+  -> 100 - idle 0 = 100% · และ sensor ใช้ rate(...[5m]) ถ้าอ่านห่างกว่า 5 นาทีจะมีช่วงที่ไม่มีค่าใหม่เสมอ
+- แก้: โหมด pull อ่านหน้า /metrics จริงไม่เกินทุก 60 วิ (อ่านหน้าเดียว เบามาก) · CPU ใช้ windows_cpu_time_total สะสมตรง ๆ
+  ทุก core (ไม่ประมาณจาก %) · รุ่น windows_exporter ที่ไม่มี mode interrupt / dpc ก็นับ core ได้ครบ · ช่วงสะสมปรับตามรอบที่ตั้ง
+- โหมด push ที่ตั้ง metrics_interval เกิน ~120 วิ ยังมีปัญหา rate[5m] แบบเดียวกัน แนะนำ ≤ 60 วิ
+
+---
+
 # แก้ไข (26 พ.ย. 2026): Windows (WinRM) CPU ขึ้น 100% ตลอด ทั้งที่เครื่องไม่ได้ทำงานหนัก (module 1.1.5)
 - สาเหตุ: CPU ของเครื่อง WinRM คำนวณจาก performance counter "% Processor Time" ที่อ่านผ่านสิทธิ์ cm-monitor ได้ค่าผิด
   (central เห็นแค่ core เดียว และค่า idle ไม่เพิ่มเลย -> 100 - 0 = 100%) · ผลพ่วง: central คิดว่าเครื่อง busy จึงข้ามการเก็บ event / log
