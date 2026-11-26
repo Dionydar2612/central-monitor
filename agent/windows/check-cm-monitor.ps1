@@ -78,14 +78,28 @@ else {
 }
 
 Head 'User'
-$u = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
+# Account= in setup: an existing account is used instead of cm-monitor (manifest.json existing_account / existing_sid)
+$extName = $null
+try {
+    $mj = Get-Content -LiteralPath (Join-Path $DataDir 'manifest.json') -Raw | ConvertFrom-Json
+    if ($mj.created.PSObject.Properties['existing_sid']) {
+        $extName = [string]$mj.created.existing_account
+        $u = [pscustomobject]@{ SID = (New-Object System.Security.Principal.SecurityIdentifier([string]$mj.created.existing_sid)); Enabled = '?'; LastLogon = '?' }
+        $UserName = $extName.Split('\')[-1]
+    }
+} catch { }
+if (-not $extName) { $u = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue }
 if ($null -eq $u) { Bad 'user cm-monitor not found' }
 else {
-    Ok ("user enabled=" + $u.Enabled + "  last logon " + $u.LastLogon)
+    if ($extName) { Ok "existing account $extName (not created by setup, password not managed by setup)" }
+    else { Ok ("user enabled=" + $u.Enabled + "  last logon " + $u.LastLogon) }
     foreach ($g in @(Get-LocalGroup)) {
         $mem = @(Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -eq $u.SID.Value })
         if ($mem.Count -gt 0) {
-            if ($g.SID.Value -eq 'S-1-5-32-544') { Bad "cm-monitor is in Administrators - remove it!" } else { Info ("member of " + $g.Name) }
+            if ($g.SID.Value -eq 'S-1-5-32-544') {
+                if ($extName) { Info "$extName is an administrator - central stores its password: keep central secure (a non-admin account is safer)" }
+                else { Bad "cm-monitor is in Administrators - remove it!" }
+            } else { Info ("member of " + $g.Name) }
         }
     }
 }

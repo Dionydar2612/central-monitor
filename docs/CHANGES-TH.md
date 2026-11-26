@@ -1,3 +1,10 @@
+# เพิ่มเติม (26 พ.ย. 2026): Windows WinRM แบบไม่สร้าง user - ใช้บัญชีที่มีอยู่แล้ว
+- Settings > การเชื่อมต่อ: "บัญชีที่ central ใช้อ่านข้อมูล" = สร้าง cm-monitor (แนะนำ) / ใช้บัญชีที่มีอยู่แล้ว (local หรือ DOMAIN\name + รหัสผ่าน)
+- setup: `Account=` ใน cm-monitor-config.txt -> ไม่สร้าง user, ไม่เปลี่ยนรหัส, ไม่ปิด logon · ให้สิทธิ์อ่านเท่าที่จำเป็น + JEA endpoint เดิม
+- remove: คงบัญชีไว้ เอาออกเฉพาะสิทธิ์ที่ setup เพิ่ม · check-cm-monitor รู้จักบัญชีนี้ · รายละเอียด docs/WINDOWS-TH.md
+
+---
+
 # แก้ไข (26 พ.ย. 2026): cm-agent โหมด pull CPU ค้าง 100% (เช่น abc86 ที่ตั้ง metrics_interval 600)
 - สาเหตุ: central อ่าน windows_exporter ทุก 600 วิ แต่ตัวแปลงสะสมค่าเฉพาะช่วงห่าง ≤ 300 วิ -> ค่า CPU (และ disk / network) ไม่เพิ่มเลย
   -> 100 - idle 0 = 100% · และ sensor ใช้ rate(...[5m]) ถ้าอ่านห่างกว่า 5 นาทีจะมีช่วงที่ไม่มีค่าใหม่เสมอ

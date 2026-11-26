@@ -104,6 +104,13 @@
 <div class="win-only">
 <div class="fsec"><div class="fsec-h">ติดตั้งบนเครื่อง Windows (ครั้งแรกครั้งเดียว · เลือกวิธีใดวิธีหนึ่ง)</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:10px">ติดตั้งแล้วบนเครื่องมี user <code>cm-monitor</code> (ไม่ใช่ admin) + JEA endpoint อ่านอย่างเดียว + WinRM HTTPS ที่รับเฉพาะ IP ของ central · ไม่มี service / scheduled task / ไฟล์ข้อมูล · รหัสผ่านและใบรับรองระบบตั้งให้เอง ไม่ต้องคัดลอก</div>
+<div class="st-grid" style="margin-bottom:6px">
+<div class="st-f"><label for="w_acct">บัญชีที่ central ใช้อ่านข้อมูล</label><select id="w_acct"><option value="new">สร้าง user cm-monitor ใหม่ (แนะนำ · ไม่ใช่ admin)</option><option value="existing">ใช้บัญชีที่มีอยู่แล้ว (ไม่สร้าง user)</option></select></div>
+<div class="st-f" data-f="winrm.user" id="w_xuser_f" hidden><label for="w_xuser">ชื่อบัญชี</label><input id="w_xuser" autocomplete="off" placeholder="svc-monitor  หรือ  DOMAIN\svc-monitor"><div class="st-err"></div></div>
+<div class="st-f" id="w_xpass_f" hidden><label for="w_xpass">รหัสผ่านของบัญชีนี้</label><input id="w_xpass" type="password" autocomplete="new-password"><small>เก็บแบบเข้ารหัสบน central ไม่แสดงกลับ · setup ไม่เปลี่ยนรหัสนี้</small><div class="st-err"></div></div>
+</div>
+<div id="w_xnote" class="st-mut" style="font-size:12.5px;margin-bottom:10px" hidden>บัญชีนี้จะได้สิทธิ์อ่านเพิ่ม (Performance Monitor Users, Event Log Readers, อ่านรายการ service, อ่านโฟลเดอร์ log) และเข้าได้เฉพาะคำสั่งอ่านของ Central Monitor ผ่าน endpoint นี้ ·
+ไม่ปิดการ logon / RDP ของบัญชี · ถอนการติดตั้ง = เอาเฉพาะสิทธิ์ที่เพิ่มออก บัญชียังอยู่ · <b>ถ้าเป็นบัญชี admin</b>: central ต้องเก็บรหัสของ admin ไว้ ถ้า central ถูกเจาะจะเข้าเครื่องได้เต็มสิทธิ์ ควรใช้บัญชีที่ไม่ใช่ admin · กรอกรหัสแล้วกด บันทึก ก่อนติดตั้ง</div>
 <div class="st-h3">วิธีที่ 1: ติดตั้งจากหน้านี้ (ไม่ต้องไปที่เครื่อง)</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:6px">central ใช้บัญชี admin ของเครื่องนั้น <b>ครั้งนี้ครั้งเดียว</b> (ไม่บันทึก) ผ่าน WinRM ที่เครื่องเปิดอยู่ · ใช้ Administrator ของเครื่อง หรือ domain admin (local admin อื่นมักถูก Windows บล็อกทาง network) · ใช้เวลา ~1-3 นาที</div>
 <div class="st-grid">
@@ -129,7 +136,7 @@
 </div></div>
 <div class="fsec"><div class="fsec-h">การเชื่อมต่อ WinRM</div><div class="st-grid">
 <div class="st-f" data-f="winrm.port"><label for="w_port">WinRM HTTPS port</label><input id="w_port" inputmode="numeric" value="5986"><div class="st-err"></div></div>
-<div class="st-f" data-f="winrm.user"><label for="w_user">User (ไม่ใช่ admin)</label><input id="w_user" autocomplete="off" value="cm-monitor"><div class="st-err"></div></div>
+<div class="st-f" hidden><label for="w_user">User</label><input id="w_user" autocomplete="off" value="cm-monitor"></div>
 <div class="st-f" data-f="winrm.event_logs"><label for="w_evlogs">Event log ที่เก็บ (Warning ขึ้นไป)</label><input id="w_evlogs" autocomplete="off" value="System, Application"><small>คั่นด้วย , เช่น System, Application, Microsoft-Windows-TaskScheduler/Operational</small><div class="st-err"></div></div>
 </div>
 <div style="margin-top:8px"><button class="st-btn sm" id="w_test" type="button">ทดสอบการเชื่อมต่อ</button> <span id="w_msg" class="st-msg" role="status"></span></div>

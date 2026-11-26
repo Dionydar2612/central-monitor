@@ -33,6 +33,15 @@ Settings > **+ Add target** > ชนิดเครื่อง *Windows (WinRM 
 เปลี่ยนรหัส: ติดตั้งซ้ำด้วยวิธี 1 (ออกรหัสใหม่ให้) หรือ `reset-password-cm-monitor.bat` แล้วใส่รหัสใน *ตั้งค่าเอง (ขั้นสูง)*
 ถอน: `remove-cm-monitor.bat` · ตรวจ: `check-cm-monitor.bat` (อ่านอย่างเดียว) · รัน setup เองแบบเดิม (ไม่ใช้ zip จากหน้าเว็บ): กรอกรหัส + Thumbprint ที่ setup แสดงใน *ตั้งค่าเอง (ขั้นสูง)*
 
+### ใช้บัญชีที่มีอยู่แล้ว (ไม่สร้าง user cm-monitor)
+
+Settings > Edit เครื่อง > การเชื่อมต่อ > **บัญชีที่ central ใช้อ่านข้อมูล = ใช้บัญชีที่มีอยู่แล้ว** > ใส่ชื่อ (`svc-monitor` หรือ `DOMAIN\svc-monitor`) + รหัสผ่าน > บันทึก > ติดตั้ง (วิธี 1 หรือ 2)
+- setup ไม่สร้าง / ไม่เปลี่ยนรหัส / ไม่ปิด logon ของบัญชีนั้น · ให้แค่สิทธิ์อ่าน (Performance Monitor Users, Event Log Readers, อ่านรายการ service, อ่านโฟลเดอร์ log) + เข้า endpoint CentralMonitor ที่เรียกได้แค่ Get-CM*
+- บันทึกใน manifest ว่าเพิ่มอะไรให้ (`existing_account`, `groups_added`, `scm_ace`, `acl_dirs`) · โฟลเดอร์ที่บัญชีมีสิทธิ์ของตัวเองอยู่แล้วไม่แตะ
+- ถอน (หน้าเว็บ / remove-cm-monitor.bat): เอาเฉพาะสิทธิ์ที่ setup เพิ่มออก **บัญชียังอยู่**
+- เปลี่ยนรหัสของบัญชี (เช่นใน AD) แล้วต้องใส่รหัสใหม่ใน Settings ด้วย
+- **ไม่แนะนำบัญชี admin**: central ต้องเก็บรหัสไว้ ถ้า central ถูกเจาะ ใช้รหัสนั้นเข้าเครื่องได้เต็มสิทธิ์ (ไม่ผ่าน endpoint ของเรา)
+
 ### อัปเดตบนเครื่อง (จากหน้าเว็บ ไม่ต้องไปที่เครื่อง)
 
 เมื่อ central มี module รุ่นใหม่ (หลัง `cm-update --rebuild`) รายการเครื่องใน Settings แสดง `module 1.1.3 · มีรุ่น 1.1.4`

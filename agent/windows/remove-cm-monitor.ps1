@@ -118,6 +118,12 @@ try {
     $userSid = $null
     if ($ours) { $userSid = $u.SID.Value }
     elseif ($null -ne $u) { Warn "user '$UserName' exists but was not created by setup - it is kept (and its permissions)" }
+    # Account= (existing account used instead of cm-monitor): the account is KEPT, only what setup gave it is removed
+    $extSid = $null
+    if ($c.ContainsKey('existing_sid') -and $c['existing_sid']) {
+        $extSid = [string]$c['existing_sid']
+        Info "existing account $($c['existing_account']) is kept - removing only the permissions setup gave it"
+    }
 
     # 1. endpoint first: ends every open cm-monitor session (WinRM restarts once)
     if ($null -ne (Get-PSSessionConfiguration -Name $EpName -ErrorAction SilentlyContinue)) {
@@ -156,6 +162,30 @@ try {
     # 4. firewall rule
     if ($null -ne (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
         Try-Do 'firewall rule removed' { Remove-NetFirewallRule -Name $RuleName }
+    }
+
+    if ($null -ne $extSid) {
+        $dirs = @()
+        if ($c.ContainsKey('acl_dirs') -and $null -ne $c['acl_dirs']) { $dirs = @($c['acl_dirs']) }
+        foreach ($d in $dirs) {
+            if ([System.IO.Directory]::Exists($d)) { Try-Do "read permission removed: $d" { & icacls.exe $d /remove:g "*$extSid" | Out-Null } }
+        }
+        if ($c.ContainsKey('scm_ace') -and $c['scm_ace']) {
+            $scm = Get-ScmSddl
+            $ace = [string]$c['scm_ace']
+            if ($scm -and $scm.Contains($ace)) {
+                $newSd = $scm.Trim().Replace($ace, '')
+                Try-Do 'Service Control Manager permission removed' { $o = & sc.exe sdset scmanager $newSd; if ($LASTEXITCODE -ne 0) { throw "exit $LASTEXITCODE $o" } }
+            }
+        }
+        $ga = @()
+        if ($c.ContainsKey('groups_added') -and $null -ne $c['groups_added']) { $ga = @($c['groups_added']) }
+        foreach ($gs in $ga) {
+            Try-Do "removed from group $gs (added by setup)" {
+                try { Remove-LocalGroupMember -Group (Get-LocalGroup -SID $gs) -Member $extSid -ErrorAction Stop }
+                catch { if ($_.FullyQualifiedErrorId -notlike 'PrincipalNotFound*' -and $_.FullyQualifiedErrorId -notlike 'MemberNotFound*') { throw } }
+            }
+        }
     }
 
     if ($null -ne $userSid) {
@@ -224,6 +254,10 @@ try {
         if (@(Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='" + $userSid + "'") -ErrorAction SilentlyContinue).Count -gt 0) { $leftovers += 'profile of cm-monitor' }
         $scm = Get-ScmSddl
         if ($scm -and $scm.Contains($userSid)) { $leftovers += 'Service Control Manager permission' }
+    }
+    if ($null -ne $extSid -and $c.ContainsKey('scm_ace') -and $c['scm_ace']) {
+        $scm = Get-ScmSddl
+        if ($scm -and $scm.Contains([string]$c['scm_ace'])) { $leftovers += 'Service Control Manager permission' }
     }
     if ($leftovers.Count -eq 0) { Ok 'nothing left' } else { foreach ($x in $leftovers) { Warn "still present: $x" } }
 } catch {

@@ -1546,7 +1546,13 @@ def new_winrm_password():
     return "".join(chars)
 
 
-def windows_config_text(central, log_paths, port=5986, password=""):
+def existing_account(t):
+    """บัญชีที่มีอยู่แล้วบนเครื่อง / domain ที่ตั้งให้ใช้แทนการสร้าง cm-monitor ("" = สร้าง cm-monitor)"""
+    user = str(((t or {}).get("winrm") or {}).get("user") or "").strip()
+    return "" if user.lower() in ("", "cm-monitor") else user
+
+
+def windows_config_text(central, log_paths, port=5986, password="", account=""):
     lines = [
         "# =====================================================================",
         "# Central Monitor - agentless Windows monitoring: settings for setup-cm-monitor.bat",
@@ -1569,7 +1575,11 @@ def windows_config_text(central, log_paths, port=5986, password=""):
         "",
         "# Password of cm-monitor chosen by central (already saved there - nothing to copy).",
         "# setup-cm-monitor.bat removes it from this file after use. Empty = setup makes one and shows it.",
-        f"Password={password}",
+        f"Password={'' if account else password}",
+        "",
+        "# Use an EXISTING account (local name or DOMAIN\\name) instead of creating cm-monitor. Empty = create cm-monitor.",
+        "# Setup never changes its password or logon rights; remove-cm-monitor keeps the account.",
+        f"Account={account}",
         "",
     ]
     return "\r\n".join(lines)
@@ -1583,19 +1593,23 @@ def windows_setup_zip(central, name="", logpaths=None):
         ipaddress.ip_address(central)
     except ValueError as e:
         raise ValidationError({"central": "ใส่ IP ของ central ที่เครื่อง Windows เห็น (เช่น 172.27.2.22)"}) from e
-    port, folders, password = 5986, [], ""
+    port, folders, password, account = 5986, [], "", ""
     if name:
         t = next((x for x in list_targets() if x.get("name") == name and x.get("type") == "winrm"), None)
         if t is None:
             raise ValidationError({"name": "ไม่พบเครื่อง Windows ชื่อนี้"})
         port = int((t.get("winrm") or {}).get("port") or 5986)
         folders = windows_log_folders(t.get("logs"))
+        account = existing_account(t)
         # รหัสของเครื่องนี้ใส่ใน zip เลย -> ดับเบิลคลิกแล้วจบ ไม่ต้องคัดลอกอะไรกลับมา (ใช้รหัสเดิมถ้ามี)
+        # บัญชีที่มีอยู่แล้ว: ไม่ใส่รหัสใน zip (setup ไม่เปลี่ยนรหัสของบัญชีนั้น)
         try:
             password = cm_secrets.get_password(name) or ""
         except cm_secrets.SecretError:
             password = ""
-        if not password:
+        if account:
+            password = ""
+        elif not password:
             password = new_winrm_password()
             cm_secrets.set_password(name, password)
     if logpaths:
@@ -1606,7 +1620,7 @@ def windows_setup_zip(central, name="", logpaths=None):
         for fn in WINDOWS_SETUP_FILES:
             with open(os.path.join(WINDOWS_SETUP_DIR, fn), "rb") as f:
                 z.writestr(f"{top}/{fn}", f.read())
-        z.writestr(f"{top}/cm-monitor-config.txt", windows_config_text(central, folders, port, password).encode("utf-8-sig"))
+        z.writestr(f"{top}/cm-monitor-config.txt", windows_config_text(central, folders, port, password, account).encode("utf-8-sig"))
     return buf.getvalue(), f"{top}.zip"
 
 
@@ -1636,19 +1650,24 @@ def winrm_install_request(name, payload):
         except ValueError:
             errors["central"] = "IP ของ central ไม่ถูกต้อง (เว้นว่าง = ตรวจหาให้เอง)"
     update = _text(payload, "mode") == "update"
-    if update and not cm_secrets.has_password(name):
+    account = existing_account(t)
+    if account and not cm_secrets.has_password(name):
+        errors["winrm.user"] = f"ใส่รหัสผ่านของบัญชี {account} แล้วกด บันทึก ก่อนติดตั้ง (setup ไม่เปลี่ยนรหัสของบัญชีที่มีอยู่)"
+    elif update and not cm_secrets.has_password(name):
         errors["admin_password"] = "เครื่องนี้ยังไม่ได้ติดตั้ง ใช้ปุ่ม \"ติดตั้งให้เครื่องนี้\" ก่อน"
     if errors:
         raise ValidationError(errors)
     files = _setup_files("setup-cm-monitor.ps1", "CentralMonitor.psm1")
-    if update:
+    if update or account:
         # อัปเดต module / ตัวช่วย บนเครื่อง: รหัสของ cm-monitor คงเดิม (setup ไม่แตะรหัสเมื่อไม่มี Password=)
+        # บัญชีที่มีอยู่แล้ว: ใช้รหัสที่ผู้ใช้กรอกไว้ใน Settings
         cm_secrets.clear_pending(name)
         new_pw = ""
     else:
         new_pw = new_winrm_password()
         cm_secrets.set_pending(name, new_pw)      # ใช้จริงเมื่อติดตั้งสำเร็จ (winrm_install_apply)
-    config = windows_config_text(central, windows_log_folders(t.get("logs")), int(t["winrm"].get("port") or 5986), new_pw)
+    config = windows_config_text(central, windows_log_folders(t.get("logs")), int(t["winrm"].get("port") or 5986), new_pw,
+                                 account)
     return {"action": "install", "mode": "update" if update else "install", "name": name, "host": t["host"],
             "port": port, "user": user, "password": pw, "files_b64": files, "config": config}
 

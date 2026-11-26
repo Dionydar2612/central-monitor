@@ -162,6 +162,30 @@ class Backend(unittest.TestCase):
         self.assertIsNone(data["cpu"]["cores"])                        # ไม่รู้ core จริง -> ไม่แสดงเลขผิด
         self.assertEqual(data["cpu"]["logical_processors"], 8)
 
+    def test_windows_existing_account(self):
+        """WinRM แบบไม่สร้าง user: ใช้บัญชีที่มีอยู่ (Account=) · ไม่ส่งรหัสให้ setup · ต้องกรอกรหัสก่อนติดตั้ง"""
+        import zipfile
+        import io as _io
+        import targets_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        body = {"type": "winrm", "name": "win-ex", "host": "10.0.0.19", "group": "TQ/Win", "logs": [],
+                "winrm": {"port": 5986, "user": "TQ\\svc-mon", "event_logs": ["System"]}}
+        self.assertEqual(c.post("/api/targets", json=body).status_code, 201)
+        with self.assertRaises(targets_service.ValidationError) as e:
+            targets_service.winrm_install_request("win-ex", {"admin_user": "Administrator", "admin_password": "x", "admin_port": 5985})
+        self.assertIn("winrm.user", e.exception.fields)
+        r = c.put("/api/targets/win-ex", json={**body, "password": "Existing-Pw-123"})
+        self.assertLess(r.status_code, 300, r.json)
+        req = targets_service.winrm_install_request("win-ex", {"admin_user": "Administrator", "admin_password": "x", "admin_port": 5985})
+        self.assertIn("Account=TQ\\svc-mon", req["config"])
+        self.assertIn("Password=\r\n", req["config"])
+        self.assertEqual(targets_service.cm_secrets.get_password("win-ex"), "Existing-Pw-123")
+        r = c.get("/api/targets/windows-setup.zip?central=172.27.2.22&name=win-ex")
+        cfg = zipfile.ZipFile(_io.BytesIO(r.data)).read("cm-monitor-win-ex/cm-monitor-config.txt").decode("utf-8-sig")
+        self.assertIn("Account=TQ\\svc-mon", cfg)
+        self.assertNotIn("Existing-Pw-123", cfg)
+
     def test_windows_target(self):
         """เครื่อง Windows (type: winrm) จากหน้า Settings: รหัสเก็บแยก (เข้ารหัส) / web-nodes.json / ชุดติดตั้ง"""
         import zipfile

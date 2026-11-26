@@ -17,6 +17,9 @@
 # the existing WinRM HTTP listener / TrustedHosts / other endpoints / other software.
 # It restarts the WinRM service once (a few seconds) to apply the endpoint.
 #
+# Account= in cm-monitor-config.txt (optional): use an EXISTING account (local or DOMAIN\name) instead of creating
+#   cm-monitor. Setup never changes its password, does not deny its logon, and remove-cm-monitor keeps the account
+#   (only the group memberships / permissions setup added are taken away again).
 # Arguments (from the .bat):  resetpw = give cm-monitor a new password
 # ASCII only (Windows PowerShell 5.1 reads files without a BOM as ANSI).
 # =====================================================================
@@ -304,7 +307,7 @@ function Warn([string]$m) { Say "[WARN] $m" 'Yellow'; $script:Warnings++ }
 function Step([string]$m) { Say ''; Say "--- $m" 'Cyan' }
 
 function Read-Config {
-    $cfg = @{ CentralIP = ''; Port = '5986'; LogPaths = ''; DenyLogon = 'yes'; Password = '' }
+    $cfg = @{ CentralIP = ''; Port = '5986'; LogPaths = ''; DenyLogon = 'yes'; Password = ''; Account = '' }
     $path = Join-Path $Here 'cm-monitor-config.txt'
     if (-not (Test-Path -LiteralPath $path)) { throw "cm-monitor-config.txt not found next to the .bat ($path)" }
     foreach ($line in (Get-Content -LiteralPath $path)) {
@@ -400,6 +403,7 @@ function Get-HttpsListener {
 
 # =====================================================================
 $exitCode = 0
+$ExtAcct = ''
 $newPassword = $null
 $pwFromCentral = $false
 $thumb = ''
@@ -511,6 +515,27 @@ try {
     Ok "module signed (certificate $($sign.Thumbprint), trusted on this machine only)"
 
     # ----------------------------------------------------------- user
+    $ExtAcct = ([string]$cfg.Account).Trim()
+    if ($ExtAcct -and $ExtAcct -ne $UserName) {
+        # ------------------------------------------- existing account (not created / not changed by setup)
+        Step "3/8 Existing account $ExtAcct (not created, password not changed)"
+        if ($ExtAcct.StartsWith('.\')) { $ExtAcct = $env:COMPUTERNAME + $ExtAcct.Substring(1) }
+        try {
+            $userSid = (New-Object System.Security.Principal.NTAccount($ExtAcct)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+            $UserName = (New-Object System.Security.Principal.SecurityIdentifier($userSid)).Translate([System.Security.Principal.NTAccount]).Value
+        } catch { throw "Account '$ExtAcct' (Account= in cm-monitor-config.txt) was not found on this machine / domain. Nothing was changed." }
+        if ($userSid -match '^S-1-5-(18|19|20)$' -or $userSid -eq $SID_ADM -or $userSid -match '^S-1-5-32-') {
+            throw "Account '$UserName' is a built-in system account or group - use a normal user account."
+        }
+        if ($cfg.Password) { Info 'Password= is ignored for an existing account (setup never changes its password)' }
+        if ($m.created.ContainsKey('user') -and $m.created['user']) {
+            Warn 'cm-monitor created by an earlier setup still exists - run remove-cm-monitor.bat first if you do not need it'
+        }
+        $m.created['existing_account'] = $UserName
+        $m.created['existing_sid'] = $userSid
+        Ok "account $UserName ($userSid)"
+    } else {
+    $ExtAcct = ''
     Step '3/8 Local user cm-monitor (not an administrator)'
     $u = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
     # Password= in cm-monitor-config.txt: central chose it (download from Settings / install from the web page)
@@ -542,13 +567,17 @@ try {
     }
     $m.created['user'] = $true
     $userSid = (Get-LocalUser -Name $UserName).SID.Value
+    }
     foreach ($gs in @($SID_PERF, $SID_EVT)) {
         $g = Get-LocalGroup -SID $gs
-        $isMember = @(Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -eq $userSid }).Count -gt 0
-        if (-not $isMember) {
-            try { Add-LocalGroupMember -Group $g -Member $UserName -ErrorAction Stop }
-            catch { if ($_.FullyQualifiedErrorId -notlike 'MemberExists*') { throw } }
-        }
+        # added by SID (works for local and domain accounts) - only groups added here are recorded / removed later
+        try {
+            Add-LocalGroupMember -Group $g -Member $userSid -ErrorAction Stop
+            if ($ExtAcct) {
+                $ga = @(); if ($m.created.ContainsKey('groups_added') -and $null -ne $m.created['groups_added']) { $ga = @($m.created['groups_added']) }
+                if ($ga -notcontains $gs) { $m.created['groups_added'] = @($ga + $gs) }
+            }
+        } catch { if ($_.FullyQualifiedErrorId -notlike 'MemberExists*') { throw } }
         Ok "member of $($g.Name)"
     }
     # Service Control Manager: by default a NETWORK logon (WinRM) may only connect, not list services
@@ -572,7 +601,9 @@ try {
         }
     } catch { Warn "could not allow cm-monitor to list services: $($_.Exception.Message)" }
 
-    if ($cfg.DenyLogon -match '^(yes|y|true|1)$') {
+    if ($ExtAcct) {
+        Info 'existing account - logon rights not changed (DenyLogon applies to cm-monitor only)'
+    } elseif ($cfg.DenyLogon -match '^(yes|y|true|1)$') {
         try {
             Set-DenyLogonRights -Sid $userSid -Add $true
             $m.created['deny_logon_sid'] = $userSid
@@ -608,18 +639,27 @@ try {
                    '# folder\  = every file directly in that folder    D:\App\logs\*.log = matching files only',
                    '# Edit LogPaths in cm-monitor-config.txt and run setup-cm-monitor.bat again') + $rules
     [System.IO.File]::WriteAllLines((Join-Path $DataDir 'allowed-paths.txt'), [string[]]$allowText, (New-Object System.Text.UTF8Encoding($true)))
+    $keepAcl = @()
+    if ($m.created.ContainsKey('acl_preexisting') -and $null -ne $m.created['acl_preexisting']) { $keepAcl = @($m.created['acl_preexisting']) }
     $prevAcl = @()
     if ($m.created.ContainsKey('acl_dirs') -and $null -ne $m.created['acl_dirs']) { $prevAcl = @($m.created['acl_dirs']) }
     foreach ($d in $prevAcl) {
         if ($grantDirs -notcontains $d -and [System.IO.Directory]::Exists($d)) {
-            & icacls.exe $d /remove:g "*$userSid" | Out-Null; Info "read permission removed (no longer listed): $d"
+            if ($keepAcl -notcontains $d) { & icacls.exe $d /remove:g "*$userSid" | Out-Null; Info "read permission removed (no longer listed): $d" }
         }
     }
     foreach ($d in $grantDirs) {
+        if ($ExtAcct -and $prevAcl -notcontains $d -and $keepAcl -notcontains $d) {
+            # the account already has its own permission here -> do not touch it now or at removal
+            $own = @((Get-Acl -LiteralPath $d).Access | Where-Object { -not $_.IsInherited -and $(try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $userSid } catch { $false }) })
+            if ($own.Count -gt 0) { $keepAcl += $d; Info "existing permission of $UserName kept: $d"; continue }
+        }
+        if ($keepAcl -contains $d) { Ok "read permission (already had it): $d"; continue }
         & icacls.exe $d /grant "*${userSid}:(OI)(CI)RX" | Out-Null
         if ($LASTEXITCODE -eq 0) { Ok "read permission: $d" } else { Warn "icacls failed on $d (exit $LASTEXITCODE)" }
     }
-    $m.created['acl_dirs'] = @($grantDirs)
+    $m.created['acl_dirs'] = @($grantDirs | Where-Object { $keepAcl -notcontains $_ })
+    if ($keepAcl.Count -gt 0) { $m.created['acl_preexisting'] = @($keepAcl) }
     if ($rules.Count -eq 0) { Info 'LogPaths is empty - no log files can be read (Event Log still works)' }
     Save-Manifest $m
 
@@ -687,7 +727,7 @@ try {
     $pssc = Join-Path $DataDir 'CentralMonitor.pssc'
     Remove-Item -LiteralPath $pssc -Force -ErrorAction SilentlyContinue
     New-PSSessionConfigurationFile -Path $pssc -SessionType RestrictedRemoteServer -LanguageMode NoLanguage -ExecutionPolicy RemoteSigned `
-        -RoleDefinitions @{ ($env:COMPUTERNAME + '\' + $UserName) = @{ RoleCapabilities = 'CentralMonitor' } } `
+        -RoleDefinitions @{ $(if ($ExtAcct) { $UserName } else { $env:COMPUTERNAME + '\' + $UserName }) = @{ RoleCapabilities = 'CentralMonitor' } } `
         -Description 'Central Monitor read-only endpoint'
     if (-not (Test-PSSessionConfigurationFile -Path $pssc)) { throw 'the generated .pssc file is not valid' }
     if ($null -ne (Get-PSSessionConfiguration -Name $EpName -ErrorAction SilentlyContinue)) {
@@ -758,6 +798,8 @@ if ($exitCode -eq 0) {
         & icacls.exe $CredPath /inheritance:r /grant:r "*${SID_ADM}:F" "*${SID_SYS}:F" | Out-Null
         Write-Host "  (also saved to $CredPath - administrators only. DELETE it after copying.)" -ForegroundColor Yellow
         Log 'new password shown on screen and saved to the credential file (not logged)'
+    } elseif ($ExtAcct) {
+        Say '  Password     : (existing account - its own password, enter it in central)'
     } else {
         Say '  Password     : (unchanged)'
     }
@@ -780,7 +822,7 @@ try {
 # result for the web installer (central reads it, then deletes the folder) - no password inside
 try {
     [ordered]@{ ok = ($exitCode -ne 1); exit = $exitCode; error = $errMsg; thumbprint = $thumb; port = $port;
-                warnings = $script:Warnings; computer = $env:COMPUTERNAME; version = $Version } |
+                warnings = $script:Warnings; computer = $env:COMPUTERNAME; version = $Version; account = $UserName } |
         ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $Here 'setup-result.json') -Encoding ASCII
 } catch { }
 exit $exitCode

@@ -396,6 +396,12 @@ function openForm(t) {
     const w = (t && t.winrm) || {};
     $("w_port").value = w.port || 5986;
     $("w_user").value = w.user || "cm-monitor";
+    const ext = !!(w.user && w.user.toLowerCase() !== "cm-monitor");
+    $("w_acct").value = ext ? "existing" : "new";
+    $("w_xuser").value = ext ? w.user : "";
+    $("w_xpass").value = "";
+    $("w_xpass").placeholder = ext && t && t.has_password ? "•••••••• บันทึกไว้แล้ว (เว้นว่าง = ใช้รหัสเดิม)" : "";
+    acctToggle();
     $("w_thumb").value = w.thumbprint || "";
     $("w_evlogs").value = (w.event_logs || ["System", "Application"]).join(", ");
     $("w_pass").value = "";
@@ -473,9 +479,9 @@ function readForm() {
         host: $("f_host").value.trim(),
         type: formType(),
         ...(formType() === "winrm" ? {
-            winrm: { port: $("w_port").value.trim() || 5986, user: $("w_user").value.trim() || "cm-monitor",
+            winrm: { port: $("w_port").value.trim() || 5986, user: winUser(),
                      thumbprint: $("w_thumb").value.trim(), event_logs: $("w_evlogs").value.split(",").map(x => x.trim()).filter(Boolean) },
-            password: $("w_pass").value,
+            password: winPass(),
         } : {}),
         ...(formType() === "agent" ? { agent: agentRead() } : {}),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
@@ -584,8 +590,8 @@ function formType() { return $("f_type") ? $("f_type").value : "ssh"; }
 function applyType() { $("formCard").dataset.type = formType(); }
 
 function winrmBody() {
-    return { host: $("f_host").value.trim(), port: $("w_port").value.trim() || 5986, user: $("w_user").value.trim() || "cm-monitor",
-             password: $("w_pass").value, thumbprint: $("w_thumb").value.trim(), name: S.editing || "" };
+    return { host: $("f_host").value.trim(), port: $("w_port").value.trim() || 5986, user: winUser(),
+             password: winPass(), thumbprint: $("w_thumb").value.trim(), name: S.editing || "" };
 }
 
 async function scanCert() {
@@ -630,10 +636,18 @@ async function ensureSaved() {
         $("formTitle").textContent = `Edit target: ${body.name}`;
         formSave("conn");
     }
-    $("w_pass").value = "";
+    $("w_pass").value = ""; $("w_xpass").value = "";
     try { const d = await api("GET", "/api/targets"); S.targets = d.targets; renderTable(); } catch (e) { /* ignore */ }
     return true;
 }
+
+/* บัญชีที่ central ใช้: สร้าง cm-monitor (ปกติ) หรือบัญชีที่มีอยู่แล้วบนเครื่อง / domain (setup ไม่สร้าง user) */
+function acctToggle() {
+    const ext = $("w_acct").value === "existing";
+    ["w_xuser_f", "w_xpass_f", "w_xnote"].forEach(id => { $(id).hidden = !ext; });
+}
+const winUser = () => $("w_acct").value === "existing" ? ($("w_xuser").value.trim() || "cm-monitor") : "cm-monitor";
+const winPass = () => $("w_acct").value === "existing" ? $("w_xpass").value : $("w_pass").value;
 
 async function downloadSetup() {
     const central = $("w_central").value.trim();
@@ -871,7 +885,7 @@ async function save() {
         else await api("POST", "/api/targets", body);
         const name = S.editing || body.name;
         const dep = body.type !== "ssh" ? null : await deployKey(name);   // null = ไม่ได้กรอกรหัสผ่าน (ข้ามการวาง key)
-        $("w_pass").value = "";
+        $("w_pass").value = ""; $("w_xpass").value = "";
         closeForm(); await loadTargets();
         if (dep && dep.ok) say("listMsg", `บันทึก ${name} แล้ว · ${dep.message}`, "ok");
         else if (dep) say("listMsg", `บันทึก ${name} แล้ว แต่วาง public key ไม่สำเร็จ: ${dep.message} — กด Deploy key ที่แถวของเครื่องนี้เพื่อลองใหม่ หรือวางเองตามคำสั่งในหน้า Edit`, "bad");
@@ -1218,6 +1232,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("w_test").onclick = testWinrm;
     $("w_download").onclick = downloadSetup;
     $("wi_go").onclick = installWin;
+    $("w_acct").onchange = acctToggle;
     $("wup_go").onclick = updateWin;
     $("wu_go").onclick = uninstallWin;
     $("copyCmd").onclick = copySetup;

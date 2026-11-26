@@ -17,3 +17,8 @@ LogPaths=
 # yes = the cm-monitor user cannot log on at the console or by Remote Desktop
 #       (WinRM still works). no = do not change logon rights.
 DenyLogon=yes
+
+# Use an EXISTING account (local name or DOMAIN\name) instead of creating cm-monitor. Empty = create cm-monitor.
+# Setup never changes its password or logon rights; remove-cm-monitor.bat keeps the account
+# (only the permissions setup gave it are removed). Enter its password in central Settings.
+Account=
