@@ -70,7 +70,8 @@
 <div class="st-f" data-f="admin_port"><label for="wi_port">WinRM ที่เครื่องเปิดอยู่</label><select id="wi_port"><option value="5985">5985 (HTTP · เข้ารหัสด้วย NTLM/Kerberos)</option><option value="5986">5986 (HTTPS)</option></select><div class="st-err"></div></div>
 <div class="st-f" data-f="central"><label for="wi_central">IP ของ central ที่เครื่องเห็น</label><input id="wi_central" autocomplete="off" placeholder="เว้นว่าง = ตรวจหาให้เอง"><div class="st-err"></div></div>
 </div>
-<div style="margin-top:8px"><button class="st-btn sm primary" id="wi_go" type="button">ติดตั้งให้เครื่องนี้</button> <span id="wi_msg" class="st-msg" role="status"></span></div>
+<div style="margin-top:8px"><button class="st-btn sm primary" id="wi_go" type="button">ติดตั้งให้เครื่องนี้</button> <button class="st-btn sm" id="wup_go" type="button" hidden title="ส่ง module / ตัวช่วยรุ่นที่มากับ central นี้ไปติดตั้งทับ รหัสของ cm-monitor คงเดิม">อัปเดตบนเครื่อง</button> <span id="wi_msg" class="st-msg" role="status"></span></div>
+<div id="wi_ver" class="st-mut" style="font-size:12.5px;margin-top:6px" hidden></div>
 <pre id="wi_log" class="st-code" hidden style="max-height:220px;overflow:auto;margin-top:8px;font-size:11.5px;white-space:pre-wrap"></pre>
 <div id="wu_box" hidden style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line,#ddd)">
 <div class="st-h3">ถอนการติดตั้งออกจากเครื่องนี้ (ใช้ Admin user / password ด้านบน)</div>

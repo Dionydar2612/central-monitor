@@ -50,6 +50,38 @@ async function loadTargets() {
         S.targets = d.targets; S.publicKey = d.public_key;
         renderTable(); fillGroups(); formRestore();
     } catch (e) { if (e.message !== "auth") say("listMsg", "โหลดรายการไม่สำเร็จ: " + e.message, "bad"); }
+    loadWinVersions();
+}
+
+/* รุ่น module บนเครื่อง Windows แต่ละเครื่อง เทียบกับรุ่นที่มากับ central (ปุ่ม อัปเดตบนเครื่อง) */
+async function loadWinVersions() {
+    if (!(S.targets || []).some(t => t.type === "winrm")) return;
+    try { S.winVer = await api("GET", "/api/targets/winrm-versions"); renderTable(); showWinVersion(); }
+    catch (e) { /* operator ไม่มีสิทธิ์ / puller ไม่ตอบ -> ไม่แสดงรุ่น */ }
+}
+
+function verCmp(a, b) {
+    const x = String(a || "").split(".").map(Number), y = String(b || "").split(".").map(Number);
+    for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; }
+    return 0;
+}
+
+function winVer(name) {
+    const v = S.winVer || {}, have = ((v.targets || {})[name] || {}).module || "", bundled = v.bundled || "";
+    return { have, bundled, old: !!(have && bundled && verCmp(have, bundled) < 0) };
+}
+
+function showWinVersion() {
+    const box = $("wi_ver");
+    if (!box) return;
+    const t = S.targets.find(x => x.name === S.editing);
+    if (!t || t.type !== "winrm" || !S.winVer) { box.hidden = true; return; }
+    const v = winVer(t.name);
+    box.hidden = false;
+    box.textContent = !v.have ? `module บนเครื่อง: ยังไม่ทราบ (ยังไม่ได้เชื่อมต่อ) · รุ่นที่มากับ central นี้ ${v.bundled || "-"}`
+        : v.old ? `module บนเครื่อง ${v.have} · มีรุ่นใหม่ ${v.bundled} → กด "อัปเดตบนเครื่อง" (ใช้ Admin user / password ด้านบนครั้งเดียว ไม่บันทึก)`
+        : `module บนเครื่อง ${v.have} (ล่าสุดแล้ว)`;
+    box.className = v.old ? "wr" : "st-mut";
 }
 
 function renderTable() {
@@ -81,8 +113,10 @@ function renderTable() {
                 el("td", {}, t.host + wp),
                 el("td", {}, t.winrm.user || "-"),
                 el("td", {}, String(t.logs.length) + " + Event log"),
-                el("td", { class: ready ? "ok" : "wr", title: cert || "" }, ready ? "✓ cert + password"
-                    : t.has_password ? "⏳ รอติดตั้ง / เชื่อมต่อครั้งแรก" : "⚠ ยังไม่ได้ติดตั้ง"),
+                el("td", { class: ready ? (winVer(t.name).old ? "wr" : "ok") : "wr", title: cert || "" }, ready ? "✓ cert + password"
+                    : t.has_password ? "⏳ รอติดตั้ง / เชื่อมต่อครั้งแรก" : "⚠ ยังไม่ได้ติดตั้ง",
+                    winVer(t.name).have ? el("div", { class: "st-mut", style: "font-size:11.5px", title: winVer(t.name).old ? "แก้ไข → อัปเดตบนเครื่อง" : "" },
+                        `module ${winVer(t.name).have}${winVer(t.name).old ? ` · มีรุ่น ${winVer(t.name).bundled}` : ""}`) : ""),
                 el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
                 el("td", {}, el("div", { class: "st-actions" }, rowActions(t)))));
             return;
@@ -365,6 +399,7 @@ function openForm(t) {
         : t && t.pinned_thumbprint ? `จำใบรับรองไว้แล้ว: ${t.pinned_thumbprint}` : "เว้นว่าง = จำใบรับรองตอนเชื่อมต่อสำเร็จครั้งแรก";
     $("wi_pass").value = ""; say("wi_msg", ""); $("wi_log").hidden = true; $("wi_log").textContent = "";
     $("wu_box").hidden = !t; $("wu_del").checked = true;
+    $("wup_go").hidden = !(t && t.has_password); showWinVersion();
     $("w_adv").open = !!(t && w.thumbprint && !t.pinned_thumbprint && !t.has_password);
     if (!$("w_central").value) $("w_central").value = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : "";
     say("w_msg", "");
@@ -562,6 +597,38 @@ async function installWin() {
             say("wi_msg", "✗ " + (d.error || "ติดตั้งไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
         }
     } finally { b.disabled = false; }
+}
+
+/* อัปเดต module / ตัวช่วยบนเครื่อง: รัน setup รุ่นที่มากับ central ทับของเดิม (รหัส cm-monitor คงเดิม) */
+async function updateWin() {
+    const name = S.editing;
+    if (!name) return;
+    const body = { ...adminBody(), mode: "update" };
+    if (!body.admin_password) { say("wi_msg", "ใส่ Admin user / password ด้านบนก่อน (ใช้ครั้งเดียว ไม่บันทึก)", "bad"); $("wi_pass").focus(); return; }
+    const v = winVer(name);
+    if (!confirm(`อัปเดต Central Monitor บนเครื่อง ${name}${v.have ? ` (${v.have} → ${v.bundled})` : ""}?\n\n` +
+                 `ติดตั้ง module + ตัวช่วยรุ่นใหม่ทับของเดิม · user / รหัส cm-monitor / ใบรับรอง / firewall คงเดิม\n` +
+                 `WinRM บนเครื่องจะ restart 1 ครั้ง (session ของ WinRM ที่เปิดอยู่จะหลุด) · ใช้เวลา ~1-2 นาที`)) return;
+    const bs = [$("wup_go"), $("wi_go"), $("wu_go")];
+    bs.forEach(b => { b.disabled = true; });
+    try {
+        say("wi_msg", "กำลังเริ่มอัปเดต...", "");
+        try { await api("POST", `/api/targets/${encodeURIComponent(name)}/winrm-install`, body); }
+        catch (e) {
+            if (e.message === "auth") return;
+            say("wi_msg", "เริ่มไม่ได้: " + (showErrors(e.fields) || e.message), "bad");
+            return;
+        } finally { $("wi_pass").value = ""; }
+        const d = await pollJob(name);
+        if (!d) return;
+        if (d.state === "done" && d.ok) {
+            say("wi_msg", `✓ อัปเดตเสร็จบน ${d.computer || name}${d.version ? ` (setup ${d.version})` : ""}` +
+                `${d.warnings ? ` · คำเตือน ${d.warnings} ข้อ ดู log ด้านล่าง` : ""} · central ต่อใหม่ภายใน ~1 นาที`, "ok");
+            setTimeout(loadWinVersions, 45000);
+        } else {
+            say("wi_msg", "✗ " + (d.error || "อัปเดตไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
+        }
+    } finally { bs.forEach(b => { b.disabled = false; }); }
 }
 
 async function uninstallWin() {
@@ -1046,6 +1113,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("w_test").onclick = testWinrm;
     $("w_download").onclick = downloadSetup;
     $("wi_go").onclick = installWin;
+    $("wup_go").onclick = updateWin;
     $("wu_go").onclick = uninstallWin;
     $("copyCmd").onclick = copySetup;
     $("deployBtn").onclick = deployNow;

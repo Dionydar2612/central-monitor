@@ -1277,3 +1277,104 @@ class WindowsMemoryTotal(unittest.TestCase):
         self.assertNotIn("Win32_OperatingSystem", src)
         self.assertNotIn("Win32_Processor", src)
         self.assertEqual(src.count("Get-CimInstance"), 1)          # เหลือเป็นทางสำรองของ RAM เท่านั้น
+
+
+class WindowsInventoryTabs(unittest.TestCase):
+    """แท็บ Services / Task Scheduler / Programs ของเครื่อง Windows (ดึงสดผ่าน session เดิม ไม่เก็บ)"""
+
+    def _worker(self, module, answers):
+        import windows_pull
+        calls = []
+
+        class S:
+            is_open = True
+            def call(self, cmd, params=None):
+                calls.append((cmd, dict(params or {})))
+                return answers[cmd]
+
+        w = windows_pull.Worker("win-tabs")
+        w.configure({"site": {"name": "s"}, "storage": {}, "scheduler": {}},
+                    {"name": "win-tabs", "type": "winrm", "watch_services": ["Spooler"]})
+        w.session = S()
+        w._session = lambda: w.session
+        w.metrics.module = module
+        w.last_metrics = {"mem_total_mb": 1000}
+        windows_pull._workers["win-tabs"] = w
+        self.addCleanup(windows_pull._workers.pop, "win-tabs", None)
+        return w, calls
+
+    def test_services_tasks_programs(self):
+        import windows_ondemand
+        w, calls = self._worker("1.1.4", {
+            "Get-CMServices": {"native": True, "services": [
+                {"name": "Spooler", "display": "Print Spooler", "status": "Stopped", "start": "Automatic",
+                 "path": "C:\\Windows\\System32\\spoolsv.exe", "account": "LocalSystem", "pid": None},
+                {"name": "app", "display": "App", "status": "Running", "start": "Manual", "path": "\"D:\\App\\app.exe\" -s", "pid": 42}]},
+            "Get-CMTasks": {"tasks": [
+                {"path": "\\Backup", "name": "Backup", "last_result": "0x00000001", "last_run": 1700000000, "enabled": True},
+                {"path": "\\New", "name": "New", "last_result": "0x00041303", "last_run": None, "enabled": True}], "denied": 2},
+            "Get-CMProcesses": {"native": True, "self_pid": 7, "processes": [
+                {"pid": 7, "name": "wsmprovhost", "cpu": 0.1, "ws_mb": 50, "path": "C:\\Windows\\System32\\wsmprovhost.exe"},
+                {"pid": 42, "name": "app", "cpu": 12.5, "ws_mb": 100, "path": "D:\\App\\app.exe", "services": ["app"]}]},
+        })
+        t = {"name": "win-tabs", "type": "winrm", "watch_services": ["Spooler"]}
+        sv = windows_ondemand.win_services(t)
+        self.assertEqual(calls[-1], ("Get-CMServices", {"All": True, "Detail": True}))
+        sp = [x for x in sv["services"] if x["name"] == "Spooler"][0]
+        self.assertEqual(sp["state"], "failed")                     # Automatic แต่หยุด
+        self.assertTrue(sp["watched"])
+        self.assertEqual([x for x in sv["services"] if x["name"] == "app"][0]["pid"], 42)
+        tk = windows_ondemand.win_tasks(t, include_ms=True)
+        self.assertEqual(calls[-1], ("Get-CMTasks", {"IncludeMicrosoft": True}))
+        by = {x["name"]: x for x in tk["tasks"]}
+        self.assertEqual(by["Backup"]["result_level"], "bad")
+        self.assertEqual(by["New"]["result_level"], "off")
+        self.assertEqual(tk["denied"], 2)
+        pg = windows_ondemand.win_programs(t)
+        self.assertEqual(calls[-1], ("Get-CMProcesses", {"All": True}))
+        self.assertEqual([x["memory"] for x in pg["processes"]], [5.0, 10.0])
+        self.assertTrue(pg["processes"][0]["self"])
+
+    def test_old_module_asks_for_update_without_calling(self):
+        import windows_ondemand
+        w, calls = self._worker("1.1.3", {})
+        with self.assertRaises(windows_ondemand.NeedUpdate) as e:
+            windows_ondemand.win_tasks({"name": "win-tabs", "type": "winrm"})
+        self.assertIn("1.1.4", str(e.exception))
+        self.assertEqual(calls, [])                                 # ไม่เรียกคำสั่งที่เครื่องรุ่นเก่าไม่มี (session ไม่หลุด)
+
+    def test_task_result_codes(self):
+        import windows_ondemand
+        self.assertEqual(windows_ondemand.task_result("0x00000000", 1)[0], "ok")
+        self.assertEqual(windows_ondemand.task_result("0x00041301", 1)[0], "run")
+        self.assertEqual(windows_ondemand.task_result("0x8004131F", 1)[0], "bad")
+        self.assertEqual(windows_ondemand.task_result("0x00000005", 1)[0], "bad")
+        self.assertEqual(windows_ondemand.task_result(None, None)[0], "off")
+
+    def test_module_and_setup_expose_get_cmtasks(self):
+        d = os.path.join(ROOT, "agent", "windows")
+        mod = open(os.path.join(d, "CentralMonitor.psm1"), encoding="ascii").read()
+        setup = open(os.path.join(d, "setup-cm-monitor.ps1"), encoding="ascii").read()
+        ver = re.search(r"\$script:CMVersion\s*=\s*'([0-9.]+)'", mod).group(1)
+        self.assertIn(f"$Version   = '{ver}'", setup)                 # setup กับ module รุ่นเดียวกัน (ชื่อ DLL ผูกกับรุ่น)
+        self.assertIn("Get-CMTasks", mod.split("Export-ModuleMember", 1)[1])
+        self.assertIn("'Get-CMTasks'", setup)
+        self.assertIn("$NativeSource = @'", setup)
+        self.assertNotIn("Win32_Process'", mod)
+        self.assertNotIn("Win32_Service", mod)
+
+    def test_native_helper_compiles(self):
+        """C# ใน setup-cm-monitor.ps1 (คอมไพล์บนเครื่องด้วย Add-Type) ต้องคอมไพล์ผ่าน (C# 5 ของ .NET Framework)"""
+        import shutil
+        import subprocess
+        mcs = shutil.which("mcs")
+        if not mcs:
+            self.skipTest("mcs (mono) not installed")
+        setup = open(os.path.join(ROOT, "agent", "windows", "setup-cm-monitor.ps1"), encoding="ascii").read()
+        cs = setup.split("$NativeSource = @'", 1)[1].split("\n'@", 1)[0].replace("\r", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "n.cs")
+            open(src, "w").write(cs)
+            r = subprocess.run([mcs, "-target:library", "-langversion:5", "-out:" + os.path.join(tmp, "n.dll"), src],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

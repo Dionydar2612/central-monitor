@@ -27,6 +27,7 @@ ondemand.py - ดึง log ระดับ INFO "สด" จากเครื�
         หน้าเว็บเรียกทุก ~60 วินาทีขณะเปิดหน้า (central-api cache ไว้ 20 วินาที)
 
     GET /winrm-cert?host=&port=  ·  POST /winrm-test  ·  POST /winrm-install + GET /winrm-install-status?name=
+    GET /winrm-status  ·  GET /win-services|/win-tasks|/win-programs?target=  (Windows: ดึงสด ไม่เก็บ)
     (ติดตั้งจากหน้าเว็บ: windows_install.py)  ·  เครื่อง type: winrm -> windows_ondemand.py
     GET /log-check?target=web-01
         -> {"logs":[{name, path, ok, problem, files:[{path, size, mtime, readable}]}], "error"}
@@ -314,7 +315,8 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
 
-        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check", "/winrm-cert", "/winrm-install-status"):
+        if url.path not in ("/info-logs", "/processes", "/rule-preview", "/log-check", "/winrm-cert", "/winrm-install-status",
+                            "/winrm-status", "/win-services", "/win-tasks", "/win-programs"):
             return self._send(404, {"error": "not found"})
 
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
@@ -323,6 +325,8 @@ class _Handler(BaseHTTPRequestHandler):
         params = parse_qs(url.query)
         if url.path == "/winrm-install-status":
             return self._send(200, windows_install.status(params.get("name", [""])[0]))
+        if url.path == "/winrm-status":          # รุ่น module / การเชื่อมต่อของทุกเครื่อง Windows (Settings)
+            return self._send(200, {"targets": windows_pull.all_status()})
         if url.path == "/winrm-cert":
             try:
                 return self._send(200, windows_ondemand.cert(params.get("host", [""])[0].strip(),
@@ -347,6 +351,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": f"{name} เป็นเครื่องแบบ agent (เลิกรองรับแล้ว) ไม่มี SSH"})
         if str(target.get("type") or "ssh") == "winrm":
             return self._windows(url.path, target, params)
+        if url.path.startswith("/win-"):
+            return self._send(400, {"error": f"{name} ไม่ใช่เครื่อง Windows"})
 
         if url.path == "/log-check":
             try:
@@ -384,12 +390,20 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(200, windows_ondemand.log_check(target))
             if path == "/processes":
                 return self._send(200, windows_ondemand.processes(target))
+            if path == "/win-services":
+                return self._send(200, windows_ondemand.win_services(target))
+            if path == "/win-tasks":
+                return self._send(200, windows_ondemand.win_tasks(target, params.get("ms", [""])[0] in ("1", "true")))
+            if path == "/win-programs":
+                return self._send(200, windows_ondemand.win_programs(target))
             try:
                 lines = int(params.get("lines", [DEFAULT_LINES])[0])
             except ValueError:
                 lines = DEFAULT_LINES
             return self._send(200, windows_ondemand.info_logs(target, lines=lines, source=params.get("source", [""])[0] or None,
                                                               start=_num(params, "start"), end=_num(params, "end")))
+        except windows_ondemand.NeedUpdate as e:
+            return self._send(409, {"error": str(e), "need_update": True})
         except Exception as e:
             print(f"[ONDEMAND] {path} target={name} error={e}")
             return self._send(502, {"error": f"WinRM {name}: {e}"})

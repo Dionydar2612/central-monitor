@@ -172,6 +172,37 @@ class Backend(unittest.TestCase):
         self.assertIn("thumbprint: " + "CD" * 20, open(os.path.join(self.tmp, "puller.yaml")).read())
         self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["applied"])   # ถามซ้ำได้
         self.assertEqual(cm_secrets.get_password("win-01"), new_pw)
+        # อัปเดต module บนเครื่องจากหน้าเว็บ: ไม่มี Password= (รหัส cm-monitor คงเดิม) + ทิ้งรหัสที่ค้างจากครั้งก่อน
+        sent.clear()
+        cm_secrets.set_pending("win-01", "stale-pending-pw-123")
+        r = c.post("/api/targets/win-01/winrm-install", json={"admin_user": "Administrator", "admin_password": "Adm!n-pw",
+                                                              "mode": "update"})
+        self.assertEqual(r.status_code, 202, r.json)
+        self.assertEqual(sent["mode"], "update")
+        self.assertIn("Password=\r\n", sent["config"])
+        self.assertEqual(sorted(sent["files_b64"]), ["CentralMonitor.psm1", "setup-cm-monitor.ps1"])
+        self.api.puller_get = lambda path, params, timeout=30: (200, {"state": "done", "ok": True, "thumbprint": "cd" * 20, "port": 5986})
+        self.assertTrue(c.get("/api/targets/win-01/winrm-install").json["applied"])
+        self.assertEqual(cm_secrets.get_password("win-01"), new_pw)                   # ไม่เปลี่ยน
+        # รุ่น module: บนเครื่อง (จาก puller) เทียบกับรุ่นที่มากับ central
+        self.api.puller_get = lambda path, params, timeout=30: (200, {"targets": {"win-01": {"module": "1.1.3", "connected": True}}})
+        v = c.get("/api/targets/winrm-versions").json
+        self.assertRegex(v["bundled"], r"^\d+\.\d+\.\d+$")
+        self.assertEqual(v["targets"]["win-01"]["module"], "1.1.3")
+        # แท็บ Services / Task Scheduler / Programs: ดึงสดผ่าน puller
+        asked = []
+        def fake_get(path, params, timeout=30):
+            asked.append((path, dict(params)))
+            return 200, {"services": [{"name": "Spooler"}]}
+        self.api.puller_get = fake_get
+        r = c.get("/api/host/win-01/win-services")
+        self.assertEqual(r.status_code, 200, r.json)
+        self.assertEqual(asked[-1], ("/win-services", {"target": "win-01"}))
+        c.get("/api/host/win-01/win-tasks?ms=1")
+        self.assertEqual(asked[-1], ("/win-tasks", {"target": "win-01", "ms": "1"}))
+        self.api.puller_get = lambda path, params, timeout=30: (409, {"error": "ต้องใช้ module 1.1.4", "need_update": True})
+        self.assertEqual(c.get("/api/host/win-01/win-programs").status_code, 409)
+        sent.clear()
         # ถอนจากหน้าเว็บ (คงเครื่องไว้): Pause ก่อน -> ตัวถอนรันบนเครื่อง -> สำเร็จ = ลบรหัส คงเครื่องแบบ Pause
         sent.clear()
         r = c.post("/api/targets/win-01/winrm-uninstall", json={"admin_user": "Administrator", "admin_password": "Adm!n-pw",

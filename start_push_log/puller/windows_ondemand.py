@@ -8,6 +8,10 @@ windows_ondemand.py - ปุ่มบนหน้าเว็บสำหรั�
     GET  /processes?target=      (winrm)   CPU ต่อ core + process ที่ใช้ CPU / RAM สูงสุด (วัดสด ไม่เก็บ)
     GET  /info-logs?target=      (winrm)   Event log ระดับ Information + บรรทัด INFO ท้ายไฟล์ log (แสดงอย่างเดียว ไม่เก็บ)
     GET  /log-check?target=      (winrm)   ไฟล์ log ที่ตั้งไว้มีจริง / อยู่ใน allowed-paths.txt ไหม
+    GET  /win-services?target=   (winrm)   Service ทั้งหมด + exe / บัญชีที่รัน / PID / คำอธิบาย          (module 1.1.4+)
+    GET  /win-tasks?target=&ms=1 (winrm)   Task Scheduler (ms=1 รวม task ของ Microsoft)                  (module 1.1.4+)
+    GET  /win-programs?target=   (winrm)   process ทั้งหมด + path ของ exe / คำอธิบาย / service ที่อยู่ในนั้น   (module 1.1.4+)
+    (ทั้งสามอย่างดึงสดเมื่อเปิดแท็บ ไม่เก็บลงดิสก์)
 
 ทุกงานใช้ session เดิมของเครื่อง (windows_pull.Worker.call) ไม่เปิด PowerShell ใหม่บนเครื่องปลายทาง
 ยกเว้น /winrm-test ที่เปิด-ปิด 1 ครั้ง (ยังไม่ได้บันทึกเครื่อง)
@@ -152,3 +156,105 @@ def _ts(text):
         return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# แท็บ Services / Task Scheduler / Programs ของหน้ารายละเอียดเครื่อง (ดึงสด ไม่เก็บ)
+# ---------------------------------------------------------------------------
+NEED_MODULE = "1.1.4"
+
+
+class NeedUpdate(winrm_client.WinRMError):
+    pass
+
+
+def _ver(v):
+    try:
+        return tuple(int(x) for x in str(v).split(".")[:3])
+    except ValueError:
+        return ()
+
+
+def _need(w, what):
+    have = (w.metrics.module or "").strip()
+    if have and _ver(have) < _ver(NEED_MODULE):
+        raise NeedUpdate(f"{what} ต้องใช้ module {NEED_MODULE} ขึ้นไป (เครื่องนี้ {have}) - "
+                         f"อัปเดตได้จาก Settings → แก้ไขเครื่องนี้ → อัปเดตบนเครื่อง (ใช้บัญชี admin ครั้งเดียว)")
+
+
+def win_services(target):
+    w = _worker(target)
+    _need(w, "รายการ Service แบบละเอียด")
+    r = w.call("Get-CMServices", {"All": True, "Detail": True})
+    watch = {str(x).lower() for x in target.get("watch_services") or []}
+    rows = []
+    for x in r.get("services") or []:
+        rows.append({"name": x.get("name"), "display": x.get("display"), "status": x.get("status"),
+                     "state": windows_pull._svc_status(x), "start": x.get("start"), "delayed": bool(x.get("delayed")),
+                     "path": x.get("path") or "", "account": x.get("account") or "", "desc": x.get("desc") or "",
+                     "pid": x.get("pid"), "watched": str(x.get("name") or "").lower() in watch})
+    rows.sort(key=lambda x: (str(x["display"] or x["name"] or "").lower()))
+    return {"time": datetime.now().astimezone().isoformat(), "os": "windows", "native": bool(r.get("native")),
+            "services": rows}
+
+
+# ผล Last Run Result ที่พบบ่อย (ค่าเดียวกับคอลัมน์ใน Task Scheduler)
+TASK_RESULTS = {
+    0x0: ("ok", "สำเร็จ (0x0)"),
+    0x41300: ("ok", "พร้อมรัน"),
+    0x41301: ("run", "กำลังทำงาน"),
+    0x41302: ("off", "ถูกปิดอยู่"),
+    0x41303: ("off", "ยังไม่เคยรัน"),
+    0x41304: ("off", "ไม่มีรอบรันถัดไป"),
+    0x41305: ("bad", "ตั้งค่าไม่ครบ"),
+    0x41306: ("bad", "ถูกหยุดกลางคัน (terminated)"),
+    0x41325: ("run", "อยู่ในคิว"),
+    0x8004131F: ("bad", "รอบก่อนยังทำงานอยู่ (ไม่เริ่มรอบใหม่)"),
+    0x8004130F: ("bad", "ไม่มีรหัสผ่านของบัญชีที่ใช้รัน"),
+    0x800710E0: ("bad", "ถูกปฏิเสธ (operator / administrator refused)"),
+    0x80070002: ("bad", "ไม่พบไฟล์ที่สั่งรัน"),
+    0x80070005: ("bad", "Access denied"),
+    0xC000013A: ("bad", "ถูกยกเลิก (Ctrl+C / ปิดเครื่อง)"),
+    0x1: ("bad", "จบด้วย exit code 1"),
+    0x2: ("bad", "จบด้วย exit code 2 (มักเป็นไม่พบไฟล์)"),
+}
+
+
+def task_result(hex_text, last_run):
+    """'0x00041303' -> (ระดับ ok|run|off|bad, ข้อความ)"""
+    try:
+        code = int(str(hex_text), 16) & 0xFFFFFFFF
+    except (TypeError, ValueError):
+        return ("off", "-")
+    if code in TASK_RESULTS:
+        return TASK_RESULTS[code]
+    if not last_run:
+        return ("off", f"0x{code:X}")
+    return ("bad", f"จบด้วยรหัส 0x{code:X}" + (f" ({code})" if code < 0x10000 else ""))
+
+
+def win_tasks(target, include_ms=False):
+    w = _worker(target)
+    _need(w, "รายการ Task Scheduler")
+    r = w.call("Get-CMTasks", {"IncludeMicrosoft": bool(include_ms)}, wait=40)
+    rows = []
+    for t in r.get("tasks") or []:
+        lvl, text = task_result(t.get("last_result"), t.get("last_run"))
+        rows.append({**t, "result_level": lvl, "result_text": text})
+    rows.sort(key=lambda x: str(x.get("path") or "").lower())
+    return {"time": datetime.now().astimezone().isoformat(), "os": "windows", "tasks": rows,
+            "denied": r.get("denied") or 0, "truncated": bool(r.get("truncated")),
+            "microsoft": bool(include_ms)}
+
+
+def win_programs(target):
+    w = _worker(target)
+    _need(w, "รายการโปรแกรมที่รันอยู่ (exe)")
+    r = w.call("Get-CMProcesses", {"All": True}, wait=40)
+    ram_mb = ((w.last_metrics or {}).get("mem_total_mb") or 0) or 0
+    rows = []
+    for x in r.get("processes") or []:
+        rows.append({**x, "memory": round((x.get("ws_mb") or 0) / ram_mb * 100, 2) if ram_mb else None,
+                     "self": x.get("pid") == r.get("self_pid")})
+    return {"time": datetime.now().astimezone().isoformat(), "os": "windows", "native": bool(r.get("native")),
+            "interval": r.get("interval"), "cores": r.get("cores"), "count": len(rows), "processes": rows}

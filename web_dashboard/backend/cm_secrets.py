@@ -131,6 +131,13 @@ def promote_pending(name):
     return True
 
 
+def clear_pending(name):
+    """อัปเดตจากหน้าเว็บ (ไม่เปลี่ยนรหัส): ทิ้งรหัสที่รอจากการติดตั้งครั้งก่อนที่ไม่สำเร็จ"""
+    doc = _read(name)
+    if doc.pop("pending", None) is not None:
+        _write(name, doc)
+
+
 def get_pin(name):
     """thumbprint ของใบรับรองที่จำไว้ตอนเชื่อมต่อสำเร็จครั้งแรก (ไม่ได้ตั้งใน puller.yaml)"""
     try:

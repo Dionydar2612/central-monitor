@@ -33,6 +33,33 @@ Settings > **+ Add target** > ชนิดเครื่อง *Windows (WinRM 
 เปลี่ยนรหัส: ติดตั้งซ้ำด้วยวิธี 1 (ออกรหัสใหม่ให้) หรือ `reset-password-cm-monitor.bat` แล้วใส่รหัสใน *ตั้งค่าเอง (ขั้นสูง)*
 ถอน: `remove-cm-monitor.bat` · ตรวจ: `check-cm-monitor.bat` (อ่านอย่างเดียว) · รัน setup เองแบบเดิม (ไม่ใช้ zip จากหน้าเว็บ): กรอกรหัส + Thumbprint ที่ setup แสดงใน *ตั้งค่าเอง (ขั้นสูง)*
 
+### อัปเดตบนเครื่อง (จากหน้าเว็บ ไม่ต้องไปที่เครื่อง)
+
+เมื่อ central มี module รุ่นใหม่ (หลัง `cm-update --rebuild`) รายการเครื่องใน Settings แสดง `module 1.1.3 · มีรุ่น 1.1.4`
+→ Edit เครื่อง > การเชื่อมต่อ > กรอก Admin user / password (ครั้งเดียว ไม่บันทึก) > **อัปเดตบนเครื่อง**
+- central ส่ง `setup-cm-monitor.ps1` + `CentralMonitor.psm1` รุ่นที่มากับ central ไปรันทับ (แบบเดียวกับติดตั้งจากหน้าเว็บ)
+- **รหัสของ cm-monitor / ใบรับรอง / listener / firewall คงเดิม** (ไม่มี `Password=` ใน config) · WinRM restart 1 ครั้ง · ~1-2 นาที
+- เสร็จแล้ว central ปิด session เดิม (ที่ยังโหลด module เก่า) แล้วต่อใหม่ทันที
+- ติดตั้งด้วย zip ก็อัปเดตจากหน้าเว็บได้ (หรือรัน `setup-cm-monitor.bat` ของ zip ใหม่บนเครื่อง)
+
+### Services / Task Scheduler / Programs (รายละเอียดเครื่อง · เฉพาะ Windows · module 1.1.4+)
+
+| แท็บ | แสดง | อ่านจาก (สิทธิ์ cm-monitor ไม่ใช่ admin) |
+|---|---|---|
+| Services | service ทั้งหมด: สถานะ, Start type (+Delayed), PID, บัญชีที่รัน, exe + arguments, คำอธิบาย · ตัวกรอง "Automatic แต่หยุดอยู่" | Service Control Manager + registry `HKLM\SYSTEM\CurrentControlSet\Services` |
+| Task Scheduler | task: สถานะ, รอบล่าสุด + ผล (แปลรหัสเป็นข้อความ), รอบถัดไป, trigger, บัญชีที่รัน, คำสั่ง exe + arguments · ซ่อน task ของ Microsoft (ติ๊กดูได้) | COM `Schedule.Service` (อ่านอย่างเดียว) · task ที่ตั้งสิทธิ์ให้เฉพาะ admin จะไม่แสดง |
+| Programs | process ทั้งหมด: CPU / RAM, path ของ exe, ชื่อโปรแกรม / ผู้ผลิต, service ที่อยู่ใน process นั้น, เวลาเริ่ม | `CentralMonitor.Native.<รุ่น>.dll` (ดูด้านล่าง) |
+
+- ดึงสด **เมื่อเปิดแท็บเท่านั้น** (Services 1 นาที / Tasks 2 นาที / Programs 30 วิ ขณะเปิดอยู่) ไม่เก็บลงดิสก์ทั้งฝั่ง Windows และ central
+- Task Scheduler ดูได้เฉพาะ operator ขึ้นไป (arguments ของคำสั่งอาจมีข้อมูลลับ)
+- ไม่แสดง command line ของ process (ต้องเปิด process ด้วยสิทธิ์ admin) · เครื่องที่ module ยังเก่า: แท็บแจ้งให้กด **อัปเดตบนเครื่อง**
+
+ตัวช่วย `CentralMonitor.Native.<รุ่น>.dll`: setup **คอมไพล์บนเครื่องนั้นเอง** จากซอร์ส C# ใน `setup-cm-monitor.ps1` (ไม่มีไฟล์ binary ส่งไป)
+อยู่ในโฟลเดอร์ module (แก้ได้เฉพาะ admin) · เรียก Windows API แบบอ่านอย่างเดียวที่ไม่ต้องเปิด process:
+`NtQuerySystemInformation` (รายการ process + CPU time + path ของ exe แบบเดียวกับ Task Manager) และ `EnumServicesStatusEx` (PID ของ service)
+ผลพลอยได้: CPU ของ process ในแท็บ Processes / snapshot แม่นขึ้น (เดิมอ่าน CPU ของ process ระบบ / user อื่นไม่ได้)
+คอมไพล์ไม่ได้ = setup เตือน แล้วทำงานต่อแบบเดิม (แท็บ Programs ไม่มี path ของ process ที่ไม่ใช่ของ cm-monitor)
+
 ### ถอนการติดตั้ง (ลบทุกอย่างที่เพิ่มบนเครื่อง)
 
 - **จากหน้าเว็บ** (ติดตั้งด้วยวิธีไหนก็ได้): Settings > Edit เครื่อง > การเชื่อมต่อ > กรอก Admin user / password ด้านบน >

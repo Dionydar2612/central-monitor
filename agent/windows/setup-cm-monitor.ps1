@@ -34,7 +34,226 @@ $ModDir    = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonit
 $RuleName  = 'CentralMonitor-WinRM-HTTPS'
 $ManiPath  = Join-Path $DataDir 'manifest.json'
 $CredPath  = Join-Path $DataDir 'cm-monitor-credential.txt'
-$Version   = '1.1.3'
+$Version   = '1.1.4'
+
+# Source of CentralMonitor.Native.<version>.dll, compiled ON THIS MACHINE by step 2 (no binary is shipped).
+# Read-only Win32 calls usable by a non-admin user (no process handle is opened):
+#   Processes()    NtQuerySystemInformation(SystemProcessInformation)  - CPU time / RAM of every process (= Task Manager)
+#   ImagePath(pid) NtQuerySystemInformation(SystemProcessIdInformation) - full exe path of any process
+#   ServicePids()  EnumServicesStatusEx                                 - process id of every service
+$NativeSource = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace CentralMonitorNative
+{
+    public class ProcInfo
+    {
+        public int Pid;
+        public int ParentPid;
+        public string Name;
+        public long Cpu100ns;
+        public long WorkingSet;
+        public long Private;
+        public int Threads;
+        public int Handles;
+        public int Session;
+        public long Created;
+    }
+
+    public static class Win
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        struct UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct SYSTEM_PROCESS_ID_INFORMATION { public IntPtr ProcessId; public UNICODE_STRING ImageName; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct SERVICE_STATUS_PROCESS
+        {
+            public int ServiceType, CurrentState, ControlsAccepted, Win32ExitCode, ServiceSpecificExitCode,
+                       CheckPoint, WaitHint, ProcessId, ServiceFlags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct ENUM_SERVICE_STATUS_PROCESS { public IntPtr ServiceName; public IntPtr DisplayName; public SERVICE_STATUS_PROCESS Status; }
+
+        [DllImport("ntdll.dll")]
+        static extern int NtQuerySystemInformation(int infoClass, IntPtr info, int length, out int returnLength);
+
+        [DllImport("ntdll.dll")]
+        static extern int NtQuerySystemInformation(int infoClass, ref SYSTEM_PROCESS_ID_INFORMATION info, int length, out int returnLength);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern int QueryDosDeviceW(string deviceName, StringBuilder targetPath, int max);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr OpenSCManagerW(string machine, string database, int access);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool EnumServicesStatusExW(IntPtr scm, int infoLevel, int serviceType, int serviceState, IntPtr services,
+                                                 int bufSize, out int needed, out int returned, ref int resume, string group);
+
+        [DllImport("advapi32.dll")]
+        static extern bool CloseServiceHandle(IntPtr h);
+
+        const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
+        const int SystemProcessInformation = 5;
+        const int SystemProcessIdInformation = 88;
+
+        // ---- all processes (what Task Manager uses; no process handle is opened) ----
+        // SYSTEM_PROCESS_INFORMATION offsets, 64-bit Windows
+        public static ProcInfo[] Processes()
+        {
+            if (IntPtr.Size != 8) return new ProcInfo[0];
+            int size = 1024 * 1024;
+            for (int attempt = 0; attempt < 6; attempt++)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    int needed;
+                    int st = NtQuerySystemInformation(SystemProcessInformation, buf, size, out needed);
+                    if (st == STATUS_INFO_LENGTH_MISMATCH)
+                    {
+                        size = Math.Max(size * 2, needed + 65536);
+                        if (size > 64 * 1024 * 1024) break;
+                        continue;
+                    }
+                    if (st != 0) break;
+                    var list = new List<ProcInfo>(512);
+                    long off = 0;
+                    while (true)
+                    {
+                        IntPtr p = new IntPtr(buf.ToInt64() + off);
+                        int next = Marshal.ReadInt32(p, 0);
+                        var pi = new ProcInfo();
+                        pi.Threads = Marshal.ReadInt32(p, 4);
+                        pi.Created = Marshal.ReadInt64(p, 32);
+                        pi.Cpu100ns = Marshal.ReadInt64(p, 40) + Marshal.ReadInt64(p, 48);
+                        ushort nameLen = (ushort)Marshal.ReadInt16(p, 56);
+                        IntPtr nameBuf = Marshal.ReadIntPtr(p, 64);
+                        pi.Name = (nameBuf != IntPtr.Zero && nameLen > 0) ? Marshal.PtrToStringUni(nameBuf, nameLen / 2) : null;
+                        pi.Pid = (int)Marshal.ReadInt64(p, 80);
+                        pi.ParentPid = (int)Marshal.ReadInt64(p, 88);
+                        pi.Handles = Marshal.ReadInt32(p, 96);
+                        pi.Session = Marshal.ReadInt32(p, 100);
+                        pi.WorkingSet = Marshal.ReadInt64(p, 144);
+                        pi.Private = Marshal.ReadInt64(p, 200);
+                        if (pi.Name == null) pi.Name = pi.Pid == 0 ? "Idle" : (pi.Pid == 4 ? "System" : "");
+                        list.Add(pi);
+                        if (next == 0) break;
+                        off += (uint)next;
+                        if (off >= size) break;
+                    }
+                    return list.ToArray();
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            return new ProcInfo[0];
+        }
+
+        // ---- full exe path of any process id (no process handle needed) ----
+        static Dictionary<string, string> devices;
+
+        public static string ImagePath(int pid)
+        {
+            if (pid <= 4) return null;
+            int size = 1024;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    var info = new SYSTEM_PROCESS_ID_INFORMATION();
+                    info.ProcessId = new IntPtr(pid);
+                    info.ImageName.Length = 0;
+                    info.ImageName.MaximumLength = (ushort)size;
+                    info.ImageName.Buffer = buf;
+                    int ret;
+                    int st = NtQuerySystemInformation(SystemProcessIdInformation, ref info, Marshal.SizeOf(typeof(SYSTEM_PROCESS_ID_INFORMATION)), out ret);
+                    if (st == STATUS_INFO_LENGTH_MISMATCH)
+                    {
+                        int want = info.ImageName.MaximumLength;
+                        if (want <= size || want > 65534) return null;
+                        size = want;
+                        continue;
+                    }
+                    if (st != 0 || info.ImageName.Length == 0) return null;
+                    return ToDosPath(Marshal.PtrToStringUni(buf, info.ImageName.Length / 2));
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            return null;
+        }
+
+        static string ToDosPath(string nt)
+        {
+            if (string.IsNullOrEmpty(nt)) return nt;
+            for (int round = 0; round < 2; round++)
+            {
+                if (devices == null || round == 1)
+                {
+                    var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    var sb = new StringBuilder(1024);
+                    for (char c = 'A'; c <= 'Z'; c++)
+                    {
+                        string drive = c + ":";
+                        sb.Length = 0;
+                        if (QueryDosDeviceW(drive, sb, sb.Capacity) > 0)
+                        {
+                            string dev = sb.ToString();
+                            if (!map.ContainsKey(dev)) map[dev] = drive;
+                        }
+                    }
+                    devices = map;
+                }
+                foreach (var kv in devices)
+                {
+                    if (nt.StartsWith(kv.Key + "\\", StringComparison.OrdinalIgnoreCase))
+                        return kv.Value + nt.Substring(kv.Key.Length);
+                }
+            }
+            if (nt.StartsWith("\\??\\")) return nt.Substring(4);
+            return nt;
+        }
+
+        // ---- process id of every Win32 service ----
+        public static Dictionary<string, int> ServicePids()
+        {
+            var r = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            IntPtr scm = OpenSCManagerW(null, null, 0x0001 | 0x0004);     // CONNECT | ENUMERATE_SERVICE
+            if (scm == IntPtr.Zero) return r;
+            try
+            {
+                int needed, count, resume = 0;
+                EnumServicesStatusExW(scm, 0, 0x30, 3, IntPtr.Zero, 0, out needed, out count, ref resume, null);
+                if (needed <= 0) return r;
+                int size = needed + 16384;
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    resume = 0;
+                    if (!EnumServicesStatusExW(scm, 0, 0x30, 3, buf, size, out needed, out count, ref resume, null)) return r;
+                    int sz = Marshal.SizeOf(typeof(ENUM_SERVICE_STATUS_PROCESS));
+                    for (int i = 0; i < count; i++)
+                    {
+                        var e = (ENUM_SERVICE_STATUS_PROCESS)Marshal.PtrToStructure(new IntPtr(buf.ToInt64() + (long)i * sz), typeof(ENUM_SERVICE_STATUS_PROCESS));
+                        string name = Marshal.PtrToStringUni(e.ServiceName);
+                        if (name != null) r[name] = e.Status.ProcessId;
+                    }
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            finally { CloseServiceHandle(scm); }
+            return r;
+        }
+    }
+}
+'@
 $SID_PERF  = 'S-1-5-32-558'   # Performance Monitor Users
 $SID_EVT   = 'S-1-5-32-573'   # Event Log Readers
 $SID_ADM   = 'S-1-5-32-544'   # Administrators
@@ -157,7 +376,7 @@ $thumb = ''
 $port = 0
 $errMsg = ''
 try {
-    Say '=== Central Monitor - Windows agentless setup (v1.1.3) ===' 'Cyan'
+    Say "=== Central Monitor - Windows agentless setup (v$Version) ===" 'Cyan'
     Info "log: $LogFile"
 
     # ----------------------------------------------------------- checks
@@ -205,8 +424,27 @@ try {
     # A zip downloaded with a browser carries Mark of the Web (Zone.Identifier); RemoteSigned then refuses
     # to load the module in the session ("... is not digitally signed"). Remove that mark from our copied files.
     Get-ChildItem -LiteralPath $ModDir -Recurse -File | Unblock-File
+    # native helper (see $NativeSource at the top). A DLL still loaded by an old session cannot be replaced:
+    # same version = same code, so it is kept. DLLs of other versions are removed when not in use.
+    $dllName = "CentralMonitor.Native.$Version.dll"
+    $dll = Join-Path $ModDir $dllName
+    foreach ($old in @(Get-ChildItem -LiteralPath $ModDir -Filter 'CentralMonitor.Native.*.dll' -File -ErrorAction SilentlyContinue)) {
+        if ($old.Name -ne $dllName) { Remove-Item -LiteralPath $old.FullName -Force -ErrorAction SilentlyContinue }
+    }
+    try {
+        $tmp = Join-Path $env:TEMP ('cm-native-' + [guid]::NewGuid().ToString('N') + '.dll')
+        Add-Type -TypeDefinition $NativeSource -Language CSharp -OutputAssembly $tmp -OutputType Library -ErrorAction Stop
+        try {
+            Copy-Item -LiteralPath $tmp -Destination $dll -Force -ErrorAction Stop
+            Ok "native helper compiled: $dllName (process list / exe path / service PIDs)"
+        } catch {
+            if (Test-Path -LiteralPath $dll) { Ok "native helper kept (in use by a session): $dllName" } else { throw }
+        } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    } catch {
+        Warn ('native helper not compiled (' + $_.Exception.Message + ') - Programs tab / service PIDs show less detail')
+    }
     foreach ($f in @('CentralMonitor.psd1', 'RoleCapabilities\CentralMonitor.psrc')) { Remove-Item -LiteralPath (Join-Path $ModDir $f) -Force -ErrorAction SilentlyContinue }
-    $funcs = @('Get-CMVersion', 'Get-CMMetrics', 'Get-CMServices', 'Get-CMEvents', 'Get-CMLogTail', 'Get-CMInventory', 'Get-CMProcesses')
+    $funcs = @('Get-CMVersion', 'Get-CMMetrics', 'Get-CMServices', 'Get-CMEvents', 'Get-CMLogTail', 'Get-CMInventory', 'Get-CMProcesses', 'Get-CMTasks')
     New-ModuleManifest -Path (Join-Path $ModDir 'CentralMonitor.psd1') -RootModule 'CentralMonitor.psm1' -ModuleVersion $Version `
         -Author 'Central Monitor' -Description 'Central Monitor read-only functions for the JEA endpoint' `
         -FunctionsToExport $funcs -CmdletsToExport @() -VariablesToExport @() -AliasesToExport @() `

@@ -184,7 +184,13 @@ try {
     }
 
     # 9. module + data folders
-    if (Test-Path -LiteralPath $ModDir) { Try-Do 'module folder removed' { Remove-Item -LiteralPath $ModDir -Recurse -Force } }
+    if (Test-Path -LiteralPath $ModDir) {
+        # CentralMonitor.Native.*.dll may still be loaded for a few seconds by a cm-monitor session that is ending
+        for ($i = 0; $i -lt 10 -and (Test-Path -LiteralPath $ModDir); $i++) {
+            try { Remove-Item -LiteralPath $ModDir -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Seconds 3 }
+        }
+        Try-Do 'module folder removed' { if (Test-Path -LiteralPath $ModDir) { Remove-Item -LiteralPath $ModDir -Recurse -Force } }
+    }
     if (Test-Path -LiteralPath $DataDir) { Try-Do "$DataDir removed" { Remove-Item -LiteralPath $DataDir -Recurse -Force } }
     if ((Test-Path -LiteralPath $SetupDir) -and ($Here.TrimEnd('\') -ne $SetupDir)) {
         Try-Do "$SetupDir removed" { Remove-Item -LiteralPath $SetupDir -Recurse -Force }

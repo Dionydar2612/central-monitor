@@ -52,6 +52,9 @@ if (Test-Path $psm) {
     $sig = Get-AuthenticodeSignature -FilePath $psm
     if ($sig.Status -eq 'Valid') { Ok ("module signature valid (" + $sig.SignerCertificate.Subject + ")") }
     else { Bad ("module signature: " + $sig.Status + " - run setup-cm-monitor.bat again") }
+    $dlls = @(Get-ChildItem -LiteralPath $ModDir -Filter 'CentralMonitor.Native.*.dll' -File -ErrorAction SilentlyContinue)
+    if ($dlls.Count -gt 0) { Ok ('native helper: ' + (($dlls | ForEach-Object { $_.Name }) -join ', ') + ' (process list / exe path / service PIDs)') }
+    else { Info 'native helper DLL not found (module 1.1.4+ compiles it in setup) - Programs tab shows less detail' }
 }
 
 Head 'JEA endpoint'

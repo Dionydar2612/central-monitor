@@ -67,6 +67,9 @@ logic จริงแยกอยู่ในโมดูลของตัว�
     GET  /api/targets/windows-setup.zip?central=<IP>[&name=]  ชุดติดตั้งบนเครื่อง Windows (.bat) พร้อมค่าตั้ง (+ รหัสของเครื่อง)
     POST /api/targets/<name>/winrm-install  ติดตั้งให้เครื่อง Windows จากหน้าเว็บ (บัญชี admin ใช้ครั้งเดียว ไม่เก็บ)
     GET  /api/targets/<name>/winrm-install  สถานะการติดตั้ง / ถอน (หน้าเว็บถามทุก ~3 วินาที)
+         POST body mode=update = อัปเดต module บนเครื่อง (รหัส cm-monitor คงเดิม)
+    GET  /api/targets/winrm-versions        รุ่น module บนเครื่อง Windows แต่ละเครื่อง เทียบรุ่นที่มากับ central
+    GET  /api/host/<web>/win-services|win-tasks|win-programs   เครื่อง Windows: Service / Task Scheduler / exe ที่รันอยู่ (ดึงสด)
     POST /api/targets/<name>/winrm-uninstall  ถอนทุกอย่างออกจากเครื่อง Windows จากหน้าเว็บ (+ ลบเครื่องออกจาก central)
 """
 
@@ -174,6 +177,8 @@ def require_authentication():
 _PAUSE_PATH = re.compile(r"^/api/(targets|checks)/[^/]+/pause$|^/api/(sensors|logs)/(un)?ack$|^/api/logs/(un)?ack-fp$"
                          r"|^/api/targets/[^/]+/sensor-(toggle|settings)$|^/api/targets/[^/]+/log-status$")
 _SERVICES_PATH = re.compile(r"^/api/targets/[^/]+/services$")
+# Task Scheduler: อาร์กิวเมนต์ของคำสั่งอาจมีข้อมูลลับ -> operator ขึ้นไป
+_WIN_TASKS_PATH = re.compile(r"^/api/host/[^/]+/win-tasks$")
 _NETSEC_REFRESH = re.compile(r"^/api/netsec/[^/]+/refresh$")
 _TARGET_PATH = re.compile(r"^/api/targets/(?!host-key$|winrm-cert$|winrm-test$|windows-setup\.zip$)[^/]+$")
 
@@ -186,6 +191,8 @@ def _required_role(method, path):
         return "operator"                          # ลากจัดลำดับเครื่อง / กลุ่ม
     if _SERVICES_PATH.match(path):
         return "viewer" if method == "GET" else "operator"
+    if _WIN_TASKS_PATH.match(path):
+        return "operator"
     if path in ("/settings", "/settings.html") or path.startswith("/api/alert-rules"):
         return "operator"                          # operator: Settings = เครื่อง (แท็บการแจ้งเตือน + Log) + Custom alert rules
     if path == "/api/targets" and method == "GET":
@@ -223,7 +230,7 @@ _AUDIT_RULES = [
     ("POST", re.compile(r"^/api/targets/winrm-cert$"), "target.scan_winrm_cert", ("host", "port")),
     ("POST", re.compile(r"^/api/targets/winrm-test$"), "target.test_winrm", ("host", "port", "user", "name")),
     ("GET", re.compile(r"^/api/targets/windows-setup\.zip$"), "target.windows_setup_download", ()),
-    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-install$"), "target.windows_install", ("admin_user", "admin_port", "central")),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-install$"), "target.windows_install", ("admin_user", "admin_port", "central", "mode")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-uninstall$"), "target.windows_uninstall", ("admin_user", "admin_port", "delete_target")),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused", "pause_reason")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
@@ -792,6 +799,8 @@ def host_detail(web, kind):
         rows = [s for s in sensors_service.get_sensors(web=web)["sensors"] if s.get("kind") == "bottleneck"]
         return jsonify({"web": web, "bottlenecks": rows,
                         "options": sensors_service.load_sensors().get("options")})
+    if kind in WIN_KINDS:
+        return _win_live(web, target, kind)
     fns = {"performance": lambda: host_details.performance(web),
            "hardware": lambda: host_details.hardware(web, target),
            "system": lambda: host_details.system(web, target)}
@@ -815,6 +824,32 @@ def overview():
 
 _LIVE_CACHE = {}        # web -> (หมดอายุเมื่อ, status, data)
 LIVE_TTL = 20
+
+# แท็บ Services / Task Scheduler / Programs ของเครื่อง Windows: ดึงสดผ่าน puller (ไม่เก็บ) cache สั้น ๆ กันกดรัว
+WIN_KINDS = {"win-services": 30, "win-tasks": 60, "win-programs": 15}
+_WIN_CACHE = {}
+
+
+def _win_live(web, target, kind):
+    if str(target.get("type") or "ssh") != "winrm":
+        return jsonify({"error": "ใช้ได้กับเครื่อง Windows เท่านั้น"}), 400
+    params = {"target": target.get("name") or resolve_web_name(web)}
+    if kind == "win-tasks" and request.args.get("ms") in ("1", "true"):
+        params["ms"] = "1"
+    key = (kind, web, params.get("ms", ""))
+    now = time.time()
+    hit = _WIN_CACHE.get(key)
+    if hit and hit[0] > now and request.args.get("force") != "1":
+        return jsonify(hit[2]), hit[1]
+    try:
+        status, data = puller_get("/" + kind, params, timeout=60)
+    except Exception as e:  # noqa: BLE001
+        status, data = 502, {"error": f"ติดต่อ puller ไม่ได้: {e}"}
+    if len(_WIN_CACHE) > 500:
+        _WIN_CACHE.clear()
+    if status == 200:
+        _WIN_CACHE[key] = (now + WIN_KINDS[kind], status, data)
+    return jsonify(data), status
 
 
 @app.get("/api/live-processes")
@@ -1369,6 +1404,21 @@ def targets_windows_setup():
     from flask import Response
     return Response(blob, mimetype="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+@app.get("/api/targets/winrm-versions")
+def targets_winrm_versions():
+    """รุ่น module ที่ติดตั้งบนเครื่อง Windows แต่ละเครื่อง (จาก puller) เทียบกับรุ่นที่มากับ central นี้"""
+    out = {"bundled": targets_service.bundled_module_version(), "targets": {}}
+    try:
+        status, data = puller_get("/winrm-status", {}, timeout=10)
+        if status == 200:
+            out["targets"] = {n: {"module": (st or {}).get("module") or "", "connected": bool((st or {}).get("connected")),
+                                  "last_ok": (st or {}).get("last_ok")}
+                              for n, st in (data.get("targets") or {}).items()}
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"ติดต่อ central-puller ไม่ได้: {e}"
+    return jsonify(out)
 
 
 @app.post("/api/targets/<name>/winrm-install")

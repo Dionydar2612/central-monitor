@@ -1,3 +1,15 @@
+# เพิ่มเติม (26 พ.ย. 2026): Windows - Services / Task Scheduler / Programs (exe) + อัปเดตบนเครื่องจากหน้าเว็บ (module 1.1.4)
+- รายละเอียดเครื่อง Windows มีแท็บเพิ่ม: **Services** (exe + arguments / บัญชีที่รัน / PID / คำอธิบาย), **Task Scheduler**
+  (คำสั่งที่รัน / ผลรอบล่าสุด / รอบถัดไป / trigger) และ **Programs** (exe ที่รันอยู่ทั้งหมด + path / ผู้ผลิต / service ในนั้น)
+  ดึงสดเมื่อเปิดแท็บ ไม่เก็บลงดิสก์ · Task Scheduler ดูได้เฉพาะ operator ขึ้นไป
+- Settings > Edit เครื่อง Windows > **อัปเดตบนเครื่อง**: ส่ง module รุ่นใหม่ไปติดตั้งทับ (admin ใช้ครั้งเดียว ไม่บันทึก) รหัส cm-monitor / ใบรับรองคงเดิม
+  รายการเครื่องแสดงรุ่น module ของแต่ละเครื่อง + "มีรุ่นใหม่"
+- module 1.1.4: Get-CMTasks (COM Schedule.Service), Get-CMServices -Detail, Get-CMProcesses -All · setup คอมไพล์ตัวช่วย
+  CentralMonitor.Native.<รุ่น>.dll บนเครื่อง (NtQuerySystemInformation / EnumServicesStatusEx อ่านอย่างเดียว) -> CPU ต่อ process แม่นขึ้นด้วย
+- เครื่องเดิมต้องกด **อัปเดตบนเครื่อง** 1 ครั้ง (หลัง `cm-update --rebuild`) แท็บใหม่จึงมีข้อมูล · รายละเอียด docs/WINDOWS-TH.md
+
+---
+
 # เพิ่มเติม (25 พ.ย. 2026): รายละเอียดเครื่องแบบแท็บ กลับมาใช้กับทั้ง Linux และ Windows
 - แท็บ Overview / Performance / Bottleneck / Processes / Hardware / System / Alerts & Events ใช้กับทุกเครื่อง (เดิมเหลือหน้าเดียวแบบ Linux)
 - Windows (WinRM): Hardware / System เติมผู้ผลิต / รุ่น / CPU / RAM / การ์ดเครือข่าย / OS / build / วันติดตั้ง / domain / IP / Windows updates จาก inventory

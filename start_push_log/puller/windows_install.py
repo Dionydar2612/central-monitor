@@ -161,9 +161,16 @@ def _job(name, host, port, user, password, files, config_text, kind="install"):
         ok = bool(result.get("ok"))
         _set(name, state="done" if ok else "failed", ok=ok, thumbprint=str(result.get("thumbprint") or "").upper(),
              port=result.get("port"), warnings=result.get("warnings") or 0, error=result.get("error") or "",
-             leftovers=result.get("leftovers") or [], computer=result.get("computer"), log=log.strip()[-6000:],
+             leftovers=result.get("leftovers") or [], computer=result.get("computer"), version=result.get("version"),
+             log=log.strip()[-6000:],
              step="เสร็จ" if ok else f"{what}ล้ม")
         print(f"[WINRM {kind.upper()}] {name} {'OK' if ok else 'FAILED'} {result.get('error') or ''}")
+        if ok and kind == "install":
+            try:
+                import windows_pull
+                windows_pull.reconnect(name)          # session ใหม่ = โหลด module รุ่นที่เพิ่งติดตั้ง
+            except Exception as e:  # noqa: BLE001
+                print(f"[WINRM INSTALL] {name} reconnect: {e}")
     except Exception as e:  # noqa: BLE001
         msg = winrm_client._friendly(e) if not isinstance(e, winrm_client.WinRMError) else str(e)
         low = msg.lower()
@@ -183,7 +190,7 @@ def start(body):
             raise winrm_client.WinRMError("กำลังติดตั้ง / ถอนเครื่องนี้อยู่")
         kind = "uninstall" if body.get("action") == "uninstall" else "install"
         _jobs[name] = {"state": "running", "kind": kind, "step": "เริ่ม", "updated": time.time(),
-                       "delete_after": bool(body.get("delete_after"))}
+                       "delete_after": bool(body.get("delete_after")), "mode": str(body.get("mode") or kind)}
     if not winrm_client.HAVE_PYPSRP:
         _set(name, state="failed", error="puller image ไม่มี pypsrp - รัน cm-update --rebuild")
         return status(name)

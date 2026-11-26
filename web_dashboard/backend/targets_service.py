@@ -1487,14 +1487,32 @@ def winrm_install_request(name, payload):
             ipaddress.ip_address(central)
         except ValueError:
             errors["central"] = "IP ของ central ไม่ถูกต้อง (เว้นว่าง = ตรวจหาให้เอง)"
+    update = _text(payload, "mode") == "update"
+    if update and not cm_secrets.has_password(name):
+        errors["admin_password"] = "เครื่องนี้ยังไม่ได้ติดตั้ง ใช้ปุ่ม \"ติดตั้งให้เครื่องนี้\" ก่อน"
     if errors:
         raise ValidationError(errors)
     files = _setup_files("setup-cm-monitor.ps1", "CentralMonitor.psm1")
-    new_pw = new_winrm_password()
-    cm_secrets.set_pending(name, new_pw)          # ใช้จริงเมื่อติดตั้งสำเร็จ (winrm_install_apply)
+    if update:
+        # อัปเดต module / ตัวช่วย บนเครื่อง: รหัสของ cm-monitor คงเดิม (setup ไม่แตะรหัสเมื่อไม่มี Password=)
+        cm_secrets.clear_pending(name)
+        new_pw = ""
+    else:
+        new_pw = new_winrm_password()
+        cm_secrets.set_pending(name, new_pw)      # ใช้จริงเมื่อติดตั้งสำเร็จ (winrm_install_apply)
     config = windows_config_text(central, windows_log_folders(t.get("logs")), int(t["winrm"].get("port") or 5986), new_pw)
-    return {"action": "install", "name": name, "host": t["host"], "port": port, "user": user, "password": pw,
-            "files_b64": files, "config": config}
+    return {"action": "install", "mode": "update" if update else "install", "name": name, "host": t["host"],
+            "port": port, "user": user, "password": pw, "files_b64": files, "config": config}
+
+
+def bundled_module_version():
+    """รุ่นของ CentralMonitor.psm1 ที่อยู่ใน image นี้ (ตัวที่ปุ่ม ติดตั้ง / อัปเดต จะส่งไป)"""
+    try:
+        with open(os.path.join(WINDOWS_SETUP_DIR, "CentralMonitor.psm1"), encoding="ascii", errors="replace") as f:
+            m = re.search(r"\$script:CMVersion\s*=\s*'([0-9.]+)'", f.read())
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
 
 
 def _setup_files(*names):

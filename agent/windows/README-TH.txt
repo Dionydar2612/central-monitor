@@ -6,12 +6,13 @@
 คู่มือเต็ม: docs/WINDOWS-TH.md
 
 central ดึงข้อมูลเองผ่าน WinRM HTTPS (พอร์ต 5986) เข้า JEA endpoint "CentralMonitor"
-ด้วยบัญชี cm-monitor (ไม่ใช่ admin) ที่เรียกได้แค่ฟังก์ชันอ่าน Get-CM* 7 ตัว
+ด้วยบัญชี cm-monitor (ไม่ใช่ admin) ที่เรียกได้แค่ฟังก์ชันอ่าน Get-CM* 8 ตัว
 บนเครื่อง Windows ไม่มี service / scheduled task / agent / ไฟล์ข้อมูล ของเรา
 เครื่อง Windows ไม่ต้องต่อกลับไปหา central (เหมาะกับ network ที่เปิดทางเดียว)
 
 ไฟล์ (ต้องอยู่ด้วยกัน)
   setup-cm-monitor.bat    ติดตั้ง / อัปเดต (รันซ้ำได้)  ·  "setup-cm-monitor.bat resetpw" = ออกรหัสใหม่
+                          (อัปเดตจากหน้าเว็บได้: Settings > Edit เครื่อง > อัปเดตบนเครื่อง - รหัสเดิม)
   check-cm-monitor.bat    ตรวจสุขภาพ อ่านอย่างเดียว ไม่แก้อะไร
   remove-cm-monitor.bat   ถอนเฉพาะสิ่งที่ setup สร้าง (ตาม manifest.json)
   cm-monitor-config.txt   ตั้งค่า: CentralIP, Port, LogPaths, DenyLogon

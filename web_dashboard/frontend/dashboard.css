@@ -1179,6 +1179,19 @@ td.bad{color:#e5484d}
 .dtabs button{border:0;background:none;color:var(--mut);font:500 14px inherit;font-family:inherit;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
 .dtabs button[aria-selected="true"]{color:var(--blue);border-bottom-color:var(--blue)}
 .dtabs button:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+.dtabs button[hidden]{display:none}
+/* แท็บ Windows: Services / Task Scheduler / Programs (machine.js) */
+.wtool{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
+.wtool input[type=search]{flex:1 1 260px;min-width:180px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card,#fff);color:inherit;font:inherit;font-size:13px}
+.wtool select{padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card,#fff);color:inherit;font:inherit;font-size:13px}
+.wtool .wcnt{color:var(--mut);font-size:12px;margin-left:auto}
+.wms{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--mut);cursor:pointer}
+.wnote{font-size:12.5px;color:#9a6700;background:rgba(245,184,0,.12);border-radius:6px;padding:6px 10px;margin:0 0 10px}
+.wasof{color:var(--mut);font-size:12px}
+.wpath{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;word-break:break-all;background:var(--chip);border-radius:4px;padding:1px 5px;display:inline-block;max-width:520px}
+.wtag{display:inline-block;font-size:10.5px;font-weight:600;color:var(--blue);background:rgba(31,123,255,.12);border-radius:4px;padding:0 5px;vertical-align:1px}
+.wdesc{color:var(--mut);font-size:12px;margin-top:2px;max-width:420px}
+.ptbl tr[hidden]{display:none}
 .dpane{margin-top:16px}.dpane>.grid.one{grid-template-columns:1fr}.dpane .two{margin-top:0}
 .pn:empty{display:none}.pn>.card,.pn>.grid{margin-bottom:16px}
 .pgrid2{grid-template-columns:1fr 1fr}.pgrid2>div>.card+.card{margin-top:16px}

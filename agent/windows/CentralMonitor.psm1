@@ -8,7 +8,9 @@
 # Rules this module follows (do not break them when editing):
 #   - never writes anything to disk, never starts a process, never changes settings
 #   - no WMI/CIM except the hotfix list (a non-admin JEA session is often refused by WMI):
-#     RAM from .NET ComputerInfo (GlobalMemoryStatusEx), OS / hardware from the registry
+#     RAM from .NET ComputerInfo (GlobalMemoryStatusEx), OS / hardware from the registry,
+#     processes / service process ids from CentralMonitor.Native.<version>.dll (compiled by setup; read-only
+#     NtQuerySystemInformation / EnumServicesStatusEx), scheduled tasks from COM Schedule.Service (read-only)
 #   - fast functions (metrics / services) do not use WMI/CIM
 #     (.NET PerformanceCounter created once per session + Service Control Manager)
 #   - log files are opened with FileShare ReadWrite + Delete (the owner can
@@ -25,7 +27,7 @@
 # =====================================================================
 Set-StrictMode -Version 2.0
 
-$script:CMVersion   = '1.1.3'
+$script:CMVersion   = '1.1.4'
 $script:DataDir     = Join-Path $env:ProgramData 'CentralMonitor'
 $script:AllowFile   = Join-Path $script:DataDir 'allowed-paths.txt'
 $script:MaxText     = 2048          # max characters per event message
@@ -36,6 +38,8 @@ $script:RamTriedAt  = [datetime]::MinValue
 $script:Self        = $null
 $script:StartedAt   = [datetime]::UtcNow
 $script:ProcPrev    = $null         # previous process CPU sample (Get-CMProcesses)
+$script:Native      = $null         # $true / $false once CentralMonitor.Native.<version>.dll was tried
+$script:FileInfo    = @{}           # exe path -> description / company (file version resource, cached per session)
 
 # ---------------------------------------------------------------- helpers (not visible to the caller)
 function Initialize-CMSession {
@@ -69,6 +73,51 @@ function Get-CMTotalRamMB {
         } catch { $script:TotalRamMB = -1 }
     }
     return $script:TotalRamMB
+}
+
+function Test-CMNative {
+    # CentralMonitor.Native.<version>.dll: compiled by setup (administrator) into the module folder, read-only for
+    # everyone else. Read-only Win32 calls that need no process handle (works for a non-admin user):
+    #   NtQuerySystemInformation(SystemProcessInformation / SystemProcessIdInformation) = what Task Manager shows
+    #   EnumServicesStatusEx = process id of every service
+    # Missing / not loadable -> $false and the functions fall back to Get-Process (fewer details).
+    if ($null -ne $script:Native) { return $script:Native }
+    $script:Native = $false
+    try {
+        if ($null -ne ('CentralMonitorNative.Win' -as [type])) { $script:Native = $true; return $true }
+        $dll = Join-Path $PSScriptRoot ('CentralMonitor.Native.' + $script:CMVersion + '.dll')
+        if ([System.IO.File]::Exists($dll)) {
+            Add-Type -Path $dll -ErrorAction Stop
+            $script:Native = $true
+        }
+    } catch { $script:Native = $false }
+    return $script:Native
+}
+
+function Get-CMFileInfo([string]$Path) {
+    # description / company from the exe's version resource (cached: same file = same answer)
+    if ([string]::IsNullOrEmpty($Path)) { return $null }
+    if ($script:FileInfo.ContainsKey($Path)) { return $script:FileInfo[$Path] }
+    $r = $null
+    try {
+        if ([System.IO.File]::Exists($Path)) {
+            $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+            $r = [ordered]@{ desc = [string]$vi.FileDescription; company = [string]$vi.CompanyName; ver = [string]$vi.FileVersion }
+        }
+    } catch { }
+    if ($script:FileInfo.Count -gt 2000) { $script:FileInfo = @{} }
+    $script:FileInfo[$Path] = $r
+    return $r
+}
+
+function ConvertTo-CMUnix($Date) {
+    # DateTime (local) -> unix seconds; "never" (year < 2000) -> $null
+    try {
+        if ($null -eq $Date) { return $null }
+        $d = [datetime]$Date
+        if ($d.Year -lt 2000) { return $null }
+        return [long]([DateTimeOffset]$d).ToUnixTimeSeconds()
+    } catch { return $null }
 }
 
 function ConvertTo-CMJson($Object) {
@@ -312,16 +361,31 @@ function Get-CMServices {
     param(
         [ValidateCount(0, 200)]
         [string[]]$Name,
-        [switch]$All                      # every service (Settings: choose services to watch)
+        [switch]$All,                     # every service (Settings: choose services to watch)
+        [switch]$Detail                   # + exe path / run-as account / description / process id (machine details page)
     )
     Initialize-CMSession
     $out = New-Object System.Collections.ArrayList
     if ($null -eq $Name -or $Name.Count -eq 0) {
+        $pids = @{}
+        if ($Detail -and (Test-CMNative)) { try { $pids = [CentralMonitorNative.Win]::ServicePids() } catch { $pids = @{} } }
         # default: services set to start automatically (a stopped one is a problem)
         foreach ($s in @(Get-Service -ErrorAction SilentlyContinue)) {
             try { $st = [string]$s.StartType } catch { $st = '' }
             if (-not $All -and $st -ne 'Automatic') { continue }
-            [void]$out.Add([ordered]@{ name = $s.Name; display = $s.DisplayName; status = [string]$s.Status; start = $st })
+            $row = [ordered]@{ name = $s.Name; display = $s.DisplayName; status = [string]$s.Status; start = $st }
+            if ($Detail) {
+                # registry of the service (readable by every user; no WMI)
+                $key = 'SYSTEM\CurrentControlSet\Services\' + $s.Name
+                $desc = [string](Get-CMRegValue $key 'Description')
+                if ($desc.StartsWith('@')) { $desc = '' }          # resource reference (@file.dll,-123): not resolved
+                $row.path    = [string](Get-CMRegValue $key 'ImagePath')
+                $row.account = [string](Get-CMRegValue $key 'ObjectName')
+                $row.desc    = $(if ($desc.Length -gt 300) { $desc.Substring(0, 300) } else { $desc })
+                $row.delayed = ([int](Get-CMRegValue $key 'DelayedAutostart') -eq 1)
+                $row.pid     = $(if ($pids.ContainsKey($s.Name) -and $pids[$s.Name] -gt 0) { $pids[$s.Name] } else { $null })
+            }
+            [void]$out.Add($row)
         }
     } else {
         foreach ($n in $Name) {
@@ -340,6 +404,7 @@ function Get-CMServices {
     }
     return (ConvertTo-CMJson ([ordered]@{
         v = $script:CMVersion; host = $env:COMPUTERNAME; ts = (Get-CMUnixTime); services = $out.ToArray()
+        native = [bool]$script:Native
     }))
 }
 
@@ -517,42 +582,183 @@ function Get-CMLogTail {
 }
 
 function Get-CMProcesses {
-    # top processes by CPU (over -SampleSeconds) and by RAM. Get-Process only (no WMI).
+    # top processes by CPU (over -SampleSeconds) and by RAM. No WMI.
+    # With the native helper (setup 1.1.4+): CPU time of EVERY process from NtQuerySystemInformation (no process
+    # handle -> also services / other users' processes, like Task Manager). Without it: Get-Process (own processes only).
+    # -All: every process + exe path / description / company / services hosted (machine details "Programs" tab).
     [CmdletBinding()]
     param(
         [ValidateRange(1, 50)]
         [int]$Top = 10,
         [ValidateRange(1, 5)]
-        [int]$SampleSeconds = 1
+        [int]$SampleSeconds = 1,
+        [switch]$All
     )
     Initialize-CMSession
     $cores = [Environment]::ProcessorCount
+    $native = Test-CMNative
     $first = @{}
-    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
-        try { $first[$p.Id] = $p.TotalProcessorTime.TotalSeconds } catch { }
+    if ($native) {
+        foreach ($p in [CentralMonitorNative.Win]::Processes()) { $first[$p.Pid] = $p.Cpu100ns }
+    } else {
+        foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+            try { $first[$p.Id] = [long]($p.TotalProcessorTime.Ticks) } catch { }
+        }
     }
     $t0 = [datetime]::UtcNow
     Start-Sleep -Seconds $SampleSeconds
     $span = ([datetime]::UtcNow - $t0).TotalSeconds
     $rows = New-Object System.Collections.ArrayList
-    $totalRam = 0
-    foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
-        $cpu = 0.0
+    $svcByPid = @{}
+    if ($All -and $native) {
         try {
-            if ($first.ContainsKey($p.Id)) { $cpu = ($p.TotalProcessorTime.TotalSeconds - $first[$p.Id]) / $span / $cores * 100 }
+            foreach ($kv in [CentralMonitorNative.Win]::ServicePids().GetEnumerator()) {
+                if ($kv.Value -le 0) { continue }
+                if (-not $svcByPid.ContainsKey($kv.Value)) { $svcByPid[$kv.Value] = New-Object System.Collections.ArrayList }
+                [void]$svcByPid[$kv.Value].Add($kv.Key)
+            }
         } catch { }
-        $ws = [long]$p.WorkingSet64
-        $totalRam += $ws
-        $th = 0
-        try { $th = $p.Threads.Count } catch { }
-        [void]$rows.Add([pscustomobject]@{ pid = $p.Id; name = $p.ProcessName; cpu = [Math]::Round([Math]::Max(0, $cpu), 2); ws_mb = [Math]::Round($ws / 1MB, 1); threads = $th })
     }
-    $byCpu = @($rows | Sort-Object cpu -Descending | Microsoft.PowerShell.Utility\Select-Object -First $Top)
-    $byRam = @($rows | Sort-Object ws_mb -Descending | Microsoft.PowerShell.Utility\Select-Object -First $Top)
+    if ($native) {
+        foreach ($p in [CentralMonitorNative.Win]::Processes()) {
+            if ($p.Pid -eq 0) { continue }                      # System Idle Process
+            $cpu = 0.0
+            if ($first.ContainsKey($p.Pid)) { $cpu = ($p.Cpu100ns - $first[$p.Pid]) / 1e7 / $span / $cores * 100 }
+            $name = [string]$p.Name
+            if ($name.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $name = $name.Substring(0, $name.Length - 4) }
+            $r = [ordered]@{ pid = $p.Pid; name = $name; cpu = [Math]::Round([Math]::Max(0, $cpu), 2)
+                             ws_mb = [Math]::Round($p.WorkingSet / 1MB, 1); threads = $p.Threads }
+            if ($All) {
+                $path = $null
+                try { $path = [CentralMonitorNative.Win]::ImagePath($p.Pid) } catch { }
+                $fi = Get-CMFileInfo $path
+                $r.ppid       = $p.ParentPid
+                $r.session    = $p.Session
+                $r.private_mb = [Math]::Round($p.Private / 1MB, 1)
+                $r.handles    = $p.Handles
+                $r.started    = $(if ($p.Created -gt 116444736000000000) { [long](($p.Created - 116444736000000000) / 10000000) } else { $null })
+                $r.path       = $path
+                $r.desc       = $(if ($fi) { $fi.desc } else { $null })
+                $r.company    = $(if ($fi) { $fi.company } else { $null })
+                $r.services   = $(if ($svcByPid.ContainsKey($p.Pid)) { @($svcByPid[$p.Pid].ToArray()) } else { @() })
+            }
+            [void]$rows.Add([pscustomobject]$r)
+        }
+    } else {
+        foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
+            if ($p.Id -eq 0) { continue }
+            $cpu = 0.0
+            try {
+                if ($first.ContainsKey($p.Id)) { $cpu = ($p.TotalProcessorTime.Ticks - $first[$p.Id]) / 1e7 / $span / $cores * 100 }
+            } catch { }
+            $th = 0
+            try { $th = $p.Threads.Count } catch { }
+            $r = [ordered]@{ pid = $p.Id; name = $p.ProcessName; cpu = [Math]::Round([Math]::Max(0, $cpu), 2)
+                             ws_mb = [Math]::Round([long]$p.WorkingSet64 / 1MB, 1); threads = $th }
+            if ($All) {
+                $path = $null
+                try { $path = $p.Path } catch { }               # only own processes without the native helper
+                $fi = Get-CMFileInfo $path
+                $r.session  = $p.SessionId
+                $r.path     = $path
+                $r.desc     = $(if ($fi) { $fi.desc } else { $null })
+                $r.company  = $(if ($fi) { $fi.company } else { $null })
+                $r.services = @()
+            }
+            [void]$rows.Add([pscustomobject]$r)
+        }
+    }
+    $res = [ordered]@{
+        v = $script:CMVersion; host = $env:COMPUTERNAME; ts = (Get-CMUnixTime)
+        cores = $cores; count = $rows.Count; interval = [Math]::Round($span, 2); native = [bool]$native
+        self_pid = $script:Self.Id
+    }
+    if ($All) {
+        $res.processes = @($rows | Sort-Object -Property @{ Expression = 'cpu'; Descending = $true }, @{ Expression = 'ws_mb'; Descending = $true })
+    } else {
+        $res.top_cpu = @($rows | Sort-Object cpu -Descending | Microsoft.PowerShell.Utility\Select-Object -First $Top)
+        $res.top_ram = @($rows | Sort-Object ws_mb -Descending | Microsoft.PowerShell.Utility\Select-Object -First $Top)
+    }
+    return (ConvertTo-CMJson $res)
+}
+
+function Get-CMTasks {
+    # Task Scheduler: every task this account may read (COM Schedule.Service, read-only; no WMI, nothing is changed).
+    # Tasks whose security does not allow cm-monitor to read them are not listed (count in "denied").
+    [CmdletBinding()]
+    param(
+        [switch]$IncludeMicrosoft,          # also \Microsoft\... (built-in Windows tasks, ~200)
+        [ValidateRange(1, 3000)]
+        [int]$Max = 1500
+    )
+    Initialize-CMSession
+    $trig = @{ 0 = 'event'; 1 = 'time'; 2 = 'daily'; 3 = 'weekly'; 4 = 'monthly'; 5 = 'monthly-dow'; 6 = 'idle'
+               7 = 'registration'; 8 = 'boot'; 9 = 'logon'; 11 = 'session' }
+    $states = @{ 0 = 'Unknown'; 1 = 'Disabled'; 2 = 'Queued'; 3 = 'Ready'; 4 = 'Running' }
+    $out = New-Object System.Collections.ArrayList
+    $denied = 0
+    $skipped = 0
+    $svc = New-Object -ComObject 'Schedule.Service'
+    try {
+        $svc.Connect()
+        $stack = New-Object System.Collections.Stack
+        $stack.Push($svc.GetFolder('\'))
+        while ($stack.Count -gt 0 -and $out.Count -lt $Max) {
+            $f = $stack.Pop()
+            $fp = [string]$f.Path
+            $ms = $fp.StartsWith('\Microsoft', [StringComparison]::OrdinalIgnoreCase)
+            if ($ms -and -not $IncludeMicrosoft) { $skipped++; continue }
+            try { foreach ($sf in @($f.GetFolders(0))) { $stack.Push($sf) } } catch { $denied++ }
+            $tasks = @()
+            try { $tasks = @($f.GetTasks(1)) } catch { $denied++; continue }      # 1 = include hidden
+            foreach ($t in $tasks) {
+                if ($out.Count -ge $Max) { break }
+                $row = [ordered]@{ path = [string]$t.Path; name = [string]$t.Name; folder = $fp; ms = $ms
+                                   state = $states[[int]$t.State]; enabled = [bool]$t.Enabled
+                                   last_run = $null; last_result = $null; next_run = $null; missed = $null
+                                   user = $null; highest = $false; author = $null; desc = $null; triggers = @(); actions = @() }
+                try { $row.last_run = ConvertTo-CMUnix $t.LastRunTime } catch { }
+                try { $row.last_result = ('0x{0:X8}' -f [int]$t.LastTaskResult) } catch { }
+                try { $row.next_run = ConvertTo-CMUnix $t.NextRunTime } catch { }
+                try { $row.missed = [int]$t.NumberOfMissedRuns } catch { }
+                try {
+                    $d = $t.Definition
+                    $pr = $d.Principal
+                    $row.user = $(if ($pr.UserId) { [string]$pr.UserId } elseif ($pr.GroupId) { [string]$pr.GroupId } else { $null })
+                    $row.highest = ([int]$pr.RunLevel -eq 1)
+                    $row.author = [string]$d.RegistrationInfo.Author
+                    $ds = [string]$d.RegistrationInfo.Description
+                    if ($ds.StartsWith('$(@')) { $ds = '' }
+                    $row.desc = $(if ($ds.Length -gt 300) { $ds.Substring(0, 300) } else { $ds })
+                    $tr = New-Object System.Collections.ArrayList
+                    foreach ($x in @($d.Triggers)) {
+                        $n = $trig[[int]$x.Type]
+                        if (-not $n) { $n = 'type' + [int]$x.Type }
+                        if (-not $x.Enabled) { $n += ' (off)' }
+                        [void]$tr.Add($n)
+                    }
+                    $row.triggers = @($tr.ToArray())
+                    $ac = New-Object System.Collections.ArrayList
+                    foreach ($x in @($d.Actions)) {
+                        if ([int]$x.Type -eq 0) {
+                            [void]$ac.Add([ordered]@{ exe = [string]$x.Path; args = [string]$x.Arguments; dir = [string]$x.WorkingDirectory })
+                        } elseif ([int]$x.Type -eq 5) {
+                            [void]$ac.Add([ordered]@{ com = [string]$x.ClassId })
+                        } else {
+                            [void]$ac.Add([ordered]@{ other = [int]$x.Type })
+                        }
+                    }
+                    $row.actions = @($ac.ToArray())
+                } catch { }
+                [void]$out.Add($row)
+            }
+        }
+    } finally {
+        try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($svc) } catch { }
+    }
     return (ConvertTo-CMJson ([ordered]@{
         v = $script:CMVersion; host = $env:COMPUTERNAME; ts = (Get-CMUnixTime)
-        cores = $cores; count = $rows.Count; interval = [Math]::Round($span, 2)
-        top_cpu = $byCpu; top_ram = $byRam; self_pid = $script:Self.Id
+        tasks = $out.ToArray(); denied = $denied; microsoft_skipped = $skipped; truncated = ($out.Count -ge $Max)
     }))
 }
 
@@ -626,4 +832,4 @@ function Get-CMInventory {
     return (ConvertTo-CMJson $inv)
 }
 
-Export-ModuleMember -Function Get-CMVersion, Get-CMMetrics, Get-CMServices, Get-CMEvents, Get-CMLogTail, Get-CMInventory, Get-CMProcesses
+Export-ModuleMember -Function Get-CMVersion, Get-CMMetrics, Get-CMServices, Get-CMEvents, Get-CMLogTail, Get-CMInventory, Get-CMProcesses, Get-CMTasks

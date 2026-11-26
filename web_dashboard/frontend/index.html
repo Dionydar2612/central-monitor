@@ -56,6 +56,7 @@
 
 <!-- รายละเอียดเครื่องที่เลือก: ซ่อน (และไม่โหลด) จนกว่าจะคลิกเครื่องใน WEB status
      แท็บ (#dTabs, machine.js) ใช้กับทุกเครื่อง: Overview / Performance / Bottleneck / Processes / Hardware / System / Alerts & Events
+     + เฉพาะ Windows (data-win): Services / Task Scheduler / Programs
      แต่ละแท็บ = <div class="dpane" data-pane="..."> แท็บที่ไม่ได้เปิดจะไม่โหลดข้อมูล -->
 <div id="detail" hidden>
 <div class="dtabs" id="dTabs" role="tablist" aria-label="Machine details">
@@ -63,6 +64,9 @@
 <button type="button" role="tab" data-tab="performance" aria-selected="false">Performance</button>
 <button type="button" role="tab" data-tab="bottleneck" aria-selected="false">Bottleneck</button>
 <button type="button" role="tab" data-tab="processes" aria-selected="false">Processes</button>
+<button type="button" role="tab" data-tab="winsvc" data-win hidden aria-selected="false">Services</button>
+<button type="button" role="tab" data-tab="wintask" data-win hidden aria-selected="false">Task Scheduler</button>
+<button type="button" role="tab" data-tab="winproc" data-win hidden aria-selected="false">Programs</button>
 <button type="button" role="tab" data-tab="hardware" aria-selected="false">Hardware</button>
 <button type="button" role="tab" data-tab="system" aria-selected="false">System</button>
 <button type="button" role="tab" data-tab="alerts" aria-selected="false">Alerts &amp; Events</button>
@@ -116,6 +120,10 @@
 </div>
 
 </div>
+<!-- เฉพาะเครื่อง Windows (machine.js): Service ทั้งหมด / Task Scheduler / exe ที่รันอยู่ ดึงสดตอนเปิดแท็บ ไม่เก็บ -->
+<div class="dpane" data-pane="winsvc" hidden><div id="pnWSvc" class="pn"></div></div>
+<div class="dpane" data-pane="wintask" hidden><div id="pnWTask" class="pn"></div></div>
+<div class="dpane" data-pane="winproc" hidden><div id="pnWProc" class="pn"></div></div>
 <div class="dpane" data-pane="hardware" hidden><div id="pnHw" class="pn"></div></div>
 <div class="dpane" data-pane="system" hidden>
 <div id="pnSys" class="pn"></div>

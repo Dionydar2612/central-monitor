@@ -6,6 +6,10 @@
      Performance      CPU / Memory / Disk ต่อไดรฟ์ / Network ต่อการ์ด / TCP / Ping   GET /api/host/<web>/performance
      Bottleneck       ผลตรวจคอขวดหลายค่าพร้อมกัน (sensor_monitor)                 GET /api/host/<web>/bottleneck
      Processes        process ที่ใช้ CPU / RAM / Disk I/O                          (dashboard.js + /api/live-processes)
+     Services         (Windows) service ทั้งหมด + exe / บัญชีที่รัน / PID             GET /api/host/<web>/win-services
+     Task Scheduler   (Windows) task ทั้งหมด + คำสั่งที่รัน / ผลรอบล่าสุด / รอบถัดไป   GET /api/host/<web>/win-tasks
+     Programs         (Windows) exe ที่รันอยู่ทั้งหมด + path / ผู้ผลิต / service ในนั้น  GET /api/host/<web>/win-programs
+                      (3 แท็บนี้แสดงเฉพาะเครื่อง Windows ดึงสดตอนเปิดแท็บ ไม่เก็บลงดิสก์)
      Hardware         CPU รุ่น / RAM / ดิสก์ / การ์ดเครือข่าย / อุณหภูมิ             GET /api/host/<web>/hardware
      System           ชื่อเครื่อง / OS / build / uptime / เวลา / IP / ตัวเก็บข้อมูล + System events   GET /api/host/<web>/system
      Alerts & Events  sensor ของเครื่อง + ประวัติปัญหา 7 วัน                      GET /api/sensors?web= , /api/incidents?web=
@@ -15,9 +19,12 @@
    ===================================================================== */
 (function () {
     "use strict";
-    const PANES = ["overview", "performance", "bottleneck", "processes", "hardware", "system", "alerts"];
-    const API_KIND = { performance: "performance", bottleneck: "bottleneck", hardware: "hardware", system: "system" };
-    const REFRESH_MS = { performance: 15000, bottleneck: 30000, hardware: 300000, system: 60000, alerts: 30000, processes: 20000 };
+    const PANES = ["overview", "performance", "bottleneck", "processes", "winsvc", "wintask", "winproc", "hardware", "system", "alerts"];
+    const WIN_TABS = ["winsvc", "wintask", "winproc"];         // เฉพาะเครื่อง Windows
+    const API_KIND = { performance: "performance", bottleneck: "bottleneck", hardware: "hardware", system: "system",
+                       winsvc: "win-services", wintask: "win-tasks", winproc: "win-programs" };
+    const REFRESH_MS = { performance: 15000, bottleneck: 30000, hardware: 300000, system: 60000, alerts: 30000, processes: 20000,
+                         winsvc: 60000, wintask: 120000, winproc: 30000 };
     const P = { tab: loadTab(), data: {}, at: {}, busy: {} };
 
     function loadTab() {
@@ -290,20 +297,126 @@
         box.querySelectorAll(".syshead > div").forEach(x => { const b = x.querySelector("b"); if (b && b.textContent.trim() === "-") x.remove(); });
     }
 
+    /* ---------------- Windows: Services / Task Scheduler / Programs (ดึงสดเมื่อเปิดแท็บ ไม่เก็บ) ---------------- */
+    const WF = { winsvc: { q: "", k: "all" }, wintask: { q: "", k: "all", ms: false }, winproc: { q: "", k: "all" } };
+    const curWeb = () => (S.webs || []).find(x => x.web === S.web);
+    const mono = v => v ? `<code class="wpath">${esc(v)}</code>` : "-";
+    const n0 = (v, d, u) => hasValue(v) && Number.isFinite(Number(v)) ? `${Number(v).toFixed(d)}${u || ""}` : "-";
+    async function winGet(url) {
+        const r = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+        if (r.status === 401) { window.location.href = "/login"; throw new Error("HTTP 401"); }
+        let d = null;
+        try { d = await r.json(); } catch (e) { /* not json */ }
+        if (r.status === 403) throw new Error("ต้องเป็น operator ขึ้นไป (คำสั่งของ task อาจมีข้อมูลลับ)");
+        if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+        return d;
+    }
+    function wtool(tab, kinds, extra) {
+        const f = WF[tab];
+        return `<div class="wtool" data-wt="${tab}"><input type="search" data-wq placeholder="ค้นหา ชื่อ / exe / บัญชี / คำอธิบาย" value="${esc(f.q)}" aria-label="ค้นหา">` +
+            `<select data-wk aria-label="ตัวกรอง">${kinds.map(([v, t]) => `<option value="${v}"${f.k === v ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>` +
+            `${extra || ""}<span class="wcnt" data-wc></span></div>`;
+    }
+    function wfilter(tab) {
+        const box = q(BOX[tab]);
+        if (!box) return;
+        const f = WF[tab], words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
+        let n = 0, all = 0;
+        box.querySelectorAll("tr[data-s]").forEach(tr => {
+            all++;
+            const ok = (f.k === "all" || ` ${tr.dataset.k} `.includes(` ${f.k} `)) && words.every(w => tr.dataset.s.includes(w));
+            tr.hidden = !ok;
+            if (ok) n++;
+        });
+        const c = box.querySelector("[data-wc]");
+        if (c) c.textContent = `แสดง ${n} จาก ${all}`;
+    }
+    const asof = d => `<small class="wasof">ดึงสดจากเครื่อง ${esc(d.time ? formatTimestamp(d.time) : "")}</small>`;
+    const helperNote = d => d.native ? "" : `<div class="wnote">เครื่องนี้ยังไม่มีตัวช่วยของ module 1.1.4 (บางค่าไม่แสดง) · อัปเดตได้ที่ Settings → แก้ไขเครื่อง → อัปเดตบนเครื่อง</div>`;
+
+    function renderWinServices(d) {
+        const list = d.services || [];
+        const rows = list.map(s => {
+            const run = s.status === "Running", auto = s.start === "Automatic";
+            const k = [run ? "run" : "stop", auto && !run ? "bad" : "", String(s.start || "").toLowerCase(), s.watched ? "watch" : ""].join(" ");
+            const search = [s.name, s.display, s.path, s.account, s.desc, s.pid].join(" ").toLowerCase();
+            return `<tr data-s="${esc(search)}" data-k="${k}"><td><b>${esc(s.display || s.name)}</b>${s.watched ? ' <span class="wtag">เฝ้าดู</span>' : ""}` +
+                `<br><small>${esc(s.name)}</small>${s.desc ? `<div class="wdesc">${esc(s.desc)}</div>` : ""}</td>` +
+                `<td class="${run ? "ok" : auto ? "cr" : ""}">${esc(s.status || "-")}</td><td>${esc(s.start || "-")}${s.delayed ? " <small>(Delayed)</small>" : ""}</td>` +
+                `<td>${esc(s.pid || "-")}</td><td>${esc(s.account || "-")}</td><td>${mono(s.path)}</td></tr>`;
+        });
+        const bad = list.filter(s => s.start === "Automatic" && s.status !== "Running").length;
+        return card(`Services (${list.length})`,
+            wtool("winsvc", [["all", "ทั้งหมด"], ["run", "Running"], ["stop", "Stopped"], ["bad", `Automatic แต่หยุดอยู่ (${bad})`],
+                             ["automatic", "Start: Automatic"], ["manual", "Start: Manual"], ["disabled", "Start: Disabled"], ["watch", "ที่เฝ้าดู"]]) +
+            helperNote(d) + table(["Service", "Status", "Start type", "PID", "Run as", "Executable (path + arguments)"], rows, "ไม่มี service"), asof(d));
+    }
+
+    function renderWinTasks(d) {
+        const list = d.tasks || [];
+        const rows = list.map(t => {
+            const acts = (t.actions || []).map(a => a.exe ? `${a.exe}${a.args ? " " + a.args : ""}` : a.com ? `COM handler ${a.com}` : `action type ${a.other}`);
+            const st = t.enabled ? (t.state || "-") : "Disabled";
+            const k = [t.enabled ? "on" : "off", t.state === "Running" ? "running" : "", t.result_level === "bad" ? "bad" : "", t.ms ? "ms" : "own"].join(" ");
+            const search = [t.path, t.user, t.author, t.desc, acts.join(" ")].join(" ").toLowerCase();
+            const rc = { ok: "ok", bad: "cr" }[t.result_level] || "";
+            return `<tr data-s="${esc(search)}" data-k="${k}"><td><b>${esc(t.name)}</b><br><small>${esc(t.folder || "\\")}${t.author ? " · " + esc(t.author) : ""}</small>` +
+                `${t.desc ? `<div class="wdesc">${esc(t.desc)}</div>` : ""}</td>` +
+                `<td class="${t.state === "Running" ? "ok" : !t.enabled ? "wr" : ""}">${esc(st)}</td>` +
+                `<td>${t.last_run ? esc(ts(t.last_run)) : "-"}</td><td class="${rc}" title="${esc(t.last_result || "")}">${esc(t.result_text || "-")}</td>` +
+                `<td>${t.next_run ? esc(ts(t.next_run)) : "-"}</td><td>${esc((t.triggers || []).join(", ") || "-")}</td>` +
+                `<td>${esc(t.user || "-")}${t.highest ? ' <span class="wtag">Highest</span>' : ""}</td><td>${acts.map(mono).join("<br>") || "-"}</td></tr>`;
+        });
+        const bad = list.filter(t => t.result_level === "bad").length;
+        const notes = [];
+        if (d.denied) notes.push(`มี ${d.denied} โฟลเดอร์ที่ cm-monitor ไม่มีสิทธิ์อ่าน (task ที่ตั้งสิทธิ์ให้เฉพาะ admin จะไม่แสดง)`);
+        if (d.truncated) notes.push("แสดงสูงสุด 1,500 task");
+        const ms = `<label class="wms"><input type="checkbox" data-wms${WF.wintask.ms ? " checked" : ""}> รวม task ของ Microsoft</label>`;
+        return card(`Task Scheduler (${list.length})`,
+            wtool("wintask", [["all", "ทั้งหมด"], ["bad", `ผลรอบล่าสุดผิดพลาด (${bad})`], ["running", "กำลังทำงาน"], ["on", "เปิดอยู่"], ["off", "ปิดอยู่"],
+                              ["own", "ไม่ใช่ของ Microsoft"]], ms) +
+            (notes.length ? `<div class="wnote">${esc(notes.join(" · "))}</div>` : "") +
+            table(["Task", "State", "Last run", "Last result", "Next run", "Triggers", "Run as", "Action (exe + arguments)"], rows,
+                  WF.wintask.ms ? "ไม่มี task" : "ไม่มี task ที่ไม่ใช่ของ Microsoft (ติ๊ก \"รวม task ของ Microsoft\" เพื่อดูทั้งหมด)"), asof(d));
+    }
+
+    function renderWinPrograms(d) {
+        const list = d.processes || [];
+        const rows = list.map(p => {
+            const svc = p.services || [];
+            const k = [p.session === 0 ? "svc" : "user", svc.length ? "hosts" : "", p.path ? "" : "nopath"].join(" ");
+            const search = [p.name, p.pid, p.path, p.desc, p.company, svc.join(" ")].join(" ").toLowerCase();
+            const sub = [p.desc, p.company].filter(Boolean).join(" · ");
+            return `<tr data-s="${esc(search)}" data-k="${k}"><td><b>${esc(p.name)}</b>${p.self ? ' <span class="wtag">central</span>' : ""}` +
+                `${sub ? `<br><small>${esc(sub)}</small>` : ""}</td><td>${esc(p.pid)}</td>` +
+                `<td class="${lv("cpu", p.cpu)}">${n0(p.cpu, 1, "%")}</td><td>${n0(p.ws_mb, 0, " MB")}${hasValue(p.memory) ? ` <small>${n0(p.memory, 1, "%")}</small>` : ""}</td>` +
+                `<td>${mono(p.path)}</td><td>${svc.length ? `<small>${esc(svc.join(", "))}</small>` : "-"}</td>` +
+                `<td>${p.started ? esc(ts(p.started)) : "-"}</td></tr>`;
+        });
+        return card(`Programs (${list.length} process)`,
+            wtool("winproc", [["all", "ทั้งหมด"], ["svc", "รันเบื้องหลัง (session 0 / service)"], ["user", "รันในหน้าจอผู้ใช้"], ["hosts", "มี service อยู่ข้างใน"]]) +
+            helperNote(d) + table(["Program", "PID", `CPU${d.interval ? ` (${d.interval}s)` : ""}`, "RAM", "Exe path", "Services", "Started"], rows, "ไม่มีข้อมูล"), asof(d));
+    }
+
     /* ---------------- ทุกเครื่องใช้แท็บ · Service อยู่ข้างกราฟในแท็บ Overview ---------------- */
     function layout() {
         const main = q("#ovMain"), sv = q("#detail .svcard");
         if (sv && main && sv.parentNode !== main) { main.append(sv); main.className = "grid main"; }
+        const w = curWeb();
+        document.querySelectorAll("#dTabs [data-win]").forEach(b => { b.hidden = !(w && w.os === "windows"); });
         show(P.tab);
     }
 
     /* ---------------- โหลด / วาด ---------------- */
     const RENDER = { performance: renderPerformance, bottleneck: renderBottleneck, hardware: renderHardware,
-                     system: renderSystem, alerts: renderAlerts, processes: renderProcesses };
-    const BOX = { performance: "#pnPerf", bottleneck: "#pnBn", hardware: "#pnHw", system: "#pnSys", alerts: "#pnAl", processes: "#pnProc" };
+                     system: renderSystem, alerts: renderAlerts, processes: renderProcesses,
+                     winsvc: renderWinServices, wintask: renderWinTasks, winproc: renderWinPrograms };
+    const BOX = { performance: "#pnPerf", bottleneck: "#pnBn", hardware: "#pnHw", system: "#pnSys", alerts: "#pnAl", processes: "#pnProc",
+                  winsvc: "#pnWSvc", wintask: "#pnWTask", winproc: "#pnWProc" };
 
     async function fetchPane(tab) {
         const w = encodeURIComponent(S.web);
+        if (WIN_TABS.includes(tab)) return winGet(`/api/host/${w}/${API_KIND[tab]}${tab === "wintask" && WF.wintask.ms ? "?ms=1" : ""}`);
         if (API_KIND[tab]) return apiGet(`/api/host/${w}/${API_KIND[tab]}`);
         if (tab === "alerts") {
             const [s, i] = await Promise.all([apiGet(`/api/sensors?web=${w}`), apiGet(`/api/incidents?web=${w}&hours=168`)]);
@@ -324,8 +437,14 @@
             const web = S.web, d = await fetchPane(tab);
             if (web !== S.web) return;
             P.data[key] = d; P.at[key] = Date.now();
+            const win = WIN_TABS.includes(tab), act = document.activeElement;
+            const typing = win && act && box.contains(act) && act.matches("[data-wq]");
             box.innerHTML = RENDER[tab](d || {});
-            prune(box);
+            if (win) {
+                wfilter(tab);
+                const i = typing && box.querySelector("[data-wq]");
+                if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+            } else prune(box);
             if (!box.textContent.trim() && tab !== "processes") box.innerHTML = `<div class="empty">ยังไม่มีข้อมูล</div>`;
         } catch (err) {
             console.error(`Pane ${tab}:`, err);
@@ -336,6 +455,8 @@
     }
 
     function show(tab) {
+        const w = curWeb();
+        if (WIN_TABS.includes(tab) && w && w.os !== "windows") tab = "overview";       // แท็บเฉพาะ Windows
         P.tab = PANES.includes(tab) ? tab : "overview";
         saveTab(P.tab);
         document.querySelectorAll("#dTabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === P.tab)));
@@ -345,7 +466,7 @@
 
     window.CMPanes = {
         refresh(force) { layout(); if (S.web) load(P.tab, force); },
-        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
+        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc", "#pnWSvc", "#pnWTask", "#pnWProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
         show,
     };
 
@@ -355,8 +476,20 @@
         tabs.addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) show(b.dataset.tab); });
         tabs.addEventListener("keydown", e => {
             if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-            const i = PANES.indexOf(P.tab), n = PANES[(i + (e.key === "ArrowRight" ? 1 : PANES.length - 1)) % PANES.length];
+            const vis = PANES.filter(p => { const b = tabs.querySelector(`[data-tab="${p}"]`); return b && !b.hidden; });
+            const i = Math.max(0, vis.indexOf(P.tab)), n = vis[(i + (e.key === "ArrowRight" ? 1 : vis.length - 1)) % vis.length];
             show(n); const b = tabs.querySelector(`[data-tab="${n}"]`); if (b) b.focus();
+        });
+        /* ค้นหา / ตัวกรอง ของแท็บ Windows (กรองในหน้า ไม่ดึงใหม่) */
+        document.addEventListener("input", e => {
+            const t = e.target.closest && e.target.closest(".wtool");
+            if (t && e.target.matches("[data-wq]")) { WF[t.dataset.wt].q = e.target.value; wfilter(t.dataset.wt); }
+        });
+        document.addEventListener("change", e => {
+            const t = e.target.closest && e.target.closest(".wtool");
+            if (!t) return;
+            if (e.target.matches("[data-wk]")) { WF[t.dataset.wt].k = e.target.value; wfilter(t.dataset.wt); }
+            if (e.target.matches("[data-wms]")) { WF.wintask.ms = e.target.checked; P.at[`${S.web}|wintask`] = 0; load("wintask", true); }
         });
         layout();
     });

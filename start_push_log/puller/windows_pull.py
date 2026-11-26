@@ -721,6 +721,26 @@ def status(name):
             "warnings": dict(w.task_errors)}
 
 
+def all_status():
+    with _lock:
+        names = list(_workers)
+    return {n: status(n) for n in names}
+
+
+def reconnect(name):
+    """หลังติดตั้ง / อัปเดตจากหน้าเว็บ: ปิด session เดิม (ยังโหลด module รุ่นเก่าอยู่) แล้วดึงใหม่ทันที"""
+    w = _workers.get(name)
+    if w is None:
+        return False
+    if w.call_lock.acquire(timeout=60):
+        try:
+            w.close()
+        finally:
+            w.call_lock.release()
+    w.request_now()
+    return True
+
+
 def close_all():
     """central กำลังปิด (docker stop / cm-update): ปิด session ทุกเครื่อง ไม่ทิ้ง shell ค้างบน Windows"""
     with _lock:
