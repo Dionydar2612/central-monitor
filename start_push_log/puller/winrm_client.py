@@ -52,7 +52,11 @@ def server_thumbprint(host, port, timeout=10):
             with ctx.wrap_socket(sock, server_hostname=host) as tls:
                 der = tls.getpeercert(binary_form=True)
     except (OSError, ssl.SSLError) as e:
-        raise WinRMError(f"เชื่อมต่อ {host}:{port} ไม่ได้ ({e.__class__.__name__}: {e})") from e
+        hint = ""
+        if isinstance(e, (TimeoutError, ConnectionRefusedError, socket.timeout)):
+            hint = (f" - เครื่องยังไม่มี WinRM HTTPS ที่พอร์ต {port} (ยังไม่ได้ติดตั้ง: กด ติดตั้งให้เครื่องนี้ ก่อน"
+                    " ระบบตั้ง Thumbprint ให้เอง) หรือ firewall บล็อก")
+        raise WinRMError(f"เชื่อมต่อ {host}:{port} ไม่ได้ ({e.__class__.__name__}: {e}){hint}") from e
     if not der:
         raise WinRMError(f"{host}:{port} ไม่ได้ส่งใบรับรองมา")
     return hashlib.sha1(der).hexdigest().upper()

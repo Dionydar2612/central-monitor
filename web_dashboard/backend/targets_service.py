@@ -543,7 +543,8 @@ def validate_winrm(data, existing_names, editing=None):
     password = password if isinstance(password, str) else ""
     if len(password) > 128:
         errors["password"] = "รหัสผ่านยาวเกินไป"
-    elif password and len(password) < 8:
+    elif password and len(password) < 8 and user.lower() == "cm-monitor":
+        # บัญชีที่มีอยู่แล้ว: ใช้รหัสตามที่บัญชีนั้นมี (central ไม่ได้ตั้งเอง) -> ไม่บังคับความยาว
         errors["password"] = "รหัสผ่านสั้นเกินไป (เว้นว่างได้: ติดตั้งจากหน้าเว็บ / ชุดติดตั้งที่ดาวน์โหลดตั้งให้เอง)"
 
     logs_in = data.get("logs") if isinstance(data.get("logs"), list) else []

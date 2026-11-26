@@ -107,7 +107,7 @@
 <div class="st-grid" style="margin-bottom:6px">
 <div class="st-f"><label for="w_acct">บัญชีที่ central ใช้อ่านข้อมูล</label><select id="w_acct"><option value="new">สร้าง user cm-monitor ใหม่ (แนะนำ · ไม่ใช่ admin)</option><option value="existing">ใช้บัญชีที่มีอยู่แล้ว (ไม่สร้าง user)</option></select></div>
 <div class="st-f" data-f="winrm.user" id="w_xuser_f" hidden><label for="w_xuser">ชื่อบัญชี</label><input id="w_xuser" autocomplete="off" placeholder="svc-monitor  หรือ  DOMAIN\svc-monitor"><div class="st-err"></div></div>
-<div class="st-f" id="w_xpass_f" hidden><label for="w_xpass">รหัสผ่านของบัญชีนี้</label><input id="w_xpass" type="password" autocomplete="new-password"><small>เก็บแบบเข้ารหัสบน central ไม่แสดงกลับ · setup ไม่เปลี่ยนรหัสนี้</small><div class="st-err"></div></div>
+<div class="st-f" data-f="password" id="w_xpass_f" hidden><label for="w_xpass">รหัสผ่านของบัญชีนี้</label><input id="w_xpass" type="password" autocomplete="new-password"><small>เก็บแบบเข้ารหัสบน central ไม่แสดงกลับ · setup ไม่เปลี่ยนรหัสนี้</small><div class="st-err"></div></div>
 </div>
 <div id="w_xnote" class="st-mut" style="font-size:12.5px;margin-bottom:10px" hidden>บัญชีนี้จะได้สิทธิ์อ่านเพิ่ม (Performance Monitor Users, Event Log Readers, อ่านรายการ service, อ่านโฟลเดอร์ log) และเข้าได้เฉพาะคำสั่งอ่านของ Central Monitor ผ่าน endpoint นี้ ·
 ไม่ปิดการ logon / RDP ของบัญชี · ถอนการติดตั้ง = เอาเฉพาะสิทธิ์ที่เพิ่มออก บัญชียังอยู่ · <b>ถ้าเป็นบัญชี admin</b>: central ต้องเก็บรหัสของ admin ไว้ ถ้า central ถูกเจาะจะเข้าเครื่องได้เต็มสิทธิ์ ควรใช้บัญชีที่ไม่ใช่ admin · กรอกรหัสแล้วกด บันทึก ก่อนติดตั้ง</div>

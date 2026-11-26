@@ -448,7 +448,9 @@ function clearErrors() {
 function showErrors(fields) {
     const general = [];
     Object.entries(fields || {}).forEach(([k, msg]) => {
-        let box = document.querySelector(`#formCard [data-f="${CSS.escape(k)}"]`);
+        /* ช่องชื่อเดียวกันมีได้หลายที่ (เช่น รหัสผ่าน cm-monitor / บัญชีที่มีอยู่) -> ใช้ช่องที่มองเห็นอยู่ */
+        const all = [...document.querySelectorAll(`#formCard [data-f="${CSS.escape(k)}"]`)];
+        let box = all.find(x => x.offsetParent !== null) || all[0];
         const m = k.match(/^logs\.(\d+)\.(name|path|type)$/);
         if (m) {
             const row = $("logs").children[Number(m[1])];
