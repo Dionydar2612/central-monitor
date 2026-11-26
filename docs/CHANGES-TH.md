@@ -1,3 +1,11 @@
+# เพิ่มเติม (26 พ.ย. 2026): NTP Monitor (หน้า /ntp)
+- ตรวจ NTP server จาก central ทุก 30 วินาที (SNTP UDP 123): สถานะ / offset / RTT / stratum / ref + กราฟย้อนหลัง 1h – 30d + uptime
+- แจ้งเตือน Teams: ไม่ตอบ / server ไม่ sync เอง / offset ≥ 500 / 2000 ms / RTT ≥ 200 ms (ยืนยันตาม sensors.confirm_checks)
+- กราฟเวลาคลาดของทุกเครื่อง Linux เทียบกันในหน้าเดียว + แท็บ Time / NTP ในกราฟ System Load ของเครื่อง
+- ไฟล์ใหม่: start_push_log/puller/ntp_monitor.py, web_dashboard/backend/ntp_service.py, frontend ntp.html / ntp.js
+
+---
+
 # เพิ่มเติม (26 พ.ย. 2026): Windows - Services / Task Scheduler / Programs (exe) + อัปเดตบนเครื่องจากหน้าเว็บ (module 1.1.4)
 - รายละเอียดเครื่อง Windows มีแท็บเพิ่ม: **Services** (exe + arguments / บัญชีที่รัน / PID / คำอธิบาย), **Task Scheduler**
   (คำสั่งที่รัน / ผลรอบล่าสุด / รอบถัดไป / trigger) และ **Programs** (exe ที่รันอยู่ทั้งหมด + path / ผู้ผลิต / service ในนั้น)

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<!--
+  ntp.html - หน้า NTP Monitor
+    NTP server : central ถาม NTP (UDP 123) ทุก 30 วินาที -> สถานะ / offset / RTT / stratum + กราฟย้อนหลัง
+    เครื่อง Linux: เวลาคลาดจากนาฬิกา central (sensor Time sync) + กราฟเทียบทุกเครื่อง
+    ข้อมูล: GET /api/ntp · GET /api/ntp/history?server=&range= · admin: POST / PUT / DELETE /api/ntp/servers, PUT /api/ntp/settings
+-->
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central Monitor - NTP Monitor</title>
+<link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><b>NTP Monitor</b></div>
+<div class="sbadges" id="sbadges"></div>
+<div class="user"><a class="st-nav" href="/">&larr; Dashboard</a><a class="st-nav" href="/events">Status &amp; Logs</a><span>Logged in as <b id="currentUsername">...</b></span><a class="st-nav" href="/settings" id="settingsLink" hidden>Settings</a><button id="logoutButton">Logout</button></div>
+</header>
+<nav class="apNav" aria-label="Apps &amp; Web"><a href="/apps?view=apps">Applications Monitor</a><a href="/apps?view=web">Web Monitor</a><a href="/ntp" aria-current="page">NTP Monitor</a></nav>
+
+<section class="card apHero" id="ntHero"><span class="apBig"></span><div><h1 id="ntHeadline">กำลังโหลด...</h1><small id="ntSub"></small></div></section>
+
+<!-- NTP server -->
+<section class="card ntCard">
+<div class="ntHead"><h2>NTP servers</h2><span class="cnt" id="ntSrvCnt"></span><button type="button" class="svbtn" id="ntAddBtn" hidden>+ เพิ่ม NTP server</button><button type="button" class="svbtn" id="ntSetBtn" hidden>เกณฑ์</button></div>
+<form class="ntForm" id="ntForm" hidden>
+<label>ชื่อ<input id="nfName" autocomplete="off" placeholder="เช่น ntp-dc1"></label>
+<label>IP / ชื่อเครื่อง<input id="nfHost" autocomplete="off" placeholder="เช่น 10.0.0.1"></label>
+<label>พอร์ต<input id="nfPort" inputmode="numeric" placeholder="123"></label>
+<label>กลุ่ม (ไม่บังคับ)<input id="nfGroup" autocomplete="off" placeholder="เช่น TQ/IT"></label>
+<label class="st-check"><input type="checkbox" id="nfNotify" checked> แจ้ง Teams</label>
+<div class="ntBtns"><button type="submit" class="svbtn primary" id="nfSave">บันทึก</button><button type="button" class="svbtn" id="nfCancel">ยกเลิก</button></div>
+<div class="ntMsg" id="nfMsg"></div>
+</form>
+<form class="ntForm" id="ntSet" hidden>
+<label>offset Warning (ms)<input id="nsWarn" inputmode="decimal"></label>
+<label>offset Error (ms)<input id="nsErr" inputmode="decimal"></label>
+<label>RTT Warning (ms)<input id="nsRtt" inputmode="decimal"></label>
+<label>ตรวจทุก (วินาที)<input id="nsInt" inputmode="numeric"></label>
+<div class="ntBtns"><button type="submit" class="svbtn primary">บันทึก</button><button type="button" class="svbtn" id="nsCancel">ยกเลิก</button></div>
+<div class="ntMsg" id="nsMsg"></div>
+</form>
+<div class="tblw"><table class="ptbl ntTbl"><thead><tr><th>สถานะ</th><th>Server</th><th>Host</th><th class="n">Offset</th><th class="n">RTT</th><th class="n">Stratum</th><th>Ref</th><th>ตรวจล่าสุด</th><th id="ntActH"></th></tr></thead><tbody id="ntSrv"></tbody></table></div>
+<!-- กราฟของ server ที่เลือก -->
+<div class="ntDetail" id="ntDetail" hidden>
+<div class="ntDHead"><h3 id="ndTitle">-</h3><div class="tabs ntRange" id="ndRange"></div></div>
+<div class="ntStats" id="ndStats"></div>
+<div class="ntChartT">Offset เทียบนาฬิกา central (ms) <small>+ = server เดินเร็วกว่า central · เส้นประ = เกณฑ์ Warning / Error</small></div>
+<div class="ntChart" id="ndOffset"></div>
+<div class="ntChartT">เวลาไป-กลับ RTT (ms) <small>แถบแดง = ช่วงที่ไม่ตอบ</small></div>
+<div class="ntChart" id="ndRtt"></div>
+</div>
+</section>
+
+<!-- เครื่อง Linux -->
+<section class="card ntCard">
+<div class="ntHead"><h2>เวลาคลาดของเครื่อง</h2><span class="cnt" id="ntMCnt"></span><div class="tabs ntRange" id="nmRange"></div></div>
+<div class="ntChartT">นาฬิกาเครื่อง - นาฬิกา central (ms) <small>+ = เครื่องเดินเร็วกว่า · คลิกชื่อเครื่องเพื่อเน้นเส้น</small></div>
+<div class="ntChart" id="nmChart"></div>
+<div class="ntLeg" id="nmLeg"></div>
+<div class="tblw"><table class="ptbl ntTbl"><thead><tr><th>สถานะ</th><th>เครื่อง</th><th>NTP sync</th><th class="n">คลาดจาก central</th><th>ข้อความ</th></tr></thead><tbody id="ntMach"></tbody></table></div>
+</section>
+</div>
+<script src="/badges.js"></script>
+<script src="/popup.js"></script>
+<script src="/ntp.js"></script>
+</body>
+</html>

@@ -37,6 +37,16 @@ sensor `Time sync (NTP)` ของทุกเครื่อง Linux ใช้
 - แจ้งเตือน / กลับปกติ ผ่าน Alert และการ์ด Teams เดิม · ปิดรายเครื่องได้ (ปิด sensor > Time sync) · node_exporter ที่ไม่มีค่า timex จะไม่มี sensor นี้
 - ถ้าทุกเครื่องเตือนพร้อมกัน ให้ตรวจนาฬิกาของ central ก่อน
 
+### NTP Monitor (หน้า /ntp)
+
+- **NTP server**: admin เพิ่มที่หน้า NTP Monitor (หรือ `ntp.servers` ใน puller.yaml) · central ถาม NTP (UDP 123) ทุก 30 วินาที
+  - วัด offset (นาฬิกา server - central), RTT, stratum, ref · กราฟย้อนหลัง 1h – 30d จาก Prometheus (`cm_ntp_offset_seconds`, `cm_ntp_rtt_seconds`, `cm_ntp_up`, `cm_ntp_stratum` จาก job central-puller)
+  - สถานะ: ไม่ตอบ = Down · stratum 16 / leap alarm หรือ |offset| ≥ 2000 ms = Error · |offset| ≥ 500 ms หรือ RTT ≥ 200 ms = Warning (ปรับที่ปุ่ม "เกณฑ์")
+  - แจ้ง Teams เมื่อสถานะเปลี่ยนและกลับปกติ (การ์ดหัวข้อ Alert) · ปิดการแจ้งรายตัวได้
+  - central ต้องออก UDP 123 ไปหา server ได้ · โหมด Prometheus external ต้อง scrape central-puller:8000 ถึงจะมีกราฟ
+- **เครื่อง Linux**: ตารางสถานะ Time sync + กราฟเวลาคลาดของทุกเครื่องเทียบกัน (คลิกชื่อเพื่อเน้นเส้น)
+- หน้ารายละเอียดเครื่อง Linux: กราฟ System Load แท็บ **Time / NTP** (คลาดจาก central + คลาดจาก NTP server ตามที่ kernel ประเมิน)
+
 ## 3. Bottleneck (หลายค่าพร้อมกัน)
 
 แต่ละหมวดมีสัญญาณหลายตัว ถ้าเกินเกณฑ์ **ตั้งแต่ 2 ตัว** = **Bottleneck** (Warning หรือ Error ถ้าตัวใดถึงระดับ error)

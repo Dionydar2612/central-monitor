@@ -115,3 +115,16 @@ targets: []
 #     verify_tls: false           # (ไม่บังคับ) ไม่ตรวจใบรับรอง เช่น self-signed ภายใน
 # ---------------------------------------------------------------------
 checks: []
+
+# ---------------------------------------------------------------------
+# ntp = NTP Monitor (หน้า /ntp · เพิ่ม / แก้จากหน้าเว็บได้ admin)
+#   central ถาม NTP (UDP 123) ทุก interval วินาที -> offset เทียบนาฬิกา central / RTT / stratum + กราฟย้อนหลัง
+#   ไม่ตอบ / stratum 16 = แจ้งเตือน (ยืนยันตาม sensors.confirm_checks รอบ เหมือน sensor ของเครื่อง)
+# ntp:
+#   interval: 30              # วินาที (15-600)
+#   offset_warning_ms: 500
+#   offset_error_ms: 2000
+#   rtt_warning_ms: 200
+#   servers:
+#     - {name: ntp-dc1, host: 10.0.0.1, group: TQ/IT}    # port: 123 · paused: true · notify: false
+# ---------------------------------------------------------------------

@@ -143,6 +143,9 @@ LINUX_PROMQL = {
     "load1": lambda l: f"node_load1{{{l}}}",
     "load5": lambda l: f"node_load5{{{l}}}",
     "load15": lambda l: f"node_load15{{{l}}}",
+    # เวลา / NTP (ms, ค่าสัมบูรณ์): คลาดจากนาฬิกา central · คลาดจาก NTP server ตามที่ kernel ประเมิน (chrony / timesyncd)
+    "time_offset": lambda l: f"max(abs(node_time_seconds{{{l}}} - timestamp(node_time_seconds{{{l}}}))) * 1000",
+    "ntp_offset": lambda l: f"max(abs(node_timex_offset_seconds{{{l}}})) * 1000",
     "cores": lambda l: f'count(node_cpu_seconds_total{{{l},mode="idle"}})',
 }
 
@@ -296,6 +299,7 @@ HISTORY_SETS = {
     "io": ("disk_read", "disk_write"),
     "net": ("net_rx", "net_tx"),
     "load": ("load1", "load5", "load15"),
+    "time": ("time_offset", "ntp_offset"),
 }
 
 

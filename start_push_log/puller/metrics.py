@@ -97,3 +97,10 @@ app_http_code = Gauge(
     "Apps & Web last HTTP status code (0 = no response)",
     ["rule", "web", "metric"],
 )
+
+
+# --- NTP Monitor (ntp_monitor.py): ผลตรวจ NTP server จาก central ทุก ntp.interval วินาที -> กราฟในหน้า /ntp ---
+ntp_up = Gauge("cm_ntp_up", "NTP server replied: 1 = yes, 0 = no", ["server", "host"])
+ntp_offset = Gauge("cm_ntp_offset_seconds", "NTP server clock minus central clock (seconds, signed)", ["server", "host"])
+ntp_rtt = Gauge("cm_ntp_rtt_seconds", "NTP round-trip delay from central (seconds)", ["server", "host"])
+ntp_stratum = Gauge("cm_ntp_stratum", "NTP server stratum (16 = not synchronized)", ["server", "host"])

@@ -39,6 +39,25 @@ class Backend(unittest.TestCase):
         self.c.post("/api/logout")
         return self.c.post("/api/login", json={"username": u, "password": p}).status_code
 
+    def test_ntp_api(self):
+        """NTP Monitor: admin เพิ่ม / แก้ / หยุด / ลบ server + เกณฑ์ · viewer อ่านได้"""
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        r = c.post("/api/ntp/servers", json={"name": "dc1", "host": "10.0.0.1", "group": "TQ/IT"})
+        self.assertEqual(r.status_code, 201, r.json)
+        self.assertEqual([(s["name"], s["status"]) for s in r.json["servers"]], [("dc1", "pending")])
+        self.assertEqual(c.post("/api/ntp/servers", json={"name": "dc1", "host": "10.0.0.2"}).json["fields"]["name"], "มีชื่อนี้แล้ว")
+        self.assertIn("host", c.post("/api/ntp/servers", json={"name": "x", "host": "bad host!"}).json["fields"])
+        r = c.put("/api/ntp/servers/dc1", json={"paused": True, "port": 1123})
+        self.assertEqual((r.json["servers"][0]["status"], r.json["servers"][0]["port"]), ("paused", 1123))
+        self.assertEqual(c.put("/api/ntp/settings", json={"offset_warning_ms": 3000}).status_code, 400)   # warning >= error
+        r = c.put("/api/ntp/settings", json={"offset_warning_ms": 100, "offset_error_ms": 1000})
+        self.assertEqual((r.json["settings"]["offset_warning_ms"], r.json["settings"]["rtt_warning_ms"]), (100, 200))
+        self.assertEqual(c.get("/api/ntp/history?server=nope").status_code, 404)
+        self.assertEqual(c.get("/api/ntp/history?server=dc1&range=7d").json["range"], "7d")
+        self.assertEqual(c.delete("/api/ntp/servers/dc1").json["servers"], [])
+        self.assertEqual(c.delete("/api/ntp/servers/dc1").status_code, 404)
+
     def test_host_details_windows_inventory(self):
         """แท็บ Hardware / System ของเครื่อง Windows: เติมข้อมูลจาก inventory ใน snapshot (ไม่มีค่า = ไม่ใส่)"""
         import host_details

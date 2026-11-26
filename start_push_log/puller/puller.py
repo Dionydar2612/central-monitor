@@ -20,6 +20,7 @@ puller.py - จุดเริ่มต้นของ central-puller (ระบ
     journal.py             อ่าน systemd journal (logs[].path = journal / journal:<unit>)
     ondemand.py            ดึง INFO สดเฉพาะตอนกดปุ่มบนหน้าเว็บ (ไม่เก็บ)
     web_checks.py          เช็คเว็บ (uptime) + วันหมดอายุ SSL ตาม checks: ใน puller.yaml
+    ntp_monitor.py         ตรวจ NTP server (offset / RTT / stratum) ตาม ntp.servers ใน puller.yaml
     sensor_monitor.py      สถานะ sensor ต่อเครื่อง (แบบ PRTG) ทุก 30 วินาที -> sensors.json + System log
     events.py              เขียน System log (data/state/events.log)
     checkpoint.py          จำ byte offset ที่ดึงแล้ว (data/state/checkpoints.json)
@@ -45,6 +46,7 @@ from ondemand import start_server as start_ondemand_server
 from scheduler import run_forever
 from sensor_monitor import start as start_sensor_monitor
 from web_checks import start as start_web_checks
+from ntp_monitor import start as start_ntp_monitor
 from windows_pull import start as start_windows_pull
 
 
@@ -71,6 +73,7 @@ def main():
         print(f"[ONDEMAND ERROR] {e}")
 
     start_web_checks()          # เช็คเว็บ/SSL (puller.yaml -> checks:) thread แยก
+    start_ntp_monitor()         # ตรวจ NTP server (puller.yaml -> ntp.servers) thread แยก
     start_sensor_monitor()      # สถานะ sensor ต่อเครื่อง (CPU/Memory/Disk/Availability/Log pull) + System log
 
     try:

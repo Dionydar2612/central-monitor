@@ -1749,3 +1749,26 @@ button.ovst{border:0;font:inherit;cursor:pointer}button.ovst:hover{filter:bright
 /* Settings: ฟอร์มเครื่องแสดงเฉพาะช่องของชนิดที่เลือก (Linux = .ssh-only, Windows = .win-only) */
 #formCard[data-type="winrm"] .ssh-only{display:none!important}
 #formCard:not([data-type="winrm"]) .win-only{display:none!important}
+
+/* NTP Monitor (ntp.html) */
+.ntCard{margin-top:16px}
+.ntHead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.ntHead h2{margin:0;font-size:17px}.ntHead .cnt{color:var(--mut);font-size:13px}
+.ntHead .svbtn:first-of-type{margin-left:auto}.ntHead .ntRange{margin-left:auto}
+.ntForm{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;padding:12px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;background:var(--chip)}
+.ntForm label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mut)}.ntForm label.st-check{flex-direction:row;align-items:center;color:var(--ink)}
+.ntForm input:not([type=checkbox]){font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);width:160px}
+.ntBtns{display:flex;gap:6px}.ntMsg{flex-basis:100%;font-size:13px}.ntMsg.bad{color:#e5484d}.ntMsg:empty{display:none}
+.ntTbl td.n,.ntTbl th.n{text-align:right;font-variant-numeric:tabular-nums}.ntTbl small{color:var(--mut)}
+.ntTbl tbody tr[data-srv],.ntTbl tbody tr[data-m]{cursor:pointer}.ntTbl tbody tr.on td{background:rgba(31,123,255,.07)}
+.ntTbl .ok{color:#0a9a60}.ntTbl .wr{color:#c27c00}.ntTbl .cr{color:#e5484d}.ntAct{white-space:nowrap;text-align:right}.ntAct .svbtn{margin-left:4px}
+.ntDetail{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.ntDHead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.ntDHead h3{margin:0;font-size:16px}.ntDHead .ntRange{margin-left:auto}
+.ntStats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:12px 0}
+.ntStats div{background:var(--chip);border-radius:8px;padding:8px 10px}.ntStats small{display:block;color:var(--mut);font-size:12px}.ntStats b{font-size:15px;font-variant-numeric:tabular-nums}
+.ntStats .ok{color:#0a9a60}.ntStats .wr{color:#c27c00}.ntStats .cr{color:#e5484d}
+.ntChartT{font-size:13px;font-weight:600;margin:12px 0 4px}.ntChartT small{font-weight:400;color:var(--mut);margin-left:6px}
+.ntSvg{width:100%;height:auto;display:block;font-size:11px}.ntSvg text{fill:var(--mut)}.ntSvg .gl{stroke:var(--line);stroke-width:1}
+.ntLeg{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 12px}
+.ntLeg button{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);cursor:pointer}
+.ntLeg button[aria-pressed=true]{border-color:var(--blue)}.ntLeg i{width:10px;height:3px;border-radius:2px;display:inline-block}
+@media(max-width:720px){.ntForm input:not([type=checkbox]){width:100%}.ntForm label{flex:1 1 140px}}

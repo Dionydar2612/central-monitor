@@ -1743,7 +1743,10 @@ const CH = {
     io: { label: "Disk I/O", unit: "MB/s",
         lines: [["disk_read", "Read", "#1f7bff", true], ["disk_write", "Write", "#10c27a"]] },
     net: { label: "Network", unit: "MB/s",
-        lines: [["net_rx", "Receive ↓", "#1f7bff", true], ["net_tx", "Send ↑", "#10c27a"]] }
+        lines: [["net_rx", "Receive ↓", "#1f7bff", true], ["net_tx", "Send ↑", "#10c27a"]] },
+    /* เวลาคลาด (ms) เฉพาะเครื่อง Linux: เทียบนาฬิกา central + ที่ kernel ประเมินเทียบ NTP server (chrony / timesyncd) */
+    time: { label: "Time / NTP", unit: "ms", linux: true,
+        lines: [["time_offset", "Offset vs central", "#1f7bff", true], ["ntp_offset", "Offset vs NTP server", "#f5a524"]] }
     /* แท็บ Load ถูกนำออก (ค่า Load ยังดูได้ที่แถบสรุปด้านบน) */
 };
 /* เรขาคณิตของกราฟ (หน่วย viewBox) */
@@ -1811,7 +1814,9 @@ function chartView() {
 
 function renderLoad() {
     const v = chartView(), { cfg, lines, t0, t1, span, gap, ymax, X, Y } = v;
-    q("#chTabs").innerHTML = Object.keys(CH).map(k => `<button type="button" data-ch="${k}" aria-pressed="${S.chart === k}">${CH[k].label}</button>`).join("");
+    const win = ((S.webs || []).find(x => x.web === S.web) || {}).os === "windows";
+    if (win && CH[S.chart] && CH[S.chart].linux) S.chart = "main";
+    q("#chTabs").innerHTML = Object.keys(CH).filter(k => !(win && CH[k].linux)).map(k => `<button type="button" data-ch="${k}" aria-pressed="${S.chart === k}">${CH[k].label}</button>`).join("");
     q("#chNote").innerHTML = cfg.note || "";      /* ข้อความคงที่ของเราเอง (ไม่ใช่ข้อมูลจากเซิร์ฟเวอร์) */
     let s = "";
     /* แกน Y + เส้นตาราง */

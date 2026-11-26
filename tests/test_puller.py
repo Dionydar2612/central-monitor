@@ -28,6 +28,7 @@ import system_info        # noqa: E402
 import web_checks         # noqa: E402
 import notify             # noqa: E402
 import netsec             # noqa: E402
+import ntp_monitor        # noqa: E402
 
 
 
@@ -123,6 +124,46 @@ class Bottleneck(unittest.TestCase):
 
     def test_duration_text(self):
         self.assertTrue(sensor_monitor._fmt_duration(125))
+
+
+class NtpMonitor(unittest.TestCase):
+    """NTP server: แปลงคำตอบ / ตัดสินสถานะ / ยืนยัน N รอบ / ส่ง metric"""
+    def pkt(self, origin, t2, t3, stratum=2, li=0):
+        import struct
+        def ts(x):
+            x += ntp_monitor.NTP_EPOCH
+            return struct.pack("!II", int(x), int((x % 1) * 2 ** 32))
+        return bytes([(li << 6) | (4 << 3) | 4, stratum, 0, 0]) + struct.pack("!iI", 98, 100) + bytes([10, 0, 0, 1]) \
+            + ts(990) + origin + ts(t2) + ts(t3)
+
+    def test_parse_and_grade(self):
+        import struct
+        origin = struct.pack("!II", 1000 + ntp_monitor.NTP_EPOCH, 0)
+        r = ntp_monitor.parse(self.pkt(origin, 1000.525, 1000.526), origin, 1000.0, 1000.05)
+        self.assertEqual((r["ok"], r["offset_ms"], r["rtt_ms"], r["stratum"], r["refid"]), (True, 500.5, 49.0, 2, "10.0.0.1"))
+        self.assertFalse(ntp_monitor.parse(self.pkt(b"x" * 8, 1, 1), origin, 0, 0)["ok"])      # ไม่ใช่คำตอบของคำขอนี้
+        self.assertIn("kiss", ntp_monitor.parse(self.pkt(origin, 1, 1, stratum=0), origin, 0, 0)["error"])
+        cfg = ntp_monitor.settings({})
+        self.assertEqual(ntp_monitor.grade(r, cfg)[0], "warning")
+        self.assertEqual(ntp_monitor.grade(dict(r, offset_ms=-2500), cfg)[0], "error")
+        self.assertEqual(ntp_monitor.grade(dict(r, offset_ms=3, rtt_ms=250), cfg)[0], "warning")
+        self.assertEqual(ntp_monitor.grade(dict(r, offset_ms=3, stratum=16), cfg)[0], "error")
+        self.assertEqual(ntp_monitor.grade(dict(r, offset_ms=3), cfg)[0], "ok")
+        self.assertEqual(ntp_monitor.grade({"ok": False, "error": "x"}, cfg)[0], "down")
+
+    def test_confirm_and_run_once(self):
+        cfg = {"sensors": {"confirm_checks": 2}, "ntp": {"servers": [{"name": "dc1", "host": "10.0.0.1"}, {"name": "p", "host": "x", "paused": True}]},
+               "notify": {"teams": {"enabled": False}}}
+        good = {"ok": True, "offset_ms": 3.0, "rtt_ms": 1.0, "stratum": 2, "leap": 0, "refid": "x"}
+        st = ntp_monitor.run_once({}, cfg, now=1, ask=lambda h, p: good)
+        self.assertEqual((st["dc1"]["status"], st["p"]["status"]), ("ok", "paused"))
+        st = ntp_monitor.run_once(st, cfg, now=2, ask=lambda h, p: {"ok": False, "error": "timeout"})
+        self.assertEqual((st["dc1"]["status"], st["dc1"]["pending"]), ("ok", ["down", 1]))      # ยังไม่ยืนยัน
+        st = ntp_monitor.run_once(st, cfg, now=3, ask=lambda h, p: {"ok": False, "error": "timeout"})
+        self.assertEqual(st["dc1"]["status"], "down")
+        self.assertEqual(ntp_monitor.metrics.ntp_up.labels("dc1", "10.0.0.1")._value.get(), 0)
+        st = ntp_monitor.run_once(st, {"ntp": {"servers": []}}, now=4)                           # ลบออกจาก puller.yaml
+        self.assertEqual(st, {})
 
 
 class TimeSync(unittest.TestCase):

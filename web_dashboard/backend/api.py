@@ -92,6 +92,7 @@ import alert_settings_service
 import notify_service
 import alert_rules_service
 import host_details
+import ntp_service
 import netsec_service
 import ui_order_service
 from users_service import UserError, role_at_least
@@ -205,7 +206,7 @@ def _required_role(method, path):
         return "admin"                             # ย้ายกลุ่ม (แก้ puller.yaml)
     if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
         return "admin"
-    if path.startswith(("/api/checks", "/api/apps")):
+    if path.startswith(("/api/checks", "/api/apps", "/api/ntp")):
         return "viewer" if method == "GET" else "admin"
     if path == "/api/info-logs":
         return "operator"
@@ -288,7 +289,7 @@ def no_stale_frontend(response):
     กันอาการ "อัปเดตแล้วแต่หน้าเว็บยังเป็นแบบเก่า" ที่ต้องกด Ctrl+F5"""
     if request.method == "GET" and not request.path.startswith("/api/") and "Cache-Control" not in response.headers:
         p = request.path
-        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/login") or p.endswith((".js", ".css", ".html")):
+        if p in ("/", "/settings", "/events", "/apps", "/sensor", "/network", "/ntp", "/login") or p.endswith((".js", ".css", ".html")):
             response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -628,6 +629,65 @@ def netsec_refresh(web):
         return jsonify({"error": "not found"}), 404
     targets_service.request_pull(web)
     return jsonify({"ok": True})
+
+
+@app.get("/ntp")
+def ntp_page():
+    """หน้า NTP Monitor (frontend/ntp.html)"""
+    return send_from_directory(STATIC_DIR, "ntp.html")
+
+
+@app.get("/api/ntp")
+def ntp_overview():
+    """NTP server ทั้งหมด (ผลล่าสุด) + เวลาคลาดของทุกเครื่อง Linux + เกณฑ์"""
+    try:
+        return jsonify(ntp_service.get_overview())
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+
+
+@app.get("/api/ntp/history")
+def ntp_history():
+    """?server=<ชื่อ>&range=1h|6h|24h|3d|7d|30d  กราฟ offset / RTT / up / stratum ของ server
+       ไม่ใส่ server = กราฟเวลาคลาดของทุกเครื่อง Linux"""
+    rk = request.args.get("range", "24h")
+    name = request.args.get("server")
+    if not name:
+        return jsonify(ntp_service.machines_history(rk))
+    d = ntp_service.server_history(name, rk)
+    return (jsonify(d), 200) if d else (jsonify({"error": "not found"}), 404)
+
+
+def _ntp_write(fn, *args, created=False):
+    try:
+        if request.method != "DELETE" and _json_body() is None:
+            return jsonify({"error": "ต้องส่งเป็น JSON"}), 400
+        ok, out = fn(*args)
+    except (OSError, YAMLError) as e:
+        return _config_error(e)
+    if ok:
+        return jsonify(out), (201 if created else 200)
+    return jsonify(out), out.pop("status", 400)
+
+
+@app.post("/api/ntp/servers")
+def ntp_add():
+    return _ntp_write(lambda: ntp_service.add_server(_json_body()), created=True)
+
+
+@app.put("/api/ntp/servers/<name>")
+def ntp_update(name):
+    return _ntp_write(lambda: ntp_service.update_server(name, _json_body()))
+
+
+@app.delete("/api/ntp/servers/<name>")
+def ntp_delete(name):
+    return _ntp_write(lambda: ntp_service.delete_server(name))
+
+
+@app.put("/api/ntp/settings")
+def ntp_settings():
+    return _ntp_write(lambda: ntp_service.update_settings(_json_body()))
 
 
 @app.get("/apps")
