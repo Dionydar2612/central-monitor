@@ -25,7 +25,7 @@
 # =====================================================================
 Set-StrictMode -Version 2.0
 
-$script:CMVersion   = '1.1.2'
+$script:CMVersion   = '1.1.3'
 $script:DataDir     = Join-Path $env:ProgramData 'CentralMonitor'
 $script:AllowFile   = Join-Path $script:DataDir 'allowed-paths.txt'
 $script:MaxText     = 2048          # max characters per event message
@@ -597,6 +597,16 @@ function Get-CMInventory {
     } catch { $inv.system = $null }
     $cpuName = Get-CMRegValue 'HARDWARE\DESCRIPTION\System\CentralProcessor\0' 'ProcessorNameString'
     $inv.cpu = @($(if ($cpuName) { ([string]$cpuName).Trim() }))
+    # sockets / physical cores: written by setup (administrator, WMI) to hardware.json - read-only here
+    $inv.cpu_info = $null
+    try {
+        $hwFile = Join-Path $script:DataDir 'hardware.json'
+        if ([System.IO.File]::Exists($hwFile)) {
+            $hw = [System.IO.File]::ReadAllText($hwFile) | ConvertFrom-Json
+            $inv.cpu_info = [ordered]@{ sockets = [int]$hw.sockets; cores = [int]$hw.cores; logical = [int]$hw.logical
+                                        max_mhz = [int]$hw.max_mhz; updated = [string]$hw.updated }
+        }
+    } catch { }
     $nics = New-Object System.Collections.ArrayList
     try {
         foreach ($ni in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {

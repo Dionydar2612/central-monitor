@@ -348,6 +348,15 @@ def _win_hardware(data, inv):
         cpu["models"] = [{"name": n} for n in inv["cpu"] if n]
     if sy.get("logical_cpu"):
         cpu["logical_processors"] = sy["logical_cpu"]
+    # "cores" จาก Prometheus = จำนวน logical processor (นับ counter ต่อ CPU) ไม่ใช่ core จริง
+    # core จริง / socket / clock มาจาก setup (admin อ่าน WMI แล้วเก็บ hardware.json) -> inventory.cpu_info
+    ci = inv.get("cpu_info") if isinstance(inv.get("cpu_info"), dict) else {}
+    cpu["cores"] = ci.get("cores") or None
+    cpu["sockets"] = ci.get("sockets") or None
+    if ci.get("logical"):
+        cpu["logical_processors"] = ci["logical"]
+    if ci.get("max_mhz"):
+        cpu["frequency_mhz"] = ci["max_mhz"]
     if not (data.get("memory") or {}).get("total_bytes") and sy.get("ram_mb"):
         data["memory"] = {"total_bytes": sy["ram_mb"] * MB}
     nics = _win_nics(inv)

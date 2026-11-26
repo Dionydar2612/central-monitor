@@ -34,7 +34,7 @@ $ModDir    = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonit
 $RuleName  = 'CentralMonitor-WinRM-HTTPS'
 $ManiPath  = Join-Path $DataDir 'manifest.json'
 $CredPath  = Join-Path $DataDir 'cm-monitor-credential.txt'
-$Version   = '1.1.2'
+$Version   = '1.1.3'
 $SID_PERF  = 'S-1-5-32-558'   # Performance Monitor Users
 $SID_EVT   = 'S-1-5-32-573'   # Event Log Readers
 $SID_ADM   = 'S-1-5-32-544'   # Administrators
@@ -157,7 +157,7 @@ $thumb = ''
 $port = 0
 $errMsg = ''
 try {
-    Say '=== Central Monitor - Windows agentless setup (v1.1.2) ===' 'Cyan'
+    Say '=== Central Monitor - Windows agentless setup (v1.1.3) ===' 'Cyan'
     Info "log: $LogFile"
 
     # ----------------------------------------------------------- checks
@@ -356,6 +356,23 @@ try {
     Save-Manifest $m
 
     # ----------------------------------------------------------- certificate + HTTPS listener
+    # CPU sockets / physical cores need WMI, which a non-admin JEA session cannot use: read them here (setup runs
+    # as administrator) once and keep a small file the module returns in the inventory. Run setup again after a
+    # hardware / vCPU change.
+    try {
+        $procs = @(Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop)
+        $hw = [ordered]@{
+            updated = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            sockets = $procs.Count
+            cores   = [int](($procs | Measure-Object -Property NumberOfCores -Sum).Sum)
+            logical = [int](($procs | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
+            max_mhz = [int](($procs | Measure-Object -Property MaxClockSpeed -Maximum).Maximum)
+            model   = ([string]$procs[0].Name).Trim()
+        }
+        [System.IO.File]::WriteAllText((Join-Path $DataDir 'hardware.json'), ($hw | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+        Ok "CPU: $($hw.sockets) socket(s), $($hw.cores) core(s), $($hw.logical) logical processor(s), $($hw.max_mhz) MHz"
+    } catch { Warn "could not read the CPU core count (Win32_Processor): $($_.Exception.Message)" }
+
     Step '5/8 WinRM HTTPS listener'
     $lis = Get-HttpsListener
     if ($null -ne $lis) {

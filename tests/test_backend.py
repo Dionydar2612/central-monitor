@@ -62,6 +62,19 @@ class Backend(unittest.TestCase):
         host_details._win_system(sy2, {})
         self.assertEqual((sy2["build"], sy2["hotfixes"]), ("6.8", []))
 
+    def test_windows_cpu_cores(self):
+        """Windows: cores จริง / socket / clock มาจาก hardware.json (setup) ไม่ใช่จำนวน logical processor"""
+        import host_details
+        data = {"cpu": {"cores": 8, "logical_processors": 8}}
+        host_details._win_hardware(data, {"system": {"logical_cpu": 8}, "cpu": ["Intel Xeon"],
+                                          "cpu_info": {"sockets": 1, "cores": 4, "logical": 8, "max_mhz": 2400}})
+        self.assertEqual((data["cpu"]["sockets"], data["cpu"]["cores"], data["cpu"]["logical_processors"],
+                          data["cpu"]["frequency_mhz"]), (1, 4, 8, 2400))
+        data = {"cpu": {"cores": 8, "logical_processors": 8}}
+        host_details._win_hardware(data, {"system": {"logical_cpu": 8}})
+        self.assertIsNone(data["cpu"]["cores"])                        # ไม่รู้ core จริง -> ไม่แสดงเลขผิด
+        self.assertEqual(data["cpu"]["logical_processors"], 8)
+
     def test_windows_target(self):
         """เครื่อง Windows (type: winrm) จากหน้า Settings: รหัสเก็บแยก (เข้ารหัส) / web-nodes.json / ชุดติดตั้ง"""
         import zipfile
