@@ -72,7 +72,7 @@ WILDCARDS = "*?["
 GROUP_PART = r"[A-Za-z0-9฀-๿ _.()&+-]{1,40}"
 GROUP_RE = re.compile(rf"^{GROUP_PART}(?:/{GROUP_PART}){{0,9}}$")
 GROUP_MAX_DEPTH = 10
-TARGET_TYPES = ("ssh", "winrm")       # winrm = Windows ไม่ลง agent (start_push_log/puller/windows_pull.py)
+TARGET_TYPES = ("ssh", "winrm", "agent")   # winrm = Windows ไม่ลง agent (windows_pull.py) · agent = Windows ลง cm-agent (agent_bridge.py)
 WINPATH_RE = re.compile(r'^[A-Za-z]:\\[^\x00-\x1f"<>|:]{1,300}$')
 WINUSER_RE = re.compile(r"^(?:[A-Za-z0-9._-]{1,15}\\)?[A-Za-z0-9 _.@-]{1,64}$")
 THUMB_RE = re.compile(r"^[0-9A-F]{40}$")
@@ -388,8 +388,112 @@ def _text(data, key):
 
 
 def is_agent(t):
-    """เครื่อง Windows แบบเดิม (type: agent) ที่ยังค้างใน puller.yaml -> แสดงให้ลบได้เท่านั้น"""
+    """เครื่อง Windows แบบ cm-agent (type: agent): Fluent Bit + windows_exporter ส่งข้อมูลเข้า central-agent-gw :4318"""
     return isinstance(t, dict) and str(t.get("type") or "ssh") == "agent"
+
+
+# cm-agent: ค่าที่ตั้งก่อนติดตั้ง (ยิ่งนาน = เครื่องยิ่งเบา) -> (ค่าปริยาย, ต่ำสุด, สูงสุด)
+AGENT_INTERVALS = {
+    "metrics_interval": (60, 15, 600),       # วินาที อ่าน windows_exporter
+    "heartbeat_interval": (60, 15, 600),     # วินาที สัญญาณ "ยังทำงาน"
+    "event_interval": (30, 5, 600),          # วินาที อ่าน Event Log
+    "log_refresh": (60, 10, 600),            # วินาที หาไฟล์ log ใหม่ / หมุนไฟล์
+    "flush": (15, 1, 120),                   # วินาที ส่งข้อมูลที่พักไว้
+    "inventory_minutes": (60, 15, 1440),     # นาที รายการโปรแกรม / พอร์ต
+}
+AGENT_FEATURES = {"metrics": True, "logs": True, "software": True, "processes": False}
+
+
+def agent_defaults():
+    return {**{k: v[0] for k, v in AGENT_INTERVALS.items()}, "features": dict(AGENT_FEATURES),
+            "event_logs": list(DEFAULT_EVENT_LOGS), "port": 4318, "central": "", "skip_cert": False}
+
+
+def _clean_event_logs(evlogs, errors, field):
+    if isinstance(evlogs, str):
+        evlogs = [x.strip() for x in evlogs.split(",")]
+    evlogs = [str(x).strip() for x in (evlogs if isinstance(evlogs, list) else DEFAULT_EVENT_LOGS) if str(x).strip()]
+    if len(evlogs) > 10 or any(not EVENTLOG_RE.match(x) for x in evlogs):
+        errors[field] = "ชื่อ Event log คั่นด้วย , (ไม่เกิน 10) เช่น System, Application"
+    return evlogs
+
+
+def _clean_win_logs(data, errors):
+    logs_in = data.get("logs") if isinstance(data.get("logs"), list) else []
+    logs = []
+    if len(logs_in) > MAX_LOGS_PER_TARGET:
+        errors["logs"] = f"เพิ่มได้ไม่เกิน {MAX_LOGS_PER_TARGET} ไฟล์ต่อเครื่อง"
+    for i, item in enumerate(logs_in[:MAX_LOGS_PER_TARGET]):
+        item = item if isinstance(item, dict) else {}
+        l_name, l_path = _text(item, "name"), _text(item, "path")
+        l_type = _text(item, "type") or "application"
+        if not l_path and not l_name:
+            continue
+        prefix = f"logs.{i}."
+        if not LOGNAME_RE.match(l_name):
+            errors[prefix + "name"] = "ใช้ A-Z a-z 0-9 _ - เท่านั้น"
+        folder = l_path.rsplit("\\", 1)[0]
+        if not WINPATH_RE.match(l_path) or ".." in l_path.split("\\") or l_path.endswith("\\"):
+            errors[prefix + "path"] = "path ของ Windows เช่น D:\\App\\logs\\app.log หรือ D:\\App\\logs\\*.log"
+        elif any(ch in folder for ch in "*?"):
+            errors[prefix + "path"] = "wildcard ใช้ได้เฉพาะชื่อไฟล์ (ส่วนท้าย) ไม่ใช่ชื่อโฟลเดอร์"
+        if not LOGTYPE_RE.match(l_type):
+            errors[prefix + "type"] = "ใช้ A-Z a-z 0-9 _ - เท่านั้น"
+        logs.append({"name": l_name, "path": l_path, "type": l_type})
+    return logs
+
+
+def validate_agent(data, existing_names, editing=None):
+    """เครื่อง Windows แบบ cm-agent (type: agent)  ไม่มีรหัสผ่านเก็บที่ central (ติดตั้งด้วย admin ครั้งเดียว / zip)"""
+    errors = {}
+    name = editing or _text(data, "name")
+    if not NAME_RE.match(name):
+        errors["name"] = "ใช้ a-z 0-9 และ - เท่านั้น (ขึ้นต้นด้วยตัวอักษร/ตัวเลข ยาวไม่เกิน 40)"
+    elif editing is None and name in existing_names:
+        errors["name"] = "มีชื่อนี้อยู่แล้ว"
+    host = _text(data, "host")
+    if not _valid_host(host):
+        errors["host"] = "ต้องเป็น IP หรือชื่อโดเมนที่ถูกต้อง (ใช้ติดตั้งผ่าน WinRM และ ping)"
+    a = data.get("agent") if isinstance(data.get("agent"), dict) else {}
+    out = agent_defaults()
+    for k, (_, lo, hi) in AGENT_INTERVALS.items():
+        if a.get(k) in (None, ""):
+            continue
+        try:
+            v = int(float(a[k]))
+            if not lo <= v <= hi:
+                raise ValueError
+            out[k] = v
+        except (TypeError, ValueError):
+            errors[f"agent.{k}"] = f"{lo}-{hi}"
+    f = a.get("features") if isinstance(a.get("features"), dict) else {}
+    out["features"] = {k: bool(f.get(k, v)) for k, v in AGENT_FEATURES.items()}
+    if out["features"]["software"] and not out["features"]["metrics"]:
+        errors["agent.features.software"] = "Software ต้องเปิด Metrics ด้วย (ส่งผ่าน windows_exporter)"
+    if not any(out["features"][k] for k in ("metrics", "logs")):
+        errors["agent.features.metrics"] = "เปิดอย่างน้อย Metrics หรือ Logs"
+    out["event_logs"] = _clean_event_logs(a.get("event_logs"), errors, "agent.event_logs")
+    out["port"] = _as_int_port(a.get("port"), "agent.port", errors, default=4318)
+    central = _text(a, "central")
+    if central and not _valid_host(central):
+        errors["agent.central"] = "IP / ชื่อของ central ที่เครื่อง Windows เห็น (เว้นว่าง = ตรวจหาให้ตอนติดตั้ง)"
+    out["central"] = central
+    out["skip_cert"] = bool(a.get("skip_cert"))
+    logs = _clean_win_logs(data, errors)
+    group = clean_group(data.get("group"), errors)
+    priority = clean_priority(data.get("priority"), errors)
+    paused = bool(data.get("paused", False))
+    pause = clean_pause(data, paused, errors)
+    thresholds = clean_thresholds(data.get("thresholds"), errors)
+    alert = clean_alert(data.get("alert"), errors)
+    if errors:
+        raise ValidationError(errors)
+    return {
+        "name": name, "type": "agent", "host": host, "group": group, "priority": priority,
+        "paused": paused, "pause": pause, "thresholds": thresholds, "alert": alert,
+        "prometheus": {"job": f"{name}-agent", "instance": f"agent:{name}"},
+        "agent": out, "logs": logs,
+    }
 
 
 def norm_thumbprint(value):
@@ -478,8 +582,10 @@ def is_winrm(t):
 
 
 def winrm_prometheus_entry(web, environment):
-    """ต้องตรงกับ start_push_log/puller/prometheus_targets.py: winrm_entry"""
+    """ต้องตรงกับ start_push_log/puller/prometheus_targets.py: winrm_entry (ใช้กับ type winrm และ agent)"""
     prom = web.get("prometheus") or {}
+    if is_agent(web) and web.get("name") and not prom.get("job"):
+        prom = {"job": f"{web['name']}-agent", "instance": f"agent:{web['name']}"}
     if not web.get("name") or not prom.get("job") or not prom.get("instance"):
         return None
     return {"targets": [os.environ.get("CENTRAL_WINRM_EXPORTER", "central-puller:9110")],
@@ -494,9 +600,11 @@ def validate_target(data, existing_names, editing=None):
     if not isinstance(data, dict):
         raise ValidationError({"_": "invalid body"})
     if str(data.get("type") or "ssh") not in TARGET_TYPES:
-        raise ValidationError({"type": "ชนิดเครื่องต้องเป็น ssh (Linux) หรือ winrm (Windows)"})
+        raise ValidationError({"type": "ชนิดเครื่องต้องเป็น ssh (Linux), winrm (Windows ไม่ลง agent) หรือ agent (Windows cm-agent)"})
     if str(data.get("type") or "ssh") == "winrm":
         return validate_winrm(data, existing_names, editing)
+    if str(data.get("type") or "ssh") == "agent":
+        return validate_agent(data, existing_names, editing)
 
     name = editing or _text(data, "name")
     if not NAME_RE.match(name):
@@ -656,6 +764,9 @@ def _to_node(t):
     if t.get("type") == "winrm":
         node.insert(1, "type", "winrm")
         node["winrm"] = _winrm_node(t["winrm"])
+    elif t.get("type") == "agent":
+        node.insert(1, "type", "agent")
+        node["agent"] = _agent_node(t["agent"])
     else:
         node["ssh"] = CommentedMap(t["ssh"])
     logs = CommentedSeq()
@@ -667,15 +778,20 @@ def _to_node(t):
 
 def _apply(node, t):
     """แก้ node เดิมในที่ (คงคอมเมนต์ของ node) ยกเว้น name ที่ไม่ให้เปลี่ยน"""
-    for key in ("type", "os", "agent", "critical_services"):     # เครื่อง Windows แบบเดิม -> แก้เป็น Linux
+    for key in ("type", "os", "agent", "critical_services", "token"):     # ชนิดเครื่องเปลี่ยน -> ล้างค่าของชนิดเดิม
         if key in node:
             del node[key]
-    win = t.get("type") == "winrm"
-    if win:
+    kind = t.get("type") or "ssh"
+    win = kind in ("winrm", "agent")
+    if kind == "winrm":
         node.insert(1, "type", "winrm")
         node["winrm"] = _winrm_node(t["winrm"])
         node["prometheus"] = CommentedMap(t["prometheus"])
-    for key in (("ssh",) if win else ("winrm",)):
+    elif kind == "agent":
+        node.insert(1, "type", "agent")
+        node["agent"] = _agent_node(t["agent"])
+        node["prometheus"] = CommentedMap(t["prometheus"])
+    for key in {"ssh": ("winrm",), "winrm": ("ssh",), "agent": ("ssh", "winrm")}[kind]:
         if key in node:
             del node[key]
     node["host"] = t["host"]
@@ -701,6 +817,20 @@ def _winrm_node(w):
     ev = CommentedSeq(w.get("event_logs") or [])
     ev.fa.set_flow_style()
     m["event_logs"] = ev
+    return m
+
+
+def _agent_node(a):
+    m = CommentedMap()
+    for k, v in a.items():
+        if k in ("features",):
+            m[k] = _flow(v)
+        elif k == "event_logs":
+            ev = CommentedSeq(v or [])
+            ev.fa.set_flow_style()
+            m[k] = ev
+        elif v not in ("", None):
+            m[k] = v
     return m
 
 
@@ -768,9 +898,7 @@ def regenerate_prometheus_targets(doc):
     out = []
     for web in doc.get("targets") or []:
         prom = web.get("prometheus") or {}
-        if is_agent(web):
-            continue
-        if is_winrm(web):
+        if is_winrm(web) or is_agent(web):
             entry = winrm_prometheus_entry(web, environment)
             if entry:
                 out.append(entry)
@@ -909,9 +1037,15 @@ def _prio(t):
 def _view(t):
     t = _plain(t)
     if is_agent(t):
-        return {"name": t.get("name"), "type": "agent", "legacy": True, "host": t.get("host") or "",
-                "group": t.get("group") or "", "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t),
-                "thresholds": {}, "alert": {}, "logs": [], "watch_services": []}
+        a = {**agent_defaults(), **(t.get("agent") if isinstance(t.get("agent"), dict) else {})}
+        a["features"] = {**AGENT_FEATURES, **(a.get("features") if isinstance(a.get("features"), dict) else {})}
+        name = str(t.get("name") or "")
+        return {"type": "agent", "name": name, "host": t.get("host") or "", "group": t.get("group") or "",
+                "priority": _prio(t), "paused": bool(t.get("paused")), **_pause_view(t),
+                "thresholds": t.get("thresholds") or {}, "alert": t.get("alert") or {},
+                "prometheus": t.get("prometheus") or {"job": f"{name}-agent", "instance": f"agent:{name}"},
+                "agent": a, "logs": [x for x in t.get("logs") or [] if isinstance(x, dict)],
+                "watch_services": t.get("watch_services") or []}
     if is_winrm(t):
         w = t.get("winrm") or {}
         return {
@@ -1016,7 +1150,7 @@ def _winrm_log_status(t):
 
 
 def _confirm_host_key(t, payload):
-    if t.get("type") == "winrm":
+    if t.get("type") in ("winrm", "agent"):
         return
     fps = payload.get("trust_fingerprints")
     if fps:
@@ -1596,3 +1730,154 @@ def winrm_install_apply(name, status):
     if promoted:
         request_pull(name)
     return {**status, "applied": True}
+
+
+# ------------------------------------------------------------------
+# cm-agent (Windows แบบลง agent): ชุดติดตั้ง + ติดตั้ง / ถอนจากหน้าเว็บ (ใช้ windows_install.py ของ puller ร่วมกับ WinRM)
+#   ไฟล์ฝั่ง Windows: agent/windows/cm-agent/ (ใน image = agent_windows/cm-agent)
+#   Fluent Bit / windows_exporter: วางไว้ที่ data/agent-bin บน central (ใส่ในชุดติดตั้งให้) ถ้าไม่มี
+#   ตัวติดตั้งบนเครื่องจะลองดาวน์โหลดเองจากอินเทอร์เน็ต
+# ------------------------------------------------------------------
+
+AGENT_DIR = os.path.join(WINDOWS_SETUP_DIR, "cm-agent")
+AGENT_FILES = ("install-cm-agent.bat", "install-cm-agent.ps1", "uninstall-cm-agent.bat", "uninstall-cm-agent.ps1",
+               "cm-inventory.ps1", "cm-agent.lua")
+AGENT_BIN_DIR = os.environ.get("CENTRAL_AGENT_BIN_DIR", "/run/agent-bin")
+AGENT_CA_FILE = os.environ.get("CENTRAL_AGENT_CA_FILE", "/run/agent-tls/cert.pem")
+AGENT_BIN_PATTERNS = (re.compile(r"^fluent-bit-[0-9.]+-win64\.zip$"), re.compile(r"^windows_exporter-[0-9.]+-amd64\.exe$"))
+
+
+def agent_bins():
+    """ไฟล์ Fluent Bit / windows_exporter ล่าสุดที่วางไว้ใน data/agent-bin -> {ชนิด: (ชื่อไฟล์, ขนาด)}"""
+    out = {}
+    try:
+        names = sorted(os.listdir(AGENT_BIN_DIR), reverse=True)
+    except OSError:
+        names = []
+    for kind, rx in zip(("fluent_bit", "windows_exporter"), AGENT_BIN_PATTERNS):
+        fn = next((n for n in names if rx.match(n)), None)
+        if fn:
+            out[kind] = (fn, os.path.getsize(os.path.join(AGENT_BIN_DIR, fn)))
+    return out
+
+
+def agent_info():
+    """ความพร้อมของ central สำหรับ cm-agent (ไม่ส่ง token ออกไป)"""
+    bins = agent_bins()
+    return {"token": bool(os.environ.get("CENTRAL_AGENT_TOKEN")), "ca": os.path.isfile(AGENT_CA_FILE),
+            "bins": {k: {"file": v[0], "size": v[1]} for k, v in bins.items()},
+            "defaults": agent_defaults(), "limits": {k: [v[1], v[2]] for k, v in AGENT_INTERVALS.items()}}
+
+
+def agent_config_text(t, central):
+    a = t.get("agent") or agent_defaults()
+    f = a.get("features") or AGENT_FEATURES
+    on = lambda k: "1" if f.get(k) else "0"            # noqa: E731
+    paths = [str(x.get("path")) for x in t.get("logs") or [] if WINPATH_RE.match(str(x.get("path") or ""))]
+    lines = [
+        "# =====================================================================",
+        "# cm-agent-config.txt - generated by Central Monitor (Settings > machine). Run install-cm-agent.bat after a change.",
+        "# =====================================================================",
+        f"Name={t['name']}", f"CentralIP={central}", f"Port={int(a.get('port') or 4318)}",
+        f"Token={os.environ.get('CENTRAL_AGENT_TOKEN', '')}", f"SkipCertCheck={'1' if a.get('skip_cert') else '0'}",
+        "",
+        "# features: 1 = on, 0 = off (fewer = lighter)",
+        f"Metrics={on('metrics')}", f"Logs={on('logs')}", f"Software={on('software')}", f"Processes={on('processes')}",
+        "Channels=" + ",".join(a.get("event_logs") or DEFAULT_EVENT_LOGS),
+        "LogPaths=" + ";".join(paths),
+        "",
+        "# intervals (seconds; InventoryMinutes in minutes) - longer = lighter",
+        f"MetricsInterval={a.get('metrics_interval')}", f"HeartbeatInterval={a.get('heartbeat_interval')}",
+        f"EventInterval={a.get('event_interval')}", f"LogRefresh={a.get('log_refresh')}", f"Flush={a.get('flush')}",
+        f"InventoryMinutes={a.get('inventory_minutes')}", "",
+    ]
+    return "\r\n".join(lines)
+
+
+def _agent_target(name):
+    t = next((x for x in list_targets() if x.get("name") == name), None)
+    return t if t is not None and t.get("type") == "agent" else None
+
+
+def _agent_check_ready():
+    errors = {}
+    if not os.environ.get("CENTRAL_AGENT_TOKEN"):
+        errors["agent"] = "central ยังไม่มี CENTRAL_AGENT_TOKEN (รัน cm-update ให้ install.sh สร้างให้)"
+    if not os.path.isfile(AGENT_CA_FILE):
+        errors["agent"] = "central ยังไม่มีใบรับรอง keys/agent-tls (รัน cm-update) หรือเลือก ไม่ตรวจใบรับรอง"
+    return errors
+
+
+def _agent_files(with_bins=True):
+    files = {}
+    for fn in AGENT_FILES:
+        with open(os.path.join(AGENT_DIR, fn), "rb") as f:
+            files[fn] = f.read()
+    if os.path.isfile(AGENT_CA_FILE):
+        with open(AGENT_CA_FILE, "rb") as f:
+            files["central-ca.pem"] = f.read()
+    if with_bins:
+        for fn, _ in agent_bins().values():
+            with open(os.path.join(AGENT_BIN_DIR, fn), "rb") as f:
+                files[fn] = f.read()
+    return files
+
+
+def agent_package_zip(name, central):
+    """zip ชุดติดตั้ง cm-agent ของเครื่องนี้ (มี token -> ส่งให้ admin เท่านั้น)  คืน (bytes, ชื่อไฟล์)"""
+    import zipfile
+    t = _agent_target(name)
+    if t is None:
+        raise ValidationError({"name": "ไม่พบเครื่องแบบ cm-agent ชื่อนี้"})
+    central = str(central or (t.get("agent") or {}).get("central") or "").strip()
+    if not _valid_host(central):
+        raise ValidationError({"central": "ใส่ IP / ชื่อของ central ที่เครื่อง Windows เห็น (เช่น 172.27.2.22)"})
+    errors = _agent_check_ready()
+    if errors and not (t.get("agent") or {}).get("skip_cert"):
+        raise ValidationError(errors)
+    buf = io.BytesIO()
+    top = f"cm-agent-{name}"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for fn, data in _agent_files().items():
+            z.writestr(f"{top}/{fn}", data)
+        z.writestr(f"{top}/cm-agent-config.txt", agent_config_text(t, central).encode("utf-8-sig"))
+    return buf.getvalue(), f"{top}.zip"
+
+
+def agent_install_request(name, payload):
+    """body ของ puller POST /winrm-install สำหรับติดตั้ง / อัปเดต cm-agent (admin ใช้ครั้งเดียว ไม่เก็บ)  ไม่มีเครื่อง -> None"""
+    t = _agent_target(name)
+    if t is None:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    user, pw, port, errors = _admin_fields(payload)
+    central = _text(payload, "central") or (t.get("agent") or {}).get("central") or "auto"
+    if central != "auto" and not _valid_host(central):
+        errors["central"] = "IP / ชื่อของ central ไม่ถูกต้อง (เว้นว่าง = ตรวจหาให้เอง)"
+    if not (t.get("agent") or {}).get("skip_cert"):
+        errors.update(_agent_check_ready())
+    elif not os.environ.get("CENTRAL_AGENT_TOKEN"):
+        errors["agent"] = "central ยังไม่มี CENTRAL_AGENT_TOKEN (รัน cm-update)"
+    if errors:
+        raise ValidationError(errors)
+    files = {k: base64.b64encode(v).decode("ascii") for k, v in _agent_files().items()}
+    return {"action": "install", "mode": "install", "name": name, "host": t["host"], "port": port, "user": user,
+            "password": pw, "files_b64": files, "config": agent_config_text(t, central),
+            "config_name": "cm-agent-config.txt", "run_file": "install-cm-agent.ps1", "target_kind": "agent"}
+
+
+def agent_uninstall_request(name, payload, user_name=None):
+    t = _agent_target(name)
+    if t is None:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    user, pw, port, errors = _admin_fields(payload)
+    if errors:
+        raise ValidationError(errors)
+    files = {k: base64.b64encode(v).decode("ascii") for k, v in _agent_files(with_bins=False).items()
+             if k == "uninstall-cm-agent.ps1"}
+    if not t.get("paused"):
+        set_paused(name, True, reason="กำลังถอน cm-agent ออกจากเครื่อง", user=user_name)
+    return {"action": "uninstall", "name": name, "host": t["host"], "port": port, "user": user, "password": pw,
+            "files_b64": files, "config": None, "delete_after": bool(payload.get("delete_target", True)),
+            "run_file": "uninstall-cm-agent.ps1", "target_kind": "agent"}

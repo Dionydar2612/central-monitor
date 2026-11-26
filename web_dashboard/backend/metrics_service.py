@@ -51,10 +51,9 @@ def get_web_prometheus_config(web):
         if target.get("name") != web:
             continue
 
-        if str(target.get("type") or "ssh") == "agent":
-            return None                  # เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
-
         prometheus = target.get("prometheus", {})
+        if str(target.get("type") or "ssh") == "agent" and not prometheus.get("job"):
+            prometheus = {"job": f"{web}-agent", "instance": f"agent:{web}"}      # cm-agent (agent_bridge.py)
         job = prometheus.get("job")
         instance = prometheus.get("instance")
 

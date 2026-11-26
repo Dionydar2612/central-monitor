@@ -65,9 +65,9 @@ def list_rules(user=None, role="admin"):
         r["owner"] = str(r.get("owner") or "")
         r["can_edit"] = can_edit(r, user, role)
     targets = [{"name": t.get("name"), "group": t.get("group") or "", "host": t.get("host") or "",
-                "os": "windows" if str(t.get("type") or "ssh") == "winrm" else "linux"}
+                "os": "windows" if str(t.get("type") or "ssh") in ("winrm", "agent") else "linux"}
                for t in targets_service._plain(doc.get("targets") or [])
-               if isinstance(t, dict) and t.get("name") and str(t.get("type") or "ssh") != "agent"]
+               if isinstance(t, dict) and t.get("name")]
     groups = sorted({t["group"] for t in targets if t["group"]})
     return {"rules": rules, "me": user or "", "role": role, "metrics": _catalog(), "main_url_set": bool(notify_service.main_url()), "targets": targets, "groups": groups,
             "template_keys": ["icon", "machine", "group", "host", "sensor", "text", "value", "unit", "threshold",

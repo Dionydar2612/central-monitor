@@ -53,11 +53,13 @@ WINRM_EXPORTER = os.environ.get("CENTRAL_WINRM_EXPORTER", "central-puller:9110")
 
 
 def winrm_entry(web, environment):
-    """เครื่อง Windows (type: winrm): Prometheus scrape puller ที่ /win/<ชื่อ> (windows_pull.py)
+    """เครื่อง Windows (type: winrm / agent): Prometheus scrape puller ที่ /win/<ชื่อ> (windows_pull.py / agent_bridge.py)
     ติด label job / instance ของเครื่องนั้นเอง -> query ของ dashboard ใช้ job/instance เดิมได้
     (ต้องตรงกับ web_dashboard/backend/targets_service.py: winrm_prometheus_entry)"""
     name = web.get("name")
     prom = web.get("prometheus") or {}
+    if name and str(web.get("type") or "") == "agent" and not prom.get("job"):
+        prom = {"job": f"{name}-agent", "instance": f"agent:{name}"}       # เครื่อง cm-agent ที่ไม่มีค่าใน puller.yaml
     if not name or not prom.get("job") or not prom.get("instance"):
         return None
     return {"targets": [WINRM_EXPORTER],
@@ -78,11 +80,9 @@ def generate_targets():
         host = str(web.get("host") or "").strip()
         if web.get("name") and host and not web.get("paused"):
             pings.append({"targets": [host], "labels": {"cm_target": web["name"], "environment": environment}})
-        if str(web.get("type") or "ssh") == "agent":
-            continue                     # เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว)
         name = web.get("name")
         prometheus = web.get("prometheus", {})
-        if str(web.get("type") or "ssh") == "winrm":
+        if str(web.get("type") or "ssh") in ("winrm", "agent"):   # Windows: WinRM / cm-agent -> puller /win/<ชื่อ>
             entry = winrm_entry(web, environment)
             if entry:
                 targets.append(entry)

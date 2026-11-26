@@ -19,12 +19,12 @@
    ===================================================================== */
 (function () {
     "use strict";
-    const PANES = ["overview", "performance", "bottleneck", "processes", "winsvc", "wintask", "winproc", "hardware", "system", "alerts"];
+    const PANES = ["overview", "performance", "bottleneck", "processes", "winsvc", "wintask", "winproc", "software", "hardware", "system", "alerts"];
     const WIN_TABS = ["winsvc", "wintask", "winproc"];         // เฉพาะเครื่อง Windows
     const API_KIND = { performance: "performance", bottleneck: "bottleneck", hardware: "hardware", system: "system",
-                       winsvc: "win-services", wintask: "win-tasks", winproc: "win-programs" };
+                       winsvc: "win-services", wintask: "win-tasks", winproc: "win-programs", software: "software" };
     const REFRESH_MS = { performance: 15000, bottleneck: 30000, hardware: 300000, system: 60000, alerts: 30000, processes: 20000,
-                         winsvc: 60000, wintask: 120000, winproc: 30000 };
+                         winsvc: 60000, wintask: 120000, winproc: 30000, software: 300000 };
     const P = { tab: loadTab(), data: {}, at: {}, busy: {} };
 
     function loadTab() {
@@ -398,21 +398,37 @@
             helperNote(d) + table(["Program", "PID", `CPU${d.interval ? ` (${d.interval}s)` : ""}`, "RAM", "Exe path", "Services", "Started"], rows, "ไม่มีข้อมูล"), asof(d));
     }
 
+    /* ---------------- Software (cm-agent: cm-inventory.ps1 ตามรอบ InventoryMinutes) ---------------- */
+    function renderSoftware(d) {
+        const sw = d.software || [], ports = d.ports || [];
+        if (!sw.length && !ports.length) return `<div class="empty">ยังไม่มีรายการ (เปิด Software ในค่าของ cm-agent แล้วรอรอบถัดไป)</div>`;
+        const upd = d.inventory_time ? ` · อัปเดต ${ts(d.inventory_time)}` : "";
+        const inst = card("Installed software", `<input class="swq" type="search" placeholder="ค้นหาโปรแกรม" style="margin-bottom:8px;max-width:260px">` +
+            table(["Name", "Version", "Publisher", "Installed", "Arch"], sw.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.version || "-")}</td>`
+                + `<td>${esc(x.publisher || "-")}</td><td>${esc(x.installed || "-")}</td><td>${esc(x.arch || "-")}</td></tr>`)),
+            `<span class="cnt">${sw.length}${upd}</span>`);
+        const pt = card("Listening TCP ports", table(["Port", "Address", "Program"],
+            ports.map(p => `<tr><td><b>${esc(p.port)}</b></td><td>${esc(p.address)}</td><td>${esc(p.process || "-")}</td></tr>`)),
+            `<span class="cnt">${ports.length}</span>`);
+        return pt + inst;
+    }
+
     /* ---------------- ทุกเครื่องใช้แท็บ · Service อยู่ข้างกราฟในแท็บ Overview ---------------- */
     function layout() {
         const main = q("#ovMain"), sv = q("#detail .svcard");
         if (sv && main && sv.parentNode !== main) { main.append(sv); main.className = "grid main"; }
         const w = curWeb();
-        document.querySelectorAll("#dTabs [data-win]").forEach(b => { b.hidden = !(w && w.os === "windows"); });
+        /* data-win="winrm" = ดูสดผ่าน WinRM (เครื่องแบบไม่ลง agent) · data-win="agent" = จากข้อมูลที่ cm-agent ส่งมา */
+        document.querySelectorAll("#dTabs [data-win]").forEach(b => { b.hidden = !(w && w.kind === b.dataset.win); });
         show(P.tab);
     }
 
     /* ---------------- โหลด / วาด ---------------- */
     const RENDER = { performance: renderPerformance, bottleneck: renderBottleneck, hardware: renderHardware,
                      system: renderSystem, alerts: renderAlerts, processes: renderProcesses,
-                     winsvc: renderWinServices, wintask: renderWinTasks, winproc: renderWinPrograms };
+                     winsvc: renderWinServices, wintask: renderWinTasks, winproc: renderWinPrograms, software: renderSoftware };
     const BOX = { performance: "#pnPerf", bottleneck: "#pnBn", hardware: "#pnHw", system: "#pnSys", alerts: "#pnAl", processes: "#pnProc",
-                  winsvc: "#pnWSvc", wintask: "#pnWTask", winproc: "#pnWProc" };
+                  winsvc: "#pnWSvc", wintask: "#pnWTask", winproc: "#pnWProc", software: "#pnSw" };
 
     async function fetchPane(tab) {
         const w = encodeURIComponent(S.web);
@@ -456,7 +472,8 @@
 
     function show(tab) {
         const w = curWeb();
-        if (WIN_TABS.includes(tab) && w && w.os !== "windows") tab = "overview";       // แท็บเฉพาะ Windows
+        const tb = q(`#dTabs [data-tab="${tab}"]`);
+        if (tb && tb.dataset.win && w && w.kind !== tb.dataset.win) tab = "overview";    // แท็บเฉพาะ Windows แบบนั้น
         P.tab = PANES.includes(tab) ? tab : "overview";
         saveTab(P.tab);
         document.querySelectorAll("#dTabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === P.tab)));
@@ -466,12 +483,18 @@
 
     window.CMPanes = {
         refresh(force) { layout(); if (S.web) load(P.tab, force); },
-        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc", "#pnWSvc", "#pnWTask", "#pnWProc"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
+        reset() { layout(); P.data = {}; P.at = {}; ["#pnPerf", "#pnBn", "#pnHw", "#pnSys", "#pnAl", "#pnProc", "#pnWSvc", "#pnWTask", "#pnWProc", "#pnSw"].forEach(id => { const b = q(id); if (b) b.innerHTML = ""; }); },
         show,
     };
 
     document.addEventListener("DOMContentLoaded", () => {
         const tabs = q("#dTabs");
+        const swb = q("#pnSw");
+        if (swb) swb.addEventListener("input", e => {
+            if (!e.target.matches(".swq")) return;
+            const qv = e.target.value.trim().toLowerCase(), tb = e.target.closest(".pcard").querySelector("tbody");
+            if (tb) [...tb.rows].forEach(r => { r.hidden = !!qv && !r.textContent.toLowerCase().includes(qv); });
+        });
         if (!tabs) return;
         tabs.addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) show(b.dataset.tab); });
         tabs.addEventListener("keydown", e => {

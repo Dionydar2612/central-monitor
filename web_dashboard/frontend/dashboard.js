@@ -1016,7 +1016,8 @@ function serverRows(list, cur, keepOrder) {
             const btn = op ? `<td class="act"><button type="button" class="svbtn sm" data-pause="${escapeHtml(w.web)}" data-kind="targets" data-paused="${w.paused ? 1 : 0}">${w.paused ? "Resume" : "Pause"}</button></td>` : "";
             const ack = w.acked ? ` <span class="ovack" title="${w.acked} acknowledged problem(s)">ACK ${w.acked}</span>` : "";
             const why = w.problems && w.problems.length ? ` title="${escapeHtml(w.problems.join(", "))}"` : "";
-            const os = w.os === "windows" ? `<span class="ostag" title="Windows · WinRM (ไม่ลง agent)">Windows</span>`
+            const os = w.kind === "agent" ? `<span class="ostag" title="Windows · cm-agent (Fluent Bit ส่งข้อมูลเข้ามาเอง)">Windows · agent</span>`
+                : w.os === "windows" ? `<span class="ostag" title="Windows · WinRM (ไม่ลง agent)">Windows</span>`
                 : `<span class="ostag lx" title="Linux · SSH + node_exporter">Linux</span>`;
             return `<tr data-web="${escapeHtml(w.web)}" aria-selected="${w.web === cur}" tabindex="0" class="${w.paused ? "paused" : ""}"><td><b>${escapeHtml(w.web)}</b></td><td>${os}</td><td>${escapeHtml(w.host || w.instance || "-")}</td><td><button type="button" class="ovst ${cls}" data-stpop="${escapeHtml(w.web)}"${w.paused && w.pause_reason ? ` title="${escapeHtml("Pause: " + w.pause_reason)}"` : why}>${escapeHtml(label)}</button>${ack}${w.paused && w.pause_reason ? `<div class="cerr">${escapeHtml(w.pause_reason)}</div>` : ""}</td>${cell("cpu", w.cpu)}${cell("memory", w.memory)}${cell("disk", w.disk)}${netCell(w)}${availCell(w)}<td>${w.paused ? "-" : pullHtml(w.last_pull)}</td>${btn}</tr>`;
         }).join("") + `</tbody></table>`;

@@ -778,9 +778,12 @@ class _MetricsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         m = re.match(r"^/win/([a-z0-9][a-z0-9-]{0,39})$", self.path.split("?")[0])
         w = _workers.get(m.group(1)) if m else None
+        if not w and m:                                   # เครื่อง cm-agent (agent_bridge.py) ใช้พอร์ตเดียวกัน
+            import agent_bridge
+            w = agent_bridge.get(m.group(1))
         if not w:
             return self._send(404, "unknown machine\n")
-        if w.target.get("paused") or time.time() - w.metrics.ok_at > STALE_AFTER:
+        if w.target.get("paused") or time.time() - w.metrics.ok_at > getattr(w, "stale_after", STALE_AFTER):
             return self._send(503, f"no fresh data: {w.last_error or 'not connected yet'}\n")
         return self._send(200, w.metrics.exposition())
 

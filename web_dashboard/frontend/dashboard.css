@@ -1747,8 +1747,10 @@ button.ovst{border:0;font:inherit;cursor:pointer}button.ovst:hover{filter:bright
 .tcPrev .tcLine{margin-top:8px}.tcPrev .tcLine b{display:inline;margin:0}
 
 /* Settings: ฟอร์มเครื่องแสดงเฉพาะช่องของชนิดที่เลือก (Linux = .ssh-only, Windows = .win-only) */
-#formCard[data-type="winrm"] .ssh-only{display:none!important}
+#formCard[data-type="winrm"] .ssh-only,#formCard[data-type="agent"] .ssh-only{display:none!important}
 #formCard:not([data-type="winrm"]) .win-only{display:none!important}
+#formCard:not([data-type="agent"]) .agent-only{display:none!important}
+#formCard:not([data-type="winrm"]):not([data-type="agent"]) .wl-only{display:none!important}
 
 /* NTP Monitor (ntp.html) */
 .ntCard{margin-top:16px}

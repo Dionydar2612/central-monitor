@@ -64,9 +64,10 @@
 <button type="button" role="tab" data-tab="performance" aria-selected="false">Performance</button>
 <button type="button" role="tab" data-tab="bottleneck" aria-selected="false">Bottleneck</button>
 <button type="button" role="tab" data-tab="processes" aria-selected="false">Processes</button>
-<button type="button" role="tab" data-tab="winsvc" data-win hidden aria-selected="false">Services</button>
-<button type="button" role="tab" data-tab="wintask" data-win hidden aria-selected="false">Task Scheduler</button>
-<button type="button" role="tab" data-tab="winproc" data-win hidden aria-selected="false">Programs</button>
+<button type="button" role="tab" data-tab="winsvc" data-win="winrm" hidden aria-selected="false">Services</button>
+<button type="button" role="tab" data-tab="wintask" data-win="winrm" hidden aria-selected="false">Task Scheduler</button>
+<button type="button" role="tab" data-tab="winproc" data-win="winrm" hidden aria-selected="false">Programs</button>
+<button type="button" role="tab" data-tab="software" data-win="agent" hidden aria-selected="false">Software</button>
 <button type="button" role="tab" data-tab="hardware" aria-selected="false">Hardware</button>
 <button type="button" role="tab" data-tab="system" aria-selected="false">System</button>
 <button type="button" role="tab" data-tab="alerts" aria-selected="false">Alerts &amp; Events</button>
@@ -124,6 +125,7 @@
 <div class="dpane" data-pane="winsvc" hidden><div id="pnWSvc" class="pn"></div></div>
 <div class="dpane" data-pane="wintask" hidden><div id="pnWTask" class="pn"></div></div>
 <div class="dpane" data-pane="winproc" hidden><div id="pnWProc" class="pn"></div></div>
+<div class="dpane" data-pane="software" hidden><div id="pnSw" class="pn"></div></div>
 <div class="dpane" data-pane="hardware" hidden><div id="pnHw" class="pn"></div></div>
 <div class="dpane" data-pane="system" hidden>
 <div id="pnSys" class="pn"></div>

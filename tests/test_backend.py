@@ -39,6 +39,65 @@ class Backend(unittest.TestCase):
         self.c.post("/api/logout")
         return self.c.post("/api/login", json={"username": u, "password": p}).status_code
 
+    def test_agent_target(self):
+        """Windows แบบ cm-agent: เพิ่มพร้อมค่า interval / feature · zip ชุดติดตั้ง · คำขอติดตั้งผ่าน WinRM (ไม่สร้าง user)"""
+        import zipfile
+        import io as _io
+        import targets_service
+        c = self.c
+        self.assertEqual(self.login("admin", "rootpass"), 200)
+        body = {"type": "agent", "name": "ag-01", "host": "10.0.0.20", "group": "TQ/Win",
+                "logs": [{"name": "app", "path": "D:\\App\\logs\\*.log", "type": "app"}],
+                "agent": {"metrics_interval": 120, "heartbeat_interval": 90, "features": {"metrics": True, "logs": True,
+                          "software": False, "processes": False}, "event_logs": "System, Application"}}
+        bad = c.post("/api/targets", json={**body, "agent": {"metrics_interval": 5, "features": {"metrics": False, "logs": True, "software": True}}}).json
+        self.assertIn("agent.metrics_interval", bad["fields"])
+        self.assertIn("agent.features.software", bad["fields"])
+        r = c.post("/api/targets", json=body)
+        self.assertEqual(r.status_code, 201, r.json)
+        t = next(x for x in c.get("/api/targets").json["targets"] if x["name"] == "ag-01")
+        self.assertEqual((t["type"], t["agent"]["metrics_interval"], t["agent"]["flush"], t["agent"]["features"]["software"]),
+                         ("agent", 120, 15, False))
+        y = open(os.path.join(self.tmp, "puller.yaml")).read()
+        self.assertIn("type: agent", y)
+        self.assertIn("job: ag-01-agent", y)
+        nodes = json.load(open(os.path.join(self.tmp, "web-nodes.json")))
+        self.assertTrue(any(n["labels"].get("__metrics_path__") == "/win/ag-01" for n in nodes))
+        # central ยังไม่พร้อม (ไม่มี token / ใบรับรอง) -> แจ้ง
+        targets_service.WINDOWS_SETUP_DIR = os.path.join(ROOT, "agent", "windows")
+        targets_service.AGENT_DIR = os.path.join(ROOT, "agent", "windows", "cm-agent")
+        self.assertEqual(c.get("/api/targets/ag-01/agent-package.zip?central=172.27.2.22").status_code, 400)
+        ca = os.path.join(self.tmp, "ca.pem")
+        open(ca, "w").write("-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n")
+        bins = os.path.join(self.tmp, "agent-bin")
+        os.makedirs(bins, exist_ok=True)
+        open(os.path.join(bins, "windows_exporter-0.32.1-amd64.exe"), "wb").write(b"MZ" * 10)
+        targets_service.AGENT_CA_FILE, targets_service.AGENT_BIN_DIR = ca, bins
+        os.environ["CENTRAL_AGENT_TOKEN"] = "t0ken-for-agents-123456"
+        try:
+            info = c.get("/api/agent-info").json
+            self.assertEqual((info["token"], info["ca"], sorted(info["bins"])), (True, True, ["windows_exporter"]))
+            self.assertNotIn("t0ken", json.dumps(info))
+            r = c.get("/api/targets/ag-01/agent-package.zip?central=172.27.2.22")
+            self.assertEqual(r.status_code, 200, r.data[:200])
+            z = zipfile.ZipFile(_io.BytesIO(r.data))
+            names = z.namelist()
+            for fn in ("install-cm-agent.bat", "install-cm-agent.ps1", "cm-agent.lua", "central-ca.pem",
+                       "windows_exporter-0.32.1-amd64.exe", "cm-agent-config.txt"):
+                self.assertIn(f"cm-agent-ag-01/{fn}", names)
+            cfg = z.read("cm-agent-ag-01/cm-agent-config.txt").decode("utf-8-sig")
+            for line in ("Name=ag-01", "CentralIP=172.27.2.22", "Token=t0ken-for-agents-123456", "Software=0",
+                         "MetricsInterval=120", "HeartbeatInterval=90", "LogPaths=D:\\App\\logs\\*.log"):
+                self.assertIn(line, cfg)
+            req = targets_service.agent_install_request("ag-01", {"admin_user": "Administrator", "admin_password": "x", "admin_port": 5985})
+            self.assertEqual((req["run_file"], req["config_name"], req["target_kind"]), ("install-cm-agent.ps1", "cm-agent-config.txt", "agent"))
+            self.assertIn("CentralIP=auto", req["config"])
+            self.assertIn("windows_exporter-0.32.1-amd64.exe", req["files_b64"])
+            self.assertIsNone(targets_service.agent_install_request("nope", {}))
+        finally:
+            os.environ.pop("CENTRAL_AGENT_TOKEN", None)
+        self.assertEqual(c.delete("/api/targets/ag-01").status_code, 200)
+
     def test_ntp_api(self):
         """NTP Monitor: admin เพิ่ม / แก้ / หยุด / ลบ server + เกณฑ์ · viewer อ่านได้"""
         c = self.c

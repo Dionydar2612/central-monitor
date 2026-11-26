@@ -533,9 +533,12 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
     name = t["name"]
     hyst = opts["hyst"]
     th = _merge_thresholds(global_th, t.get("thresholds"))
-    is_win = str(t.get("type") or "ssh") == "winrm"
+    is_agent = str(t.get("type") or "ssh") == "agent"           # Windows แบบ cm-agent (agent_bridge.py)
+    is_win = str(t.get("type") or "ssh") == "winrm" or is_agent
     base = {"web": name, "host": t.get("host"), "group": t.get("group") or "", "os": "windows" if is_win else "linux"}
     prom = t.get("prometheus") or {}
+    if is_agent and not prom.get("job"):
+        prom = {"job": f"{name}-agent", "instance": f"agent:{name}"}
     labels = f'job="{prom.get("job")}",instance="{prom.get("instance")}"'
     out = []
 
@@ -563,7 +566,12 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
         up = _one(f"up{{{labels}}}")
     if up != 1:
         msg = "node_exporter is not responding (machine down or port 9100 blocked)"
-        if is_win:
+        if is_agent:
+            import agent_bridge
+            st = agent_bridge.status(name) or {}
+            msg = ("cm-agent is not sending data" + (f" (last seen {(time.time() - st['last_seen']) / 60:.0f} min ago)" if st.get("last_seen") else
+                   " yet (not installed, port 4318 blocked, or service cm-agent stopped)") + (f" · {st['last_error']}" if st.get("last_error") else ""))
+        elif is_win:
             st = windows_status(name)
             msg = ("WinRM: " + (st or {}).get("last_error", "")) if (st or {}).get("last_error") else \
                 "WinRM is not responding (machine down, port 5986 blocked, or setup-cm-monitor not run)"
@@ -643,6 +651,14 @@ def _target_sensors_raw(t, global_th, interval, checkpoints, previous, opts):
             t, opts["rules"], ex, labels,
             lambda sid: (previous.get(sid) or {}).get("status"), hyst, base, _query, _ping_exprs))
 
+    if is_agent:
+        import agent_bridge
+        st = agent_bridge.status(name) or {}
+        if st.get("last_seen"):
+            age = time.time() - st["last_seen"]
+            add("logpull", "logpull", "cm-agent heartbeat", "ok" if age < st.get("stale_after", 120) else "warning", age / 60, unit="min",
+                message=f"last data from cm-agent {age / 60:.0f} min ago")
+        return out
     if is_win:
         st = windows_status(name) or {}
         if st.get("last_error"):

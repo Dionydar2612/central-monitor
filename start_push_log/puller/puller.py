@@ -20,6 +20,7 @@ puller.py - จุดเริ่มต้นของ central-puller (ระบ
     journal.py             อ่าน systemd journal (logs[].path = journal / journal:<unit>)
     ondemand.py            ดึง INFO สดเฉพาะตอนกดปุ่มบนหน้าเว็บ (ไม่เก็บ)
     web_checks.py          เช็คเว็บ (uptime) + วันหมดอายุ SSL ตาม checks: ใน puller.yaml
+    agent_bridge.py        เครื่อง Windows แบบ cm-agent (Fluent Bit) -> metrics แบบ node_exporter + snapshot
     ntp_monitor.py         ตรวจ NTP server (offset / RTT / stratum) ตาม ntp.servers ใน puller.yaml
     sensor_monitor.py      สถานะ sensor ต่อเครื่อง (แบบ PRTG) ทุก 30 วินาที -> sensors.json + System log
     events.py              เขียน System log (data/state/events.log)
@@ -47,6 +48,7 @@ from scheduler import run_forever
 from sensor_monitor import start as start_sensor_monitor
 from web_checks import start as start_web_checks
 from ntp_monitor import start as start_ntp_monitor
+from agent_bridge import start as start_agent_bridge
 from windows_pull import start as start_windows_pull
 
 
@@ -80,6 +82,11 @@ def main():
         start_windows_pull()    # เครื่อง Windows (type: winrm) ไม่ลง agent: thread ต่อเครื่อง + /win/<ชื่อ> พอร์ต 9110
     except Exception as e:
         print(f"[WINRM ERROR] {e}")
+
+    try:
+        start_agent_bridge()    # เครื่อง Windows แบบ cm-agent: แปลงข้อมูลจาก central-agent-gw -> /win/<ชื่อ>
+    except Exception as e:
+        print(f"[AGENT ERROR] {e}")
 
     run_forever()
 

@@ -160,6 +160,17 @@ fi
 
 [ -f data/prometheus/web-nodes.json ] || printf '[]\n' | run_o tee data/prometheus/web-nodes.json >/dev/null
 
+# --- cm-agent (Windows): token + ใบรับรองของ central-agent-gw (สร้างครั้งเดียว คงไว้ทุกครั้งที่อัปเดต) ---
+if ! grep -q '^CENTRAL_AGENT_TOKEN=.\+' docker/.env; then
+  sed -i '/^CENTRAL_AGENT_TOKEN=/d' docker/.env
+  echo "CENTRAL_AGENT_TOKEN=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')" >> docker/.env
+  echo "สร้าง CENTRAL_AGENT_TOKEN ใน docker/.env (cm-agent ใช้ส่งข้อมูลเข้า :4318)"
+fi
+if [ ! -f keys/agent-tls/cert.pem ] || [ ! -f keys/agent-tls/key.pem ]; then
+  run_o bash scripts/make-cert.sh agent >/dev/null && echo "สร้างใบรับรอง keys/agent-tls/ (cm-agent ใช้ตรวจ central)"
+fi
+run_o mkdir -p data/agent-bin
+
 if [ "$START" -eq 0 ]; then
   fix_owner
   say "เตรียมเสร็จ (--no-start) สั่งเริ่มเองด้วย: cd docker && docker compose up -d --build"
@@ -173,8 +184,8 @@ WAS_RUNNING="$( cd docker && $DOCKER compose ps -q central-api 2>/dev/null || tr
 if [ -n "$WAS_RUNNING" ]; then
   # central-api mount ไฟล์ .pub เดี่ยว ๆ - สร้างไฟล์ใหม่แล้ว container เก่ายังเห็นไฟล์เดิม ต้องสร้าง container ใหม่
   ( cd docker && $DOCKER compose up -d --force-recreate --no-deps central-api central-puller )
-  # เครื่อง Windows เลิกรองรับแล้ว: ปิด container central-agent-gw ที่อาจค้างจากรุ่นก่อน
-  $DOCKER rm -f central-agent-gw >/dev/null 2>&1 || true
+  # ใบรับรองของ cm-agent อาจเปลี่ยน -> คัดลอกใหม่แล้วเริ่ม gateway ใหม่
+  ( cd docker && $DOCKER compose up -d --force-recreate buffer-init central-agent-gw ) || true
   # prometheus.yml อาจเปลี่ยน (เช่น job ping ใหม่) -> Prometheus อ่าน config ใหม่เฉพาะตอนเริ่ม
   if [ -n "$( cd docker && $DOCKER compose ps -q prometheus 2>/dev/null || true )" ]; then
     ( cd docker && $DOCKER compose restart prometheus ) || true

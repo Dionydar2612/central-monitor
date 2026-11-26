@@ -316,7 +316,15 @@ def hardware(web, target=None):
 # ---------------------------------------------------------------------------
 
 def _is_winrm(target):
-    return bool(target) and str(target.get("type") or "ssh") == "winrm"
+    """เครื่อง Windows (WinRM / cm-agent): ข้อมูลเครื่องอยู่ใน inventory ของ snapshot"""
+    return bool(target) and str(target.get("type") or "ssh") in ("winrm", "agent")
+
+
+def software(web):
+    """แท็บ Software: โปรแกรมที่ติดตั้ง + พอร์ตที่เปิดรับ (cm-agent: cm-inventory.ps1)  ไม่มีข้อมูล -> ว่าง"""
+    inv = _win_inventory(web)
+    return {"web": web, "software": inv.get("software") or [], "ports": inv.get("ports") or [],
+            "inventory_time": inv.get("inventory_ts")}
 
 
 def _win_inventory(web):
@@ -435,7 +443,10 @@ def system(web, target=None):
                      "type": target.get("type") or "ssh"})
         if _is_winrm(target):                                   # Windows ไม่ลง agent (WinRM -> JEA)
             col = data["agent"]["collector"]
-            data["agent"] = {"collector": "WinRM (JEA read-only)" + (" · module " + col.split("winrm-", 1)[1] if "winrm-" in col else "")}
+            if str(target.get("type")) == "agent":
+                data["agent"] = {"collector": "cm-agent (Fluent Bit + windows_exporter) " + col.replace("node_exporter agent", "").strip()}
+            else:
+                data["agent"] = {"collector": "WinRM (JEA read-only)" + (" · module " + col.split("winrm-", 1)[1] if "winrm-" in col else "")}
             data["clock_source"] = None
             _win_system(data, _win_inventory(web))
         if not data["ip_addresses"] and target.get("host"):

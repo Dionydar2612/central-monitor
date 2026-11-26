@@ -47,7 +47,7 @@
 <div class="fsec"><div class="fsec-h">ข้อมูลเครื่อง</div>
 <div class="st-grid">
 <div class="st-f" data-f="name"><label for="f_name">ชื่อเครื่อง (name)</label><input id="f_name" autocomplete="off" placeholder="web-03"><small>a-z 0-9 และ - เท่านั้น เปลี่ยนทีหลังไม่ได้</small><div class="st-err"></div></div>
-<div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH + node_exporter)</option><option value="winrm">Windows (WinRM · ไม่ลง agent)</option></select><small class="win-only">central ดึงเองผ่าน WinRM HTTPS แบบอ่านอย่างเดียว ไม่ติดตั้งโปรแกรมค้างบนเครื่อง</small><div class="st-err"></div></div>
+<div class="st-f" data-f="type"><label for="f_type">ชนิดเครื่อง</label><select id="f_type"><option value="ssh">Linux (SSH + node_exporter)</option><option value="winrm">Windows (WinRM · ไม่ลง agent)</option><option value="agent">Windows (cm-agent · ส่งข้อมูลเข้ามาเอง)</option></select><small class="win-only">central ดึงเองผ่าน WinRM HTTPS แบบอ่านอย่างเดียว ไม่ติดตั้งโปรแกรมค้างบนเครื่อง</small><small class="agent-only">ติดตั้ง Fluent Bit + windows_exporter เป็น service (LocalSystem) ไม่สร้าง user ใหม่ ส่งเข้า central พอร์ต 4318</small><div class="st-err"></div></div>
 <div class="st-f" data-f="host"><label for="f_host">Host (IP / DNS)</label><input id="f_host" autocomplete="off" placeholder="10.0.10.13"><div class="st-err"></div></div>
 <div class="st-f" data-f="priority"><label for="f_prio">Priority (ความสำคัญ)</label><select id="f_prio"><option value="5">★★★★★ สำคัญสุด</option><option value="4">★★★★☆ สูง</option><option value="3" selected>★★★☆☆ ปกติ</option><option value="2">★★☆☆☆ ต่ำ</option><option value="1">★☆☆☆☆ ต่ำสุด</option></select><div class="st-err"></div></div>
 <div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="f_paused"> Paused (หยุดดึง log / เก็บสถานะชั่วคราว)</label></div>
@@ -59,6 +59,44 @@
 </div>
 
 <div class="fpane" data-p="conn" hidden>
+<div class="agent-only">
+<div class="fsec"><div class="fsec-h">cm-agent: ตั้งค่าก่อนติดตั้ง (ยิ่งปิด / ยิ่งนาน = เครื่องยิ่งเบา)</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:8px" id="ag_ready"></div>
+<div class="st-f" data-f="agent.features.metrics"><label>สิ่งที่เก็บ</label>
+<label class="st-check"><input type="checkbox" id="ag_f_metrics" checked> Metrics + สถานะ (CPU / RAM / Disk / Network / Service)</label>
+<label class="st-check"><input type="checkbox" id="ag_f_logs" checked> Event Log + ไฟล์ log (ERROR / WARN)</label>
+<label class="st-check"><input type="checkbox" id="ag_f_software" checked> Software / พอร์ตที่เปิด (ต้องเปิด Metrics)</label>
+<label class="st-check"><input type="checkbox" id="ag_f_processes"> Process ที่ใช้ CPU / RAM สูงสุด (หนักสุด เปิดเมื่อจำเป็น)</label>
+<div class="st-err"></div></div>
+<div class="st-grid">
+<div class="st-f" data-f="agent.metrics_interval"><label for="ag_metrics_interval">อ่าน metrics ทุก (วินาที)</label><input id="ag_metrics_interval" inputmode="numeric"><small>15-600 · ปริยาย 60</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.heartbeat_interval"><label for="ag_heartbeat_interval">สัญญาณ "ยังทำงาน" ทุก (วินาที)</label><input id="ag_heartbeat_interval" inputmode="numeric"><small>15-600 · ขาด ~3 รอบ = Down</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.event_interval"><label for="ag_event_interval">อ่าน Event Log ทุก (วินาที)</label><input id="ag_event_interval" inputmode="numeric"><small>5-600 · ปริยาย 30</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.log_refresh"><label for="ag_log_refresh">หาไฟล์ log ใหม่ทุก (วินาที)</label><input id="ag_log_refresh" inputmode="numeric"><small>10-600 · ปริยาย 60</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.flush"><label for="ag_flush">ส่งข้อมูลทุก (วินาที)</label><input id="ag_flush" inputmode="numeric"><small>1-120 · ปริยาย 15</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.inventory_minutes"><label for="ag_inventory_minutes">รายการโปรแกรม / พอร์ตทุก (นาที)</label><input id="ag_inventory_minutes" inputmode="numeric"><small>15-1440 · ปริยาย 60</small><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.event_logs"><label for="ag_evlogs">Event log ที่เก็บ (Warning ขึ้นไป)</label><input id="ag_evlogs" autocomplete="off" value="System, Application"><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.port"><label for="ag_port">พอร์ต central ที่รับ</label><input id="ag_port" inputmode="numeric" value="4318"><div class="st-err"></div></div>
+<div class="st-f" data-f="agent.central"><label for="ag_central">IP / ชื่อ central ที่เครื่องเห็น</label><input id="ag_central" autocomplete="off" placeholder="เว้นว่าง = ตรวจหาให้ตอนติดตั้ง"><div class="st-err"></div></div>
+<div class="st-f"><label>&nbsp;</label><label class="st-check"><input type="checkbox" id="ag_skip_cert"> ไม่ตรวจใบรับรองของ central (ยังเข้ารหัส)</label></div>
+</div>
+<small class="st-mut">บันทึกแล้วกด ติดตั้ง / อัปเดต อีกครั้งเพื่อส่งค่าใหม่ไปที่เครื่อง</small>
+</div>
+<div class="fsec"><div class="fsec-h">ติดตั้ง cm-agent บนเครื่อง Windows</div>
+<div class="st-h3">วิธีที่ 1: ติดตั้งจากหน้านี้ (ไม่สร้าง user ใหม่)</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:6px">central ใช้บัญชี admin ของเครื่อง <b>ครั้งนี้ครั้งเดียว</b> (ไม่บันทึก) ผ่าน WinRM ที่เครื่องเปิดอยู่ แล้วติดตั้ง service <code>cm-agent</code> + <code>cm-exporter</code> (LocalSystem) · กดซ้ำ = อัปเดตค่า</div>
+<div class="st-grid">
+<div class="st-f" data-f="admin_user"><label for="ai_user">Admin user</label><input id="ai_user" autocomplete="off" value="Administrator"><div class="st-err"></div></div>
+<div class="st-f" data-f="admin_password"><label for="ai_pass">Admin password</label><input id="ai_pass" type="password" autocomplete="new-password"><div class="st-err"></div></div>
+<div class="st-f" data-f="admin_port"><label for="ai_port">WinRM ที่เครื่องเปิดอยู่</label><select id="ai_port"><option value="5985">5985 (HTTP · เข้ารหัสด้วย NTLM/Kerberos)</option><option value="5986">5986 (HTTPS)</option></select><div class="st-err"></div></div>
+</div>
+<div style="margin-top:8px"><button class="st-btn sm primary" id="ai_go" type="button">ติดตั้ง / อัปเดต cm-agent</button> <button class="st-btn sm danger" id="au_go" type="button" hidden>ถอน cm-agent ออกจากเครื่อง</button> <label class="st-check" id="au_del_l" hidden style="display:inline-flex"><input type="checkbox" id="au_del" checked> ลบเครื่องออกจาก central ด้วย</label> <span id="ai_msg" class="st-msg" role="status"></span></div>
+<pre id="ai_log" class="st-code" hidden style="max-height:220px;overflow:auto;margin-top:8px;font-size:11.5px;white-space:pre-wrap"></pre>
+<div class="st-h3" style="margin-top:16px">วิธีที่ 2: ดาวน์โหลดแล้วดับเบิลคลิกบนเครื่อง</div>
+<div class="st-mut" style="font-size:13px;margin-bottom:6px">แตก zip บนเครื่อง Windows → ดับเบิลคลิก <code>install-cm-agent.bat</code> · ถอน: <code>uninstall-cm-agent.bat</code> · zip มี token ของ central ลบทิ้งหลังติดตั้ง</div>
+<div><button class="st-btn sm" id="ag_download" type="button">⬇ Download ชุดติดตั้ง cm-agent (.zip)</button></div>
+</div>
+</div>
 <div class="win-only">
 <div class="fsec"><div class="fsec-h">ติดตั้งบนเครื่อง Windows (ครั้งแรกครั้งเดียว · เลือกวิธีใดวิธีหนึ่ง)</div>
 <div class="st-mut" style="font-size:13px;margin-bottom:10px">ติดตั้งแล้วบนเครื่องมี user <code>cm-monitor</code> (ไม่ใช่ admin) + JEA endpoint อ่านอย่างเดียว + WinRM HTTPS ที่รับเฉพาะ IP ของ central · ไม่มี service / scheduled task / ไฟล์ข้อมูล · รหัสผ่านและใบรับรองระบบตั้งให้เอง ไม่ต้องคัดลอก</div>
@@ -135,7 +173,7 @@
 <div class="fpane" data-p="logs" hidden>
 <div><div class="fsec">
 <div class="st-h3">Log files ที่ต้องการดึง</div>
-<div class="win-only" style="color:var(--mut);font-size:13px">เครื่อง Windows: Event log (แท็บ การเชื่อมต่อ) เก็บให้อัตโนมัติ · ไฟล์ log ของโปรแกรมใส่ path แบบ Windows เช่น <code>D:\THMux\logs\*.log</code> (wildcard เฉพาะชื่อไฟล์)<br>
+<div class="wl-only" style="color:var(--mut);font-size:13px">เครื่อง Windows: Event log (แท็บ การเชื่อมต่อ) เก็บให้อัตโนมัติ · ไฟล์ log ของโปรแกรมใส่ path แบบ Windows เช่น <code>D:\THMux\logs\*.log</code> (wildcard เฉพาะชื่อไฟล์)<br>
 โฟลเดอร์ต้องอยู่ใน <code>LogPaths</code> ของเครื่องนั้น (ชุดติดตั้งที่ดาวน์โหลดใส่ให้ตามรายการนี้) ถ้าเพิ่มทีหลังให้รัน setup-cm-monitor.bat ใหม่ · เก็บเฉพาะ ERROR / WARN</div>
 <div class="ssh-only" style="color:var(--mut);font-size:13px">ชื่อ <code>logapp</code> / <code>loginuser</code> / <code>application</code> / <code>journal</code> เลือก parser ใน otel · path ใช้ wildcard ได้เฉพาะชื่อไฟล์ เช่น <code>/var/log/app/*.log</code><br>
 journal log: path = <code>journal</code> (ทั้งเครื่อง) หรือ <code>journal:nginx.service,ssh.service</code> (เฉพาะ unit) · ระบบเก็บเฉพาะ ERROR / WARN (INFO ดูได้จากปุ่ม Load INFO log ในหน้า Dashboard)</div>

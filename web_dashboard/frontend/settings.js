@@ -91,15 +91,19 @@ function renderTable() {
         return;
     }
     S.targets.forEach(t => {
-        if (t.type === "agent") {               /* เครื่อง Windows แบบเดิม (เลิกรองรับแล้ว) -> ลบได้อย่างเดียว */
+        if (t.type === "agent") {               /* Windows แบบ cm-agent (ส่งข้อมูลเข้ามาเอง) */
+            const a = t.agent || {}, f = a.features || {};
+            const feats = ["metrics", "logs", "software", "processes"].filter(k => f[k]).join(" · ");
             tb.append(el("tr", {},
                 el("td", {}, el("b", {}, t.name)),
-                el("td", { class: "st-mut" }, "Windows (เลิกรองรับ)"),
+                el("td", {}, "Windows (cm-agent)"),
                 el("td", {}, t.group || "-"),
                 el("td", {}, t.host || "-"),
-                el("td", {}, "-"), el("td", {}, "-"), el("td", {}, "-"),
-                el("td", { class: "wr" }, "ไม่ได้ตรวจแล้ว"),
-                el("td", {}, isOp() ? "" : el("button", { class: "st-btn sm danger", onclick: () => removeTarget(t) }, "Delete"))));
+                el("td", { class: "st-mut", title: feats }, `ทุก ${a.metrics_interval || 60}s`),
+                el("td", {}, String((t.logs || []).length) + " + Event log"),
+                el("td", { class: "st-mut" }, feats || "-"),
+                el("td", { class: t.paused ? "wr" : "ok", title: t.paused ? `${t.pause_reason || ""}${t.paused_by ? " · " + t.paused_by : ""}` : "" }, t.paused ? `⏸ Paused${t.pause_reason ? ": " + t.pause_reason : ""}` : "Active"),
+                el("td", {}, el("div", { class: "st-actions" }, rowActions(t)))));
             return;
         }
         if (t.type === "winrm") {               /* Windows แบบไม่ลง agent (WinRM -> JEA) */
@@ -232,7 +236,7 @@ function logRow(item) {
     };
     const row = el("div", { class: "st-logrow" },
         mk("n", "ชนิด log (parser)", "name", item.name, "application", "logNames"),
-        mk("p", "path", "path", item.path, formType() === "winrm" ? "D:\\App\\logs\\*.log" : "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
+        mk("p", "path", "path", item.path, formType() !== "ssh" ? "D:\\App\\logs\\*.log" : "/var/log/myapp/app.log  หรือ  journal:nginx.service"),
         mk("t", "ชื่อเรียก", "type", item.type || "", "ชื่อที่แสดงในหน้า Logs", "logLabels"),
         el("button", { class: "st-btn sm danger", type: "button", onclick: e => e.target.closest(".st-logrow").remove() }, "✕"),
         el("div", { class: "st-logst" }));
@@ -385,7 +389,8 @@ function openForm(t) {
         $(`th_${k}_${lv}`).value = v ?? "";
     }));
     $("f_host").value = t ? t.host : "";
-    $("f_type").value = t && t.type === "winrm" ? "winrm" : "ssh";
+    $("f_type").value = t && ["winrm", "agent"].includes(t.type) ? t.type : "ssh";
+    agentFill(t);
     $("f_type").disabled = !!t;                    /* เปลี่ยนชนิดของเครื่องที่บันทึกแล้วไม่ได้ (ลบแล้วเพิ่มใหม่) */
     applyType();
     const w = (t && t.winrm) || {};
@@ -457,7 +462,7 @@ function readForm() {
         name: r.querySelector('[data-k="name"]').value.trim(),
         path: r.querySelector('[data-k="path"]').value.trim(),
         type: r.querySelector('[data-k="type"]').value.trim(),
-    })).filter(l => formType() !== "winrm" || l.path);
+    })).filter(l => formType() === "ssh" || l.path);
     return {
         name: $("f_name").value.trim(),
         group: $("f_group").value.trim(),
@@ -472,11 +477,87 @@ function readForm() {
                      thumbprint: $("w_thumb").value.trim(), event_logs: $("w_evlogs").value.split(",").map(x => x.trim()).filter(Boolean) },
             password: $("w_pass").value,
         } : {}),
+        ...(formType() === "agent" ? { agent: agentRead() } : {}),
         ssh: { port: $("f_port").value.trim() || 22, user: $("f_user").value.trim() },
         prometheus: { job: $("f_job").value.trim(), instance: $("f_inst").value.trim(),
                       scheme: $("f_scheme").value, metrics_path: $("f_mpath").value.trim() },
         logs,
     };
+}
+
+/* ---------- Windows แบบ cm-agent: ค่าที่ตั้งก่อนติดตั้ง + ติดตั้ง / ถอนจากหน้าเว็บ + zip ---------- */
+const AG_INT = ["metrics_interval", "heartbeat_interval", "event_interval", "log_refresh", "flush", "inventory_minutes"];
+const AG_FEAT = ["metrics", "logs", "software", "processes"];
+function agentFill(t) {
+    const d = (S.agentInfo && S.agentInfo.defaults) || { metrics_interval: 60, heartbeat_interval: 60, event_interval: 30, log_refresh: 60, flush: 15,
+        inventory_minutes: 60, features: { metrics: true, logs: true, software: true, processes: false }, event_logs: ["System", "Application"], port: 4318 };
+    const a = (t && t.type === "agent" && t.agent) || d;
+    AG_INT.forEach(k => { $("ag_" + k).value = a[k] ?? d[k]; });
+    AG_FEAT.forEach(k => { $("ag_f_" + k).checked = !!((a.features || d.features)[k]); });
+    $("ag_evlogs").value = (a.event_logs || d.event_logs).join(", ");
+    $("ag_port").value = a.port || 4318;
+    $("ag_central").value = a.central || "";
+    $("ag_skip_cert").checked = !!a.skip_cert;
+    const on = !!(t && t.type === "agent");
+    $("au_go").hidden = $("au_del_l").hidden = !on;
+    $("ai_pass").value = ""; say("ai_msg", ""); $("ai_log").hidden = true; $("ai_log").textContent = "";
+    agentReady();
+}
+function agentRead() {
+    return { ...Object.fromEntries(AG_INT.map(k => [k, $("ag_" + k).value.trim()])),
+             features: Object.fromEntries(AG_FEAT.map(k => [k, $("ag_f_" + k).checked])),
+             event_logs: $("ag_evlogs").value.split(",").map(x => x.trim()).filter(Boolean),
+             port: $("ag_port").value.trim() || 4318, central: $("ag_central").value.trim(), skip_cert: $("ag_skip_cert").checked };
+}
+async function agentReady() {
+    const box = $("ag_ready");
+    if (!S.agentInfo) { try { S.agentInfo = await api("GET", "/api/agent-info"); } catch (e) { box.textContent = ""; return; } }
+    const i = S.agentInfo, b = i.bins || {};
+    const fb = b.fluent_bit ? `✓ ${b.fluent_bit.file}` : "✗ ไม่มี (เครื่อง Windows จะดาวน์โหลดเองจากอินเทอร์เน็ต)";
+    const we = b.windows_exporter ? `✓ ${b.windows_exporter.file}` : "✗ ไม่มี (เครื่อง Windows จะดาวน์โหลดเองจากอินเทอร์เน็ต)";
+    box.innerHTML = `central: token ${i.token ? "✓" : "✗ (รัน cm-update)"} · ใบรับรอง ${i.ca ? "✓" : "✗ (รัน cm-update)"}<br>`
+        + `โปรแกรมใน <code>data/agent-bin</code>: Fluent Bit ${esc(fb)} · windows_exporter ${esc(we)}`;
+}
+function esc(v) { return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+async function agentJob(kind) {
+    const btn = kind === "install" ? $("ai_go") : $("au_go");
+    const body = { admin_user: $("ai_user").value.trim(), admin_password: $("ai_pass").value, admin_port: $("ai_port").value,
+                   central: $("ag_central").value.trim(), delete_target: $("au_del").checked };
+    if (!body.admin_password) { say("ai_msg", "ใส่รหัสผ่านของ admin ก่อน (ใช้ครั้งเดียว ไม่บันทึก)", "bad"); $("ai_pass").focus(); return; }
+    if (kind === "uninstall" && !confirm(`ถอน cm-agent ออกจากเครื่อง ${S.editing}?
+
+ลบ service cm-agent / cm-exporter, task และโฟลเดอร์ของ agent บนเครื่อง`)) return;
+    btn.disabled = true;
+    try {
+        if (kind === "install" && !await ensureSaved()) return;
+        const name = S.editing;
+        say("ai_msg", "กำลังเริ่ม (คัดลอกโปรแกรมไปเครื่องอาจใช้เวลา 1-2 นาที)...", "");
+        try { await api("POST", `/api/targets/${encodeURIComponent(name)}/agent-${kind}`, body); }
+        catch (e) { if (e.message !== "auth") say("ai_msg", "เริ่มไม่ได้: " + (showErrors(e.fields) || e.message), "bad"); return; }
+        finally { $("ai_pass").value = ""; }
+        const started = Date.now();
+        let d;
+        for (;;) {
+            await new Promise(r => setTimeout(r, 3000));
+            try { d = await api("GET", `/api/targets/${encodeURIComponent(name)}/winrm-install`); }
+            catch (e) { if (e.message === "auth") return; d = { state: "running", step: "รอคำตอบ..." }; }
+            if (d.state !== "running") break;
+            say("ai_msg", `⏳ ${d.step || "กำลังทำงาน"} (${Math.round((Date.now() - started) / 1000)} วิ)`, "");
+        }
+        if (d.log) { $("ai_log").textContent = d.log; $("ai_log").hidden = false; }
+        if (d.state === "done" && d.ok) {
+            say("ai_msg", kind === "install" ? `✓ ติดตั้ง cm-agent บน ${d.computer || name} แล้ว${d.warnings ? ` (คำเตือน ${d.warnings} ข้อ)` : ""} · ข้อมูลขึ้นภายใน ~1-2 นาที`
+                : `✓ ถอน cm-agent ออกจาก ${d.computer || name} แล้ว${d.deleted ? " และลบเครื่องออกจาก central" : ""}`, "ok");
+            if (kind === "uninstall" && d.deleted) { closeForm(); await loadTargets(); }
+        } else say("ai_msg", "✗ " + (d.error || "ไม่สำเร็จ") + (d.log ? " · ดู log ด้านล่าง" : ""), "bad");
+    } finally { btn.disabled = false; }
+}
+async function agentDownload() {
+    if (!await ensureSaved()) return;
+    const central = $("ag_central").value.trim() || (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : "");
+    if (!central) { say("ai_msg", "ใส่ IP / ชื่อ central ที่เครื่องเห็น (ช่องด้านบน) ก่อนดาวน์โหลด", "bad"); $("ag_central").focus(); return; }
+    location.href = `/api/targets/${encodeURIComponent(S.editing)}/agent-package.zip?` + new URLSearchParams({ central });
+    say("ai_msg", "ดาวน์โหลดแล้ว: แตก zip บนเครื่อง Windows → ดับเบิลคลิก install-cm-agent.bat · ลบ zip หลังติดตั้ง (มี token)", "ok");
 }
 
 /* ---------- Windows (WinRM ไม่ลง agent) ---------- */
@@ -762,7 +843,7 @@ async function save() {
         return;
     }
     const trust = S.scanned.length && $("hkTrust") && $("hkTrust").checked;
-    if (body.type === "winrm") { /* Windows: ไม่มี SSH host key */ }
+    if (body.type !== "ssh") { /* Windows: ไม่มี SSH host key */ }
     else if (trust) body.trust_fingerprints = S.scanned.map(k => k.fingerprint);
     else if (!S.hostKeyKnown && !confirm("ยังไม่ได้เก็บ SSH host key ของเครื่องนี้\npuller จะดึง log ไม่ได้จนกว่าจะเก็บ host key\n\nบันทึกต่อไหม?")) return;
 
@@ -771,12 +852,14 @@ async function save() {
         if (S.editing) await api("PUT", "/api/targets/" + encodeURIComponent(S.editing), body);
         else await api("POST", "/api/targets", body);
         const name = S.editing || body.name;
-        const dep = body.type === "winrm" ? null : await deployKey(name);   // null = ไม่ได้กรอกรหัสผ่าน (ข้ามการวาง key)
+        const dep = body.type !== "ssh" ? null : await deployKey(name);   // null = ไม่ได้กรอกรหัสผ่าน (ข้ามการวาง key)
         $("w_pass").value = "";
         closeForm(); await loadTargets();
         if (dep && dep.ok) say("listMsg", `บันทึก ${name} แล้ว · ${dep.message}`, "ok");
         else if (dep) say("listMsg", `บันทึก ${name} แล้ว แต่วาง public key ไม่สำเร็จ: ${dep.message} — กด Deploy key ที่แถวของเครื่องนี้เพื่อลองใหม่ หรือวางเองตามคำสั่งในหน้า Edit`, "bad");
-        else say("listMsg", body.type === "winrm"
+        else say("listMsg", body.type === "agent"
+            ? `บันทึก ${name} แล้ว — กด Edit > การเชื่อมต่อ > ติดตั้ง cm-agent (หรือดาวน์โหลด zip) เพื่อติดตั้งบนเครื่อง`
+            : body.type === "winrm"
             ? `บันทึก ${name} แล้ว — central เริ่มอ่านเครื่อง Windows นี้ภายใน ~15 วินาที (CPU / RAM / Disk ขึ้นในหน้า Dashboard ภายใน ~1 นาที)`
             : `บันทึก ${name} แล้ว — puller จะดึงเครื่องนี้ภายในไม่กี่วินาที (Prometheus เห็นเครื่องใหม่ทันที)`, "ok");
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1106,9 +1189,12 @@ document.addEventListener("DOMContentLoaded", () => {
     $("f_type").addEventListener("change", () => {
         applyType(); clearErrors();
         document.querySelectorAll('#logs [data-k="path"]').forEach(i => {
-            i.placeholder = formType() === "winrm" ? "D:\\App\\logs\\*.log" : "/var/log/myapp/app.log  หรือ  journal:nginx.service";
+            i.placeholder = formType() !== "ssh" ? "D:\\App\\logs\\*.log" : "/var/log/myapp/app.log  หรือ  journal:nginx.service";
         });
     });
+    $("ai_go").onclick = () => agentJob("install");
+    $("au_go").onclick = () => agentJob("uninstall");
+    $("ag_download").onclick = agentDownload;
     $("w_scan").onclick = scanCert;
     $("w_test").onclick = testWinrm;
     $("w_download").onclick = downloadSetup;

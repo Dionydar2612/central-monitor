@@ -1,3 +1,12 @@
+# เพิ่มเติม (26 พ.ย. 2026): Windows แบบ cm-agent กลับมา (คู่กับแบบ WinRM) · ติดตั้งจากหน้าเว็บ · ตั้ง interval ก่อนติดตั้ง
+- ชนิดเครื่องใหม่ "Windows (cm-agent)" (`type: agent`): Fluent Bit + windows_exporter เป็น service LocalSystem ไม่สร้าง user ใหม่
+- ตั้งก่อนติดตั้ง: เปิด / ปิด Metrics / Logs / Software / Process + interval (metrics, heartbeat, Event Log, ไฟล์ log, ส่งข้อมูล, inventory) ค่าปริยายเบากว่ารุ่นเก่า (metrics 60 วิ, process ปิด, ไม่มี Netstat / probe / netsec)
+- ติดตั้ง / อัปเดต / ถอนจากหน้าเว็บผ่าน WinRM (admin ใช้ครั้งเดียว) หรือ zip ดับเบิลคลิก · ไฟล์ Fluent Bit / windows_exporter วางที่ data/agent-bin
+- central-agent-gw (:4318) กลับมา: log -> OpenSearch · metrics -> puller agent_bridge.py แปลงเป็นชื่อแบบ node_exporter (/win/<เครื่อง>) หน้าเว็บ / sensor / กฎ ใช้ร่วมกับเครื่องอื่น
+- แท็บ Software (โปรแกรมที่ติดตั้ง + พอร์ต) สำหรับเครื่อง cm-agent · คู่มือ docs/WINDOWS-AGENT-TH.md
+
+---
+
 # เพิ่มเติม (26 พ.ย. 2026): NTP Monitor (หน้า /ntp)
 - ตรวจ NTP server จาก central ทุก 30 วินาที (SNTP UDP 123): สถานะ / offset / RTT / stratum / ref + กราฟย้อนหลัง 1h – 30d + uptime
 - แจ้งเตือน Teams: ไม่ตอบ / server ไม่ sync เอง / offset ≥ 500 / 2000 ms / RTT ≥ 200 ms (ยืนยันตาม sensors.confirm_checks)

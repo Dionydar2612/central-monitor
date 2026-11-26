@@ -60,31 +60,64 @@ def _run(pool, script):
     return "\n".join(str(o) for o in out if o is not None)
 
 
-def build_start_script(files, config_text, port, run_file="setup-cm-monitor.ps1"):
+BIG_FILE = 262144          # ไฟล์ใหญ่กว่านี้ (เช่น Fluent Bit / windows_exporter ของ cm-agent) ส่งเป็นชิ้น ๆ
+CHUNK = 1048576
+
+PREP_SCRIPT = "\n".join([
+    "$ErrorActionPreference = 'Stop'",
+    f"$d = {_ps_str(SETUP_DIR)}",
+    "if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }",
+    "New-Item -ItemType Directory -Path $d -Force | Out-Null",
+    "& icacls.exe $d /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null",
+    "'PREP'",
+])
+
+
+def _check_name(name):
+    if not all(ch.isalnum() or ch in "-_." for ch in name):
+        raise ValueError(f"bad file name {name!r}")
+
+
+def chunk_script(name, data):
+    """ต่อท้ายไฟล์ใหญ่ทีละชิ้น (ชิ้นแรกสร้างไฟล์ใหม่)"""
+    _check_name(name)
+    return "\n".join([
+        "$ErrorActionPreference = 'Stop'",
+        f"$p = Join-Path {_ps_str(SETUP_DIR)} '{name}'",
+        f"$b = [Convert]::FromBase64String('{_b64(data)}')",
+        "$f = [IO.File]::Open($p, [IO.FileMode]::Append, [IO.FileAccess]::Write)",
+        "try { $f.Write($b, 0, $b.Length) } finally { $f.Close() }",
+        "'CHUNK ' + (Get-Item -LiteralPath $p).Length",
+    ])
+
+
+def build_start_script(files, config_text, port, run_file="setup-cm-monitor.ps1", config_name="cm-monitor-config.txt",
+                       fresh=True, present=()):
     """สคริปต์ที่รันบนเครื่อง Windows: เขียนไฟล์ (base64 อย่างเดียว ไม่มีข้อความจากผู้ใช้ปนในคำสั่ง) แล้วเริ่ม run_file
-    config_text = None (ถอนการติดตั้ง) -> ไม่เขียน cm-monitor-config.txt"""
+    config_text = None (ถอนการติดตั้ง) -> ไม่เขียนไฟล์ config · fresh=False = โฟลเดอร์เตรียมไว้แล้ว (มีไฟล์ใหญ่ present อยู่)"""
     lines = [
         "$ErrorActionPreference = 'Stop'",
         f"$d = {_ps_str(SETUP_DIR)}",
-        "if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }",
-        "New-Item -ItemType Directory -Path $d -Force | Out-Null",
-        "& icacls.exe $d /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null",
+    ]
+    if fresh:
+        lines += PREP_SCRIPT.split("\n")[2:-1]
+    lines += [
         # IP ของ central ที่เครื่องนี้เห็น = ปลายทางของการเชื่อมต่อ WinRM ที่ใช้อยู่ตอนนี้
         f"$c = @(Get-NetTCPConnection -State Established -LocalPort {int(port)} -ErrorAction SilentlyContinue |"
         " Select-Object -ExpandProperty RemoteAddress -Unique)",
         "$central = if ($c.Count -eq 1) { [string]$c[0] } else { '' }",
     ]
     for name, data in files.items():
-        if not all(ch.isalnum() or ch in "-_." for ch in name):
-            raise ValueError(f"bad file name {name!r}")
+        _check_name(name)
         lines.append(f"[IO.File]::WriteAllBytes((Join-Path $d '{name}'), [Convert]::FromBase64String('{_b64(data)}'))")
     if config_text is not None:
         lines += [
             f"$cfg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{_b64(config_text)}'))",
             "if ($cfg -match 'CentralIP=auto') { if (-not $central) { throw 'cannot detect the central IP - type it in the form' }; $cfg = $cfg.Replace('CentralIP=auto', 'CentralIP=' + $central) }",
-            "[IO.File]::WriteAllText((Join-Path $d 'cm-monitor-config.txt'), $cfg, (New-Object Text.UTF8Encoding($true)))",
+            f"[IO.File]::WriteAllText((Join-Path $d '{config_name}'), $cfg, (New-Object Text.UTF8Encoding($true)))",
         ]
-    if run_file not in files:
+    _check_name(config_name)
+    if run_file not in files and run_file not in present:
         raise ValueError(f"{run_file} not in files")
     lines += [
         "Get-ChildItem -LiteralPath $d -File | Unblock-File",
@@ -121,15 +154,27 @@ def _set(name, **kw):
         job["updated"] = time.time()
 
 
-def _job(name, host, port, user, password, files, config_text, kind="install"):
+def _job(name, host, port, user, password, files, config_text, kind="install", run_file=None,
+         config_name="cm-monitor-config.txt", target_kind="winrm"):
     import json
-    run_file = "setup-cm-monitor.ps1" if kind == "install" else "remove-cm-monitor.ps1"
+    run_file = run_file or ("setup-cm-monitor.ps1" if kind == "install" else "remove-cm-monitor.ps1")
     what = "setup" if kind == "install" else "ตัวถอน"
     try:
         _set(name, state="running", kind=kind, step=f"เชื่อมต่อ {host}:{port} ด้วย {user}")
         with _pool(host, port, user, password) as pool:
+            big = {k: v for k, v in files.items() if len(v) > BIG_FILE}
+            small = {k: v for k, v in files.items() if k not in big}
+            if big:
+                _run(pool, PREP_SCRIPT)
+                total, sent = sum(len(v) for v in big.values()), 0
+                for fn, data in big.items():
+                    for i in range(0, len(data), CHUNK):
+                        _run(pool, chunk_script(fn, data[i:i + CHUNK]))
+                        sent += len(data[i:i + CHUNK])
+                        _set(name, step=f"คัดลอก {fn} ({sent * 100 // total}%)")
             _set(name, step=f"คัดลอกไฟล์และเริ่ม{what}")
-            out = _run(pool, build_start_script(files, config_text, port, run_file))
+            out = _run(pool, build_start_script(small, config_text, port, run_file, config_name, fresh=not big,
+                                                present=tuple(big)))
         if not out.startswith("STARTED"):
             raise winrm_client.WinRMError(f"{run_file} did not start: {out[:200]}")
         central = out.split()[2] if len(out.split()) > 2 else ""
@@ -165,7 +210,7 @@ def _job(name, host, port, user, password, files, config_text, kind="install"):
              log=log.strip()[-6000:],
              step="เสร็จ" if ok else f"{what}ล้ม")
         print(f"[WINRM {kind.upper()}] {name} {'OK' if ok else 'FAILED'} {result.get('error') or ''}")
-        if ok and kind == "install":
+        if ok and kind == "install" and target_kind == "winrm":
             try:
                 import windows_pull
                 windows_pull.reconnect(name)          # session ใหม่ = โหลด module รุ่นที่เพิ่งติดตั้ง
@@ -197,7 +242,8 @@ def start(body):
     files = {k: base64.b64decode(v) for k, v in dict(body.get("files_b64") or {}).items()}
     config = body.get("config")
     args = (name, str(body["host"]), int(body.get("port") or 5985), str(body["user"]), str(body["password"]),
-            files, None if config is None else str(config), kind)
+            files, None if config is None else str(config), kind, body.get("run_file") or None,
+            str(body.get("config_name") or "cm-monitor-config.txt"), str(body.get("target_kind") or "winrm"))
     threading.Thread(target=_job, args=args, daemon=True, name=f"winrm-install-{name}").start()
     return status(name)
 

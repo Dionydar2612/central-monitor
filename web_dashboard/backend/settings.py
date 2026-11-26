@@ -113,8 +113,7 @@ def load_web_targets():
         with open(CONFIG_FILE, "r") as f:
             config = yaml.safe_load(f) or {}
 
-        # เครื่อง Windows แบบเดิม (type: agent) เลิกรองรับแล้ว -> ไม่แสดง / ไม่ตรวจ (ลบได้ที่ Settings)
-        return [t for t in config.get("targets") or [] if not (isinstance(t, dict) and str(t.get("type") or "ssh") == "agent")]
+        return [t for t in config.get("targets") or [] if isinstance(t, dict)]
 
     except Exception as e:
         print(f"[CONFIG ERROR] {e}")

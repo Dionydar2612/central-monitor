@@ -166,6 +166,59 @@ class NtpMonitor(unittest.TestCase):
         self.assertEqual(st, {})
 
 
+class AgentBridge(unittest.TestCase):
+    """cm-agent: windows_exporter (ผ่าน central-agent-gw) -> metric แบบ node_exporter + inventory / service"""
+    def text(self, t, idle, user, rd, uptime):
+        w = 'cm_web="win-a"'
+        return "\n".join([
+            f'fluentbit_uptime{{{w}}} {uptime}',
+            f'windows_cpu_time_total{{{w},core="0,0",mode="idle"}} {idle}',
+            f'windows_cpu_time_total{{{w},core="0,0",mode="user"}} {user}',
+            f'windows_cpu_time_total{{{w},core="0,0",mode="privileged"}} 10',
+            f'windows_cpu_time_total{{{w},core="0,0",mode="interrupt"}} 0',
+            f'windows_cpu_time_total{{{w},core="0,0",mode="dpc"}} 0',
+            f'windows_memory_physical_total_bytes{{{w}}} 8589934592',
+            f'windows_memory_available_bytes{{{w}}} 4294967296',
+            f'windows_logical_disk_size_bytes{{{w},volume="C:"}} 107374182400',
+            f'windows_logical_disk_free_bytes{{{w},volume="C:"}} 53687091200',
+            f'windows_logical_disk_size_bytes{{{w},volume="HarddiskVolume1"}} 1',
+            f'windows_physical_disk_reads_total{{{w},disk="0 C:"}} {rd}',
+            f'windows_physical_disk_writes_total{{{w},disk="0 C:"}} {rd}',
+            f'windows_physical_disk_idle_seconds_total{{{w},disk="0 C:"}} {t}',
+            f'windows_net_bytes_received_total{{{w},nic="Ethernet0"}} {rd * 1000}',
+            f'windows_net_bytes_sent_total{{{w},nic="Ethernet0"}} {rd * 10}',
+            f'windows_service_state{{{w},name="Spooler",state="running"}} 1',
+            f'windows_service_state{{{w},name="Spooler",state="stopped"}} 0',
+            f'windows_service_start_mode{{{w},name="Spooler",start_mode="auto"}} 1',
+            f'windows_os_info{{{w},product="Windows Server 2019",version="10.0",build_number="17763"}} 1',
+            f'cm_software_installed{{{w},name="7-Zip",version="23.01",publisher="Igor",installed="20240101",arch="x64"}} 1',
+            f'cm_port_listening{{{w},port="443",address="0.0.0.0",process="w3wp"}} 1',
+            'windows_cpu_time_total{cm_web="other",core="0,0",mode="idle"} 1',
+        ]) + "\n"
+
+    def test_translate(self):
+        import agent_bridge
+        cfg = {"targets": [{"name": "win-a", "type": "agent"}]}
+        agent_bridge._states.clear()
+        agent_bridge.run_once(self.text(0, 100, 50, 0, 10), cfg, now=1000)
+        st = agent_bridge.run_once(self.text(60, 150, 60, 600, 70), cfg, now=1060)["win-a"]
+        g = st.metrics.gauges
+        self.assertEqual(g[("node_memory_MemTotal_bytes", ())], 8589934592)
+        self.assertEqual(g[("node_filesystem_size_bytes", (("device", "C:"), ("fstype", "ntfs"), ("mountpoint", "C:")))], 107374182400)
+        self.assertFalse(any(dict(k[1]).get("mountpoint") == "HarddiskVolume1" for k in g))
+        c = st.metrics.counters
+        busy = sum(v for k, v in c.items() if k[0] == "node_cpu_seconds_total" and dict(k[1]).get("mode") != "idle")
+        self.assertAlmostEqual(busy / 60, 10 / 60, places=2)              # idle +50 user +10 ใน 60 วินาที -> 1/6
+        self.assertEqual(st.last_seen, 1060)
+        self.assertEqual(st.services, [{"name": "Spooler", "status": "active", "display": "Spooler", "start": "Automatic"}])
+        self.assertEqual(st.inventory["software"][0]["name"], "7-Zip")
+        self.assertEqual(st.inventory["ports"][0]["port"], 443)
+        self.assertEqual(st.inventory["os"]["caption"], "Windows Server 2019")
+        self.assertIn("node_memory_MemAvailable_bytes", st.metrics.exposition())
+        st2 = agent_bridge.run_once("", {"targets": []}, now=1100)
+        self.assertEqual(st2, {})
+
+
 class TimeSync(unittest.TestCase):
     """sensor Time sync (NTP): ไม่ sync = Error · คลาดเกินเกณฑ์ = Warning / Error · ไม่มีค่า = ไม่สร้าง sensor"""
     def run_case(self, sync, off, prev=None):
@@ -673,7 +726,8 @@ class CustomRules(unittest.TestCase):
         self.assertTrue(ap(r, {"name": "b", "group": "TQ/IT"}))
         self.assertFalse(ap(r, {"name": "c", "group": "TQX"}))
         self.assertFalse(ap({"metric": "cpu", "os": "windows"}, {"name": "x"}))       # กฎ Windows แบบเดิม
-        self.assertFalse(ap({"metric": "cpu"}, {"name": "x", "type": "agent"}))       # เครื่อง Windows แบบเดิม
+        self.assertTrue(ap({"metric": "cpu"}, {"name": "x", "type": "agent"}))        # Windows แบบ cm-agent
+        self.assertTrue(ap({"metric": "cpu", "os": "windows"}, {"name": "x", "type": "agent"}))
         self.assertTrue(ap({"metric": "cpu"}, {"name": "x"}))
 
     def test_evaluate_disk_and_confirm(self):
@@ -1208,6 +1262,57 @@ class WindowsEasyInstall(unittest.TestCase):
             self.assertTrue(any("Remove-Item" in x for x in scripts[-2:]))
         finally:
             windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP = orig
+
+
+class AgentInstallJob(unittest.TestCase):
+    def test_big_files_in_chunks(self):
+        """cm-agent: ไฟล์ใหญ่ (Fluent Bit / windows_exporter) ส่งเป็นชิ้น แล้วเริ่ม install-cm-agent.ps1 + config ชื่อของ agent"""
+        import base64
+        import windows_install
+        import winrm_client
+        scripts = []
+
+        class P:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def run(pool, script):
+            scripts.append(script)
+            if "Win32_Process" in script:
+                return "STARTED 1 10.0.0.1"
+            if "setup-result.json" in script:
+                return 'DONE\n{"ok":true,"exit":0,"warnings":0,"computer":"W1"}\n@@LOG\nRESULT: SUCCESS'
+            return "OK"
+
+        orig = (windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP, windows_install.CHUNK)
+        try:
+            windows_install._pool = lambda *a: P()
+            windows_install._run = run
+            windows_install.time.sleep = lambda s: None
+            winrm_client.HAVE_PYPSRP = True
+            windows_install.CHUNK = 300000
+            big = b"x" * 700000
+            windows_install.start({"name": "ag1", "host": "10.0.0.6", "port": 5985, "user": "Administrator", "password": "p",
+                                   "config": "Name=ag1\r\nCentralIP=auto\r\n", "config_name": "cm-agent-config.txt",
+                                   "run_file": "install-cm-agent.ps1", "target_kind": "agent",
+                                   "files_b64": {"install-cm-agent.ps1": base64.b64encode(b"# i").decode(),
+                                                 "fluent-bit-5.1.5-win64.zip": base64.b64encode(big).decode()}})
+            for _ in range(200):
+                st = windows_install.status("ag1")
+                if st.get("state") != "running":
+                    break
+                time.sleep(0.01)
+            self.assertTrue(st.get("ok"), st)
+            self.assertIn("Remove-Item", scripts[0])                              # เตรียมโฟลเดอร์ก่อน
+            chunks = [x for x in scripts if "[IO.FileMode]::Append" in x]
+            self.assertEqual(len(chunks), 3)                                       # 700000 / 300000
+            start = next(x for x in scripts if "Win32_Process" in x)
+            self.assertNotIn("Remove-Item -LiteralPath $d -Recurse", start)        # ไม่ลบไฟล์ใหญ่ที่ส่งไปแล้ว
+            self.assertIn("cm-agent-config.txt", start)
+            self.assertIn("install-cm-agent.ps1", start)
+        finally:
+            (windows_install._pool, windows_install._run, windows_install.time.sleep, winrm_client.HAVE_PYPSRP,
+             windows_install.CHUNK) = orig
 
 
 class WindowsUninstallJob(unittest.TestCase):

@@ -204,7 +204,7 @@ def _required_role(method, path):
         return "operator"                          # ค่าเริ่มต้นสำหรับแสดงในช่องว่าง
     if path == "/api/groups/move":
         return "admin"                             # ย้ายกลุ่ม (แก้ puller.yaml)
-    if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings")):
+    if path.startswith(("/api/targets", "/api/users", "/api/retention", "/api/alert-settings", "/api/notify-settings", "/api/agent-info")):
         return "admin"
     if path.startswith(("/api/checks", "/api/apps", "/api/ntp")):
         return "viewer" if method == "GET" else "admin"
@@ -233,6 +233,9 @@ _AUDIT_RULES = [
     ("GET", re.compile(r"^/api/targets/windows-setup\.zip$"), "target.windows_setup_download", ()),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-install$"), "target.windows_install", ("admin_user", "admin_port", "central", "mode")),
     ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/winrm-uninstall$"), "target.windows_uninstall", ("admin_user", "admin_port", "delete_target")),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/agent-install$"), "target.agent_install", ("admin_user", "admin_port", "central")),
+    ("POST", re.compile(r"^/api/targets/(?P<t>[^/]+)/agent-uninstall$"), "target.agent_uninstall", ("admin_user", "admin_port", "delete_target")),
+    ("GET", re.compile(r"^/api/targets/(?P<t>[^/]+)/agent-package\.zip$"), "target.agent_package_download", ()),
     ("PUT", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.update", ("host", "group", "paused", "pause_reason")),
     ("DELETE", re.compile(r"^/api/targets/(?P<t>[^/]+)$"), "target.delete", ()),
     ("POST", re.compile(r"^/api/checks$"), "check.add", ("name", "url", "group")),
@@ -863,7 +866,8 @@ def host_detail(web, kind):
         return _win_live(web, target, kind)
     fns = {"performance": lambda: host_details.performance(web),
            "hardware": lambda: host_details.hardware(web, target),
-           "system": lambda: host_details.system(web, target)}
+           "system": lambda: host_details.system(web, target),
+           "software": lambda: host_details.software(web)}
     if kind not in fns:
         return jsonify({"error": "unknown kind"}), 404
     try:
@@ -1464,6 +1468,54 @@ def targets_windows_setup():
     from flask import Response
     return Response(blob, mimetype="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+@app.get("/api/agent-info")
+def agent_info():
+    """cm-agent: central พร้อมไหม (token / ใบรับรอง / ไฟล์ Fluent Bit + windows_exporter ใน data/agent-bin) + ค่าปริยาย"""
+    return jsonify(targets_service.agent_info())
+
+
+@app.get("/api/targets/<name>/agent-package.zip")
+def targets_agent_package(name):
+    """ชุดติดตั้ง cm-agent ของเครื่องนี้ (zip: .bat / .ps1 / config ที่กรอกให้แล้ว รวม token)"""
+    try:
+        blob, filename = targets_service.agent_package_zip(name, request.args.get("central", ""))
+    except ValidationError as e:
+        return _bad_request(e)
+    except OSError as e:
+        return jsonify({"error": f"ไม่พบไฟล์ชุดติดตั้งใน image (rebuild): {e}"}), 500
+    from flask import Response
+    return Response(blob, mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+@app.post("/api/targets/<name>/agent-install")
+def targets_agent_install(name):
+    """ติดตั้ง / อัปเดต cm-agent บนเครื่อง Windows จากหน้าเว็บ (บัญชี admin ใช้ครั้งเดียว ไม่เก็บ) ไม่สร้าง user ใหม่"""
+    return _agent_job(name, targets_service.agent_install_request)
+
+
+@app.post("/api/targets/<name>/agent-uninstall")
+def targets_agent_uninstall(name):
+    return _agent_job(name, lambda n, b: targets_service.agent_uninstall_request(n, b, user_name=_who()[0]))
+
+
+def _agent_job(name, build):
+    body = _json_body() or {}
+    try:
+        req = build(name, body)
+    except ValidationError as e:
+        return _bad_request(e)
+    except OSError as e:
+        return jsonify({"error": f"ไม่พบไฟล์ชุดติดตั้งใน image (rebuild): {e}"}), 500
+    if req is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        status, data = puller_post("/winrm-install", req, timeout=120)
+    except (OSError, ValueError) as e:
+        return jsonify({"error": f"ติดต่อ central-puller ไม่ได้: {e}"}), 502
+    return jsonify(data), (202 if status in (200, 202) else 502)
 
 
 @app.get("/api/targets/winrm-versions")

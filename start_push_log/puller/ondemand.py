@@ -348,7 +348,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not target:
             return self._send(404, {"error": "unknown target"})
         if str(target.get("type") or "ssh") == "agent":
-            return self._send(400, {"error": f"{name} เป็นเครื่องแบบ agent (เลิกรองรับแล้ว) ไม่มี SSH"})
+            return self._send(400, {"error": f"{name} เป็นเครื่อง Windows แบบ cm-agent (ข้อมูลส่งเข้ามาเอง ดูสดจากเครื่องไม่ได้)"})
         if str(target.get("type") or "ssh") == "winrm":
             return self._windows(url.path, target, params)
         if url.path.startswith("/win-"):
@@ -415,7 +415,9 @@ class _Handler(BaseHTTPRequestHandler):
         if TOKEN and not hmac.compare_digest(self.headers.get("X-Central-Token", ""), TOKEN):
             return self._send(403, {"error": "forbidden"})
         try:
-            n = min(int(self.headers.get("Content-Length") or 0), 4 * 1048576)
+            # ติดตั้งจากหน้าเว็บอาจมีไฟล์ Fluent Bit / windows_exporter ของ cm-agent (~60 MB base64) แนบมา
+            limit = 160 * 1048576 if url.path == "/winrm-install" else 4 * 1048576
+            n = min(int(self.headers.get("Content-Length") or 0), limit)
             body = json.loads(self.rfile.read(n) or b"{}")
             body = body if isinstance(body, dict) else {}
             if url.path == "/winrm-install":                 # ติดตั้งจากหน้าเว็บ (thread แยก)

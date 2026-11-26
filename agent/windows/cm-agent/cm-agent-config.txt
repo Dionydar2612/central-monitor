@@ -1,0 +1,43 @@
+# =====================================================================
+# cm-agent-config.txt - settings for install-cm-agent.bat (Central Monitor cm-agent)
+# The web page (Settings > machine > Download / Install) fills this in for you.
+# Change a value and run install-cm-agent.bat again to apply it.
+# =====================================================================
+
+# --- connection ---
+# Name = machine name in central (a-z 0-9 -) - CentralIP = IP / name of central that this machine can reach
+Name=
+CentralIP=
+Port=4318
+# Token = CENTRAL_AGENT_TOKEN of central (cleared from this file after a successful install)
+Token=
+# 1 = do not verify the certificate of central (still encrypted) - only if the name / IP is not in the certificate
+SkipCertCheck=0
+
+# --- what to collect (1 = on, 0 = off) - fewer features = less CPU / RAM on this machine ---
+# Metrics   CPU / RAM / disk / network / services (windows_exporter, 127.0.0.1 only)
+# Logs      ERROR / WARN from Event Log + log files
+# Software  installed programs + listening ports (needs Metrics=1)
+# Processes top processes by CPU / RAM (the heaviest collector - keep 0 unless needed)
+Metrics=1
+Logs=1
+Software=1
+Processes=0
+
+# Event Log channels (comma separated) and log files (semicolon separated, wildcards allowed)
+Channels=System,Application
+LogPaths=
+
+# --- intervals (seconds unless noted) - longer = lighter ---
+# MetricsInterval    read windows_exporter every N s (15-600)
+# HeartbeatInterval  "agent alive" signal every N s (15-600) - central shows Down after ~3 missed signals
+# EventInterval      read the Event Log every N s (5-600)
+# LogRefresh         look for new / rotated log files every N s (10-600)
+# Flush              send buffered data every N s (1-120)
+# InventoryMinutes   installed programs / ports every N minutes (15-1440)
+MetricsInterval=60
+HeartbeatInterval=60
+EventInterval=30
+LogRefresh=60
+Flush=15
+InventoryMinutes=60
