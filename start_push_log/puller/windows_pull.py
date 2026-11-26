@@ -134,6 +134,7 @@ class NodeMetrics:
         self.counters = {}         # (metric, labels-tuple) -> float
         self.gauges = {}
         self.prev_t = None
+        self.raw = {}              # ค่าสะสมล่าสุดจากเครื่อง (_cum)
         self.load = [None, None, None]
         self.ok_at = 0.0
         self.info = {}             # จาก inventory
@@ -143,6 +144,18 @@ class NodeMetrics:
     def _inc(self, metric, labels, amount):
         k = (metric, tuple(sorted(labels.items())))
         self.counters[k] = self.counters.get(k, 0.0) + max(0.0, float(amount))
+
+    def _cum(self, metric, labels, raw):
+        """ค่าสะสมจริงจากเครื่อง (เช่น CPU time ตั้งแต่ boot): เพิ่ม counter ตามส่วนต่าง
+        ครั้งแรกไม่กระโดด (ต่อจากค่าเดิม) · ค่าลดลง (เครื่อง reboot) = นับจากค่าใหม่"""
+        k = (metric, tuple(sorted(labels.items())))
+        raw = max(0.0, float(raw or 0))
+        prev = self.raw.get(k)
+        self.raw[k] = raw
+        if prev is None:
+            self.counters.setdefault(k, 0.0)
+            return
+        self.counters[k] = self.counters.get(k, 0.0) + (raw - prev if raw >= prev else raw)
 
     def _g(self, gauges, metric, labels, value):
         if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -166,9 +179,19 @@ class NodeMetrics:
                            key=lambda x: (len(x), x))
             per_core = [(c, v("core_pct", c)) for c in cores] or [("0", v("cpu_pct"))]
             busy_sum = 0.0
+            times = m.get("cpu_times") or []
+            if times:
+                # module 1.1.5+: CPU time จริงต่อ logical processor (NtQuerySystemInformation) ไม่ต้องประมาณจาก %
+                for row in times:
+                    cpu = str(row.get("i"))
+                    for mode in ("idle", "user", "system", "irq", "softirq"):
+                        self._cum("node_cpu_seconds_total", {"cpu": cpu, "mode": mode}, row.get(mode))
+                    self._inc("node_cpu_seconds_total", {"cpu": cpu, "mode": "iowait"}, 0)
             for idx, (c, pct) in enumerate(per_core):
                 busy = min(max((pct or 0.0) / 100.0, 0.0), 1.0)
                 busy_sum += busy
+                if times:
+                    continue
                 cpu = str(idx)
                 for mode, part in (("idle", 1 - busy), ("user", busy * ratio_user), ("system", busy * (1 - ratio_user)),
                                    ("iowait", 0.0)):

@@ -1,3 +1,12 @@
+# แก้ไข (26 พ.ย. 2026): Windows (WinRM) CPU ขึ้น 100% ตลอด ทั้งที่เครื่องไม่ได้ทำงานหนัก (module 1.1.5)
+- สาเหตุ: CPU ของเครื่อง WinRM คำนวณจาก performance counter "% Processor Time" ที่อ่านผ่านสิทธิ์ cm-monitor ได้ค่าผิด
+  (central เห็นแค่ core เดียว และค่า idle ไม่เพิ่มเลย -> 100 - 0 = 100%) · ผลพ่วง: central คิดว่าเครื่อง busy จึงข้ามการเก็บ event / log
+- แก้: module อ่าน CPU time จริงต่อ logical processor จาก Windows (NtQuerySystemInformation ผ่านตัวช่วยที่ setup คอมไพล์)
+  แล้วส่งเป็นค่าสะสม -> node_cpu_seconds_total ตรง ๆ ทุก core (เหมือน node_exporter / Task Manager) · % ต่อ core / รวม คำนวณจากค่าเดียวกัน
+- ต้องกด **อัปเดตบนเครื่อง** (Settings > Edit เครื่อง) หลัง `cm-update --rebuild` · เครื่องที่ยังไม่อัปเดตทำงานแบบเดิม
+
+---
+
 # เพิ่มเติม (26 พ.ย. 2026): Windows แบบ cm-agent กลับมา (คู่กับแบบ WinRM) · ติดตั้งจากหน้าเว็บ · ตั้ง interval ก่อนติดตั้ง
 - ชนิดเครื่องใหม่ "Windows (cm-agent)" (`type: agent`): Fluent Bit + windows_exporter เป็น service LocalSystem ไม่สร้าง user ใหม่
 - ตั้งก่อนติดตั้ง: เปิด / ปิด Metrics / Logs / Software / Process + interval (metrics, heartbeat, Event Log, ไฟล์ log, ส่งข้อมูล, inventory) ค่าปริยายเบากว่ารุ่นเก่า (metrics 60 วิ, process ปิด, ไม่มี Netstat / probe / netsec)

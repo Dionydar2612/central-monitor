@@ -1553,3 +1553,26 @@ class WindowsInventoryTabs(unittest.TestCase):
             r = subprocess.run([mcs, "-target:library", "-langversion:5", "-out:" + os.path.join(tmp, "n.dll"), src],
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+class WindowsCpuTimes(unittest.TestCase):
+    def test_real_cpu_seconds_from_module(self):
+        """module 1.1.5: CPU time จริงต่อ core -> node_cpu_seconds_total ตรง ๆ (เดิมประมาณจาก % ที่อ่านผิดได้ = 100% ตลอด)"""
+        import windows_pull
+        nm = windows_pull.NodeMetrics()
+        k = ("node_cpu_seconds_total", (("cpu", "1"), ("mode", "idle")))
+        def m(idle):
+            return {"values": [{"k": "core_pct", "i": "0", "v": 10}, {"k": "core_pct", "i": "1", "v": 10}], "drives": [],
+                    "cpu_times": [{"i": i, "idle": idle, "user": 5, "system": 1, "irq": 0, "softirq": 0} for i in (0, 1)]}
+        nm.update(m(100000.0), now=100.0)
+        self.assertEqual(nm.counters[k], 0.0)                     # ครั้งแรกไม่กระโดด
+        nm.update(m(100027.0), now=130.0)
+        self.assertAlmostEqual(nm.counters[k], 27.0)
+        nm.update(m(10.0), now=160.0)                             # reboot
+        self.assertAlmostEqual(nm.counters[k], 37.0)
+        self.assertEqual({dict(x[1])["cpu"] for x in nm.counters if x[0] == "node_cpu_seconds_total"}, {"0", "1"})
+
+    def test_module_uses_native_cpu_times(self):
+        src = open(os.path.join(ROOT, "agent", "windows", "CentralMonitor.psm1"), encoding="ascii").read()
+        self.assertIn("[CentralMonitorNative.Win]::CpuTimes()", src)
+        self.assertIn("cpu_times", src)

@@ -27,7 +27,7 @@
 # =====================================================================
 Set-StrictMode -Version 2.0
 
-$script:CMVersion   = '1.1.4'
+$script:CMVersion   = '1.1.5'
 $script:DataDir     = Join-Path $env:ProgramData 'CentralMonitor'
 $script:AllowFile   = Join-Path $script:DataDir 'allowed-paths.txt'
 $script:MaxText     = 2048          # max characters per event message
@@ -39,6 +39,7 @@ $script:Self        = $null
 $script:StartedAt   = [datetime]::UtcNow
 $script:ProcPrev    = $null         # previous process CPU sample (Get-CMProcesses)
 $script:Native      = $null         # $true / $false once CentralMonitor.Native.<version>.dll was tried
+$script:CpuPrev     = $null         # previous CpuTimes() sample (Get-CMMetrics)
 $script:FileInfo    = @{}           # exe path -> description / company (file version resource, cached per session)
 
 # ---------------------------------------------------------------- helpers (not visible to the caller)
@@ -332,6 +333,49 @@ function Get-CMMetrics {
         } catch { }
     }
 
+    # CPU from the native helper: cumulative time per logical processor (exact, no performance-counter permission
+    # problems). Seconds since boot -> central uses them as node_cpu_seconds_total directly. The percentages since the
+    # previous call of this session replace the performance-counter values (cpu_pct / core_pct / user / privileged).
+    $cpuTimes = $null
+    if (Test-CMNative) {
+        try {
+            $raw = [CentralMonitorNative.Win]::CpuTimes()
+            $n = [int]($raw.Length / 5)
+            if ($n -gt 0) {
+                $rows = New-Object System.Collections.ArrayList
+                for ($i = 0; $i -lt $n; $i++) {
+                    $idle = $raw[$i * 5]; $kern = $raw[$i * 5 + 1]; $user = $raw[$i * 5 + 2]; $dpc = $raw[$i * 5 + 3]; $irq = $raw[$i * 5 + 4]
+                    [void]$rows.Add([ordered]@{ i = $i; idle = $idle / 1e7; user = $user / 1e7
+                                                system = [Math]::Max(0, $kern - $idle - $dpc - $irq) / 1e7; softirq = $dpc / 1e7; irq = $irq / 1e7 })
+                }
+                $cpuTimes = $rows.ToArray()
+                $prev = $script:CpuPrev
+                if ($null -ne $prev -and $prev.Length -eq $raw.Length) {
+                    $keep = New-Object System.Collections.ArrayList
+                    foreach ($x in $values) { if (@('cpu_pct', 'core_pct', 'cpu_user_pct', 'cpu_priv_pct') -notcontains $x.k) { [void]$keep.Add($x) } }
+                    $values = $keep
+                    $tAll = 0.0; $tIdle = 0.0; $tUser = 0.0
+                    for ($i = 0; $i -lt $n; $i++) {
+                        $dIdle = [double]($raw[$i * 5] - $prev[$i * 5])
+                        $dAll = [double](($raw[$i * 5 + 1] - $prev[$i * 5 + 1]) + ($raw[$i * 5 + 2] - $prev[$i * 5 + 2]))   # kernel + user
+                        $dUser = [double]($raw[$i * 5 + 2] - $prev[$i * 5 + 2])
+                        if ($dAll -le 0) { continue }
+                        [void]$values.Add([ordered]@{ k = 'core_pct'; i = [string]$i; v = [Math]::Round([Math]::Min(100, [Math]::Max(0, (1 - $dIdle / $dAll) * 100)), 4) })
+                        $tAll += $dAll; $tIdle += $dIdle; $tUser += $dUser
+                    }
+                    if ($tAll -gt 0) {
+                        $busy = [Math]::Min(100, [Math]::Max(0, (1 - $tIdle / $tAll) * 100))
+                        $userPct = [Math]::Min($busy, [Math]::Max(0, $tUser / $tAll * 100))
+                        [void]$values.Add([ordered]@{ k = 'cpu_pct'; i = ''; v = [Math]::Round($busy, 4) })
+                        [void]$values.Add([ordered]@{ k = 'cpu_user_pct'; i = ''; v = [Math]::Round($userPct, 4) })
+                        [void]$values.Add([ordered]@{ k = 'cpu_priv_pct'; i = ''; v = [Math]::Round($busy - $userPct, 4) })
+                    }
+                }
+                $script:CpuPrev = $raw
+            }
+        } catch { $cpuTimes = $null }
+    }
+
     $drives = New-Object System.Collections.ArrayList
     foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
         try {
@@ -350,7 +394,8 @@ function Get-CMMetrics {
         host         = $env:COMPUTERNAME
         ts           = (Get-CMUnixTime)
         mem_total_mb = $script:TotalRamMB
-        values       = $values.ToArray()
+        values       = @($values.ToArray())
+        cpu_times    = $cpuTimes
         drives       = $drives.ToArray()
         self         = (Get-CMSelf)
     }))

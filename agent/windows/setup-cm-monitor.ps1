@@ -34,13 +34,14 @@ $ModDir    = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules\CentralMonit
 $RuleName  = 'CentralMonitor-WinRM-HTTPS'
 $ManiPath  = Join-Path $DataDir 'manifest.json'
 $CredPath  = Join-Path $DataDir 'cm-monitor-credential.txt'
-$Version   = '1.1.4'
+$Version   = '1.1.5'
 
 # Source of CentralMonitor.Native.<version>.dll, compiled ON THIS MACHINE by step 2 (no binary is shipped).
 # Read-only Win32 calls usable by a non-admin user (no process handle is opened):
 #   Processes()    NtQuerySystemInformation(SystemProcessInformation)  - CPU time / RAM of every process (= Task Manager)
 #   ImagePath(pid) NtQuerySystemInformation(SystemProcessIdInformation) - full exe path of any process
 #   ServicePids()  EnumServicesStatusEx                                 - process id of every service
+#   CpuTimes()     NtQuerySystemInformation(SystemProcessorPerformanceInformation) - CPU time per logical processor
 $NativeSource = @'
 using System;
 using System.Collections.Generic;
@@ -103,6 +104,35 @@ namespace CentralMonitorNative
         const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
         const int SystemProcessInformation = 5;
         const int SystemProcessIdInformation = 88;
+        const int SystemProcessorPerformanceInformation = 8;
+
+        // ---- CPU time of every logical processor since boot, 100 ns units (= what Task Manager uses) ----
+        // 5 values per processor: idle, kernel (includes idle), user, dpc, interrupt
+        public static long[] CpuTimes()
+        {
+            const int each = 48;
+            int n = Math.Max(1, Environment.ProcessorCount);
+            IntPtr buf = Marshal.AllocHGlobal(each * n);
+            try
+            {
+                int ret;
+                int st = NtQuerySystemInformation(SystemProcessorPerformanceInformation, buf, each * n, out ret);
+                if (st != 0) return new long[0];
+                int count = Math.Min(n, ret / each);
+                var r = new long[count * 5];
+                for (int i = 0; i < count; i++)
+                {
+                    IntPtr p = new IntPtr(buf.ToInt64() + (long)i * each);
+                    r[i * 5 + 0] = Marshal.ReadInt64(p, 0);
+                    r[i * 5 + 1] = Marshal.ReadInt64(p, 8);
+                    r[i * 5 + 2] = Marshal.ReadInt64(p, 16);
+                    r[i * 5 + 3] = Marshal.ReadInt64(p, 24);
+                    r[i * 5 + 4] = Marshal.ReadInt64(p, 32);
+                }
+                return r;
+            }
+            finally { Marshal.FreeHGlobal(buf); }
+        }
 
         // ---- all processes (what Task Manager uses; no process handle is opened) ----
         // SYSTEM_PROCESS_INFORMATION offsets, 64-bit Windows
